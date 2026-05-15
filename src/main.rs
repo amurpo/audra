@@ -1,0 +1,38 @@
+mod library;
+mod player;
+mod scrobbler;
+mod ui;
+
+use std::sync::{Arc, Mutex};
+use libadwaita as adw;
+use adw::prelude::*;
+use gio;
+use library::db::Database;
+
+const APP_ID: &str = "com.audra.player";
+
+fn main() {
+    env_logger::init();
+
+    let data_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("audra");
+    std::fs::create_dir_all(&data_dir).ok();
+    let db_path = data_dir.join("library.db");
+
+    let db = Arc::new(Mutex::new(
+        Database::open(db_path.to_str().unwrap()).expect("No se pudo abrir la base de datos"),
+    ));
+
+    let app = adw::Application::builder()
+        .application_id(APP_ID)
+        .flags(gio::ApplicationFlags::empty())
+        .build();
+
+    let db_ref = Arc::clone(&db);
+    app.connect_activate(move |app| {
+        ui::main_window::build_window(app, Arc::clone(&db_ref));
+    });
+
+    app.run();
+}
