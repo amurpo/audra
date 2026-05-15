@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-rpm:
+    name: Build RPM (Fedora)
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar dependencias
+        run: |
+          dnf install -y \
+            rust cargo \
+            gtk4-devel libadwaita-devel \
+            sqlite-devel pkg-config \
+            rpm-build jq
+
+      - name: Leer versión desde Cargo.toml
+        id: version
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[0].version')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Compilar
+        run: cargo build --release
+        env:
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
+
+      - name: Construir RPM
+        run: |
+          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+          cp target/release/audra ~/rpmbuild/BUILD/
+          rpmbuild -bb \
+            --define "ver ${{ steps.version.outputs.version }}" \
+            packaging/audra.spec
+
+      - name: Localizar RPM generado
+        id: rpm
+        run: |
+          RPM=$(find ~/rpmbuild/RPMS -name '*.rpm' | head -1)
+          echo "path=$RPM" >> $GITHUB_OUTPUT
+
+      - name: Crear release en GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Audra v${{ steps.version.outputs.version }}
+          files: ${{ steps.rpm.outputs.path }}
+          generate_release_notes: true

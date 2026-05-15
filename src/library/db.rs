@@ -41,6 +41,10 @@ impl Database {
                 track_id   INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
                 played_at  TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         ")?;
         Ok(())
     }
@@ -112,6 +116,33 @@ impl Database {
 
     pub fn remove_scrobble(&self, queue_id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM scrobble_queue WHERE id = ?1", params![queue_id])?;
+        Ok(())
+    }
+
+    pub fn get_setting(&self, key: &str) -> Option<String> {
+        self.conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .ok()
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_setting(&self, key: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM settings WHERE key = ?1",
+            params![key],
+        )?;
         Ok(())
     }
 }

@@ -22,6 +22,13 @@ struct Session {
     key: String,
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LastFmResult {
+    Ok(SessionResponse),
+    Err { #[allow(dead_code)] error: u32, message: String },
+}
+
 impl LastFmClient {
     pub fn new(api_key: &str, api_secret: &str) -> Self {
         Self {
@@ -47,6 +54,28 @@ impl LastFmClient {
         }
         base.push_str(&self.api_secret);
         format!("{:x}", md5::compute(base.as_bytes()))
+    }
+
+    pub fn authenticate_with_password(&self, username: &str, password: &str) -> Result<String> {
+        let mut params: HashMap<&str, String> = HashMap::new();
+        params.insert("method", "auth.getMobileSession".to_string());
+        params.insert("api_key", self.api_key.clone());
+        params.insert("username", username.to_string());
+        params.insert("password", password.to_string());
+        let sig = self.sign(params.clone());
+        params.insert("api_sig", sig);
+        params.insert("format", "json".to_string());
+
+        let resp: LastFmResult = self.client
+            .post(API_URL)
+            .form(&params)
+            .send()?
+            .json()?;
+
+        match resp {
+            LastFmResult::Ok(s) => Ok(s.session.key),
+            LastFmResult::Err { message, .. } => anyhow::bail!("{}", message),
+        }
     }
 
     pub fn authenticate(&self, token: &str) -> Result<String> {

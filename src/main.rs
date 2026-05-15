@@ -1,3 +1,4 @@
+mod credentials;
 mod library;
 mod player;
 mod scrobbler;

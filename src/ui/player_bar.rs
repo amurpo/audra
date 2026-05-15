@@ -1,10 +1,11 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box, Button, Image, Label, Orientation, Picture,
-    ProgressBar, Scale, Stack, Align, ContentFit,
+    Box, Button, CenterBox, Image, Label, Orientation,
+    ProgressBar, Scale, Align,
 };
-use gtk4::gdk;
 use crate::library::Track;
+
+const COVER_SIZE: i32 = 72;
 
 pub struct PlayerBar {
     pub root: Box,
@@ -19,49 +20,36 @@ pub struct PlayerBar {
     pub lbl_total: Label,
     pub prog_bar: ProgressBar,
     pub vol_scale: Scale,
-    cover_stack: Stack,
-    cover_picture: Picture,
+    cover_img: Image,
 }
 
 impl PlayerBar {
     pub fn new() -> Self {
         let root = Box::new(Orientation::Vertical, 0);
+        root.set_vexpand(false);
 
-        // Fila superior: carátula + controles | info | volumen
-        let top_row = Box::new(Orientation::Horizontal, 12);
-        top_row.set_margin_top(10);
-        top_row.set_margin_bottom(4);
-        top_row.set_margin_start(12);
-        top_row.set_margin_end(12);
+        // --- Carátula ---
+        // set_pixel_size hace que Image reporte exactamente COVER_SIZE como tamaño
+        // natural sin importar qué paintable esté cargado. Es la única forma
+        // en GTK4 de fijar el tamaño máximo de un Image sin subclassing ni CSS max-*.
+        let cover_img = Image::from_icon_name("audio-x-generic-symbolic");
+        cover_img.set_pixel_size(COVER_SIZE);
+        cover_img.add_css_class("dim-label");
+        cover_img.set_hexpand(false);
+        cover_img.set_vexpand(false);
 
-        // --- Carátula (izquierda) ---
-        let cover_stack = Stack::new();
-        cover_stack.set_size_request(72, 72);
-        cover_stack.set_valign(Align::Center);
-        cover_stack.set_hexpand(false);
-        cover_stack.set_vexpand(false);
-        cover_stack.set_overflow(gtk4::Overflow::Hidden);
-        cover_stack.set_transition_type(gtk4::StackTransitionType::Crossfade);
-        cover_stack.set_transition_duration(200);
+        // Wrapper para overflow:hidden + border-radius (Image solo no puede clipear)
+        let cover_wrap = Box::new(Orientation::Horizontal, 0);
+        cover_wrap.add_css_class("cover-thumb");
+        cover_wrap.set_size_request(COVER_SIZE, COVER_SIZE);
+        cover_wrap.set_hexpand(false);
+        cover_wrap.set_vexpand(false);
+        cover_wrap.set_halign(Align::Start);
+        cover_wrap.set_valign(Align::Center);
+        cover_wrap.set_overflow(gtk4::Overflow::Hidden);
+        cover_wrap.append(&cover_img);
 
-        let cover_picture = Picture::new();
-        cover_picture.set_content_fit(ContentFit::Cover);
-        cover_picture.set_can_shrink(true);
-        cover_picture.set_size_request(72, 72);
-        cover_picture.set_halign(Align::Fill);
-        cover_picture.set_valign(Align::Fill);
-        cover_picture.add_css_class("cover-art");
-        cover_stack.add_named(&cover_picture, Some("art"));
-
-        let placeholder = Image::from_icon_name("audio-x-generic-symbolic");
-        placeholder.set_pixel_size(36);
-        placeholder.add_css_class("dim-label");
-        placeholder.add_css_class("cover-placeholder");
-        cover_stack.add_named(&placeholder, Some("placeholder"));
-        cover_stack.set_visible_child_name("placeholder");
-        cover_stack.set_visible(false);
-
-        // --- Controles + info juntos (centro) ---
+        // --- Zona central: controles + info ---
         let center = Box::new(Orientation::Vertical, 4);
         center.set_hexpand(true);
         center.set_valign(Align::Center);
@@ -90,7 +78,6 @@ impl PlayerBar {
         btn_loop.add_css_class("flat");
         btn_loop.set_tooltip_text(Some("Repetir"));
 
-        // [shuffle][prev][ ▶ ][next][loop]  → play queda en el centro (posición 3/5)
         controls.append(&btn_shuffle);
         controls.append(&btn_prev);
         controls.append(&btn_play_pause);
@@ -119,6 +106,7 @@ impl PlayerBar {
         // --- Volumen (derecha) ---
         let vol_box = Box::new(Orientation::Horizontal, 4);
         vol_box.set_valign(Align::Center);
+        vol_box.set_hexpand(false);
 
         let vol_icon = Image::from_icon_name("audio-volume-high-symbolic");
         vol_icon.add_css_class("dim-label");
@@ -132,15 +120,23 @@ impl PlayerBar {
         vol_box.append(&vol_icon);
         vol_box.append(&vol_scale);
 
-        top_row.append(&cover_stack);
-        top_row.append(&center);
-        top_row.append(&vol_box);
+        // CenterBox: centra los controles sin importar el ancho de cover o volumen
+        let top_row = CenterBox::new();
+        top_row.set_vexpand(false);
+        top_row.set_margin_top(8);
+        top_row.set_margin_bottom(4);
+        top_row.set_margin_start(16);
+        top_row.set_margin_end(16);
+        top_row.set_start_widget(Some(&cover_wrap));
+        top_row.set_center_widget(Some(&center));
+        top_row.set_end_widget(Some(&vol_box));
 
-        // Fila inferior: tiempo | barra de progreso | tiempo total
+        // --- Barra de progreso ---
         let bottom_row = Box::new(Orientation::Horizontal, 8);
-        bottom_row.set_margin_bottom(10);
-        bottom_row.set_margin_start(16);
-        bottom_row.set_margin_end(16);
+        bottom_row.set_vexpand(false);
+        bottom_row.set_margin_bottom(8);
+        bottom_row.set_margin_start(20);
+        bottom_row.set_margin_end(20);
         bottom_row.set_valign(Align::Center);
 
         let lbl_elapsed = Label::new(Some("0:00"));
@@ -179,15 +175,13 @@ impl PlayerBar {
             lbl_total,
             prog_bar,
             vol_scale,
-            cover_stack,
-            cover_picture,
+            cover_img,
         }
     }
 
     pub fn update_track(&self, track: Option<&Track>) {
         match track {
             Some(t) => {
-                self.cover_stack.set_visible(true);
                 self.lbl_title.set_text(&t.display_title());
                 self.lbl_artist.set_text(&t.display_artist());
                 self.lbl_total.set_text(&t.duration_str());
@@ -195,7 +189,7 @@ impl PlayerBar {
                 self.prog_bar.set_fraction(0.0);
             }
             None => {
-                self.cover_stack.set_visible(false);
+                self.cover_img.set_icon_name(Some("audio-x-generic-symbolic"));
                 self.lbl_title.set_text("Sin reproducción");
                 self.lbl_artist.set_text("");
                 self.lbl_total.set_text("0:00");
@@ -208,16 +202,16 @@ impl PlayerBar {
     pub fn update_cover(&self, bytes: Option<&[u8]>) {
         if let Some(data) = bytes {
             let gbytes = glib::Bytes::from(data);
-            match gdk::Texture::from_bytes(&gbytes) {
-                Ok(texture) => {
-                    self.cover_picture.set_paintable(Some(&texture));
-                    self.cover_stack.set_visible_child_name("art");
-                    return;
-                }
-                Err(e) => log::warn!("cover art: fallo al cargar textura GDK: {e}"),
+            if let Ok(texture) = gtk4::gdk::Texture::from_bytes(&gbytes) {
+                // pixel_size ya está en COVER_SIZE: Image renderiza la textura
+                // a ese tamaño exacto sin importar las dimensiones originales
+                self.cover_img.set_paintable(Some(&texture));
+                self.cover_img.remove_css_class("dim-label");
+                return;
             }
         }
-        self.cover_stack.set_visible_child_name("placeholder");
+        self.cover_img.set_icon_name(Some("audio-x-generic-symbolic"));
+        self.cover_img.add_css_class("dim-label");
     }
 
     pub fn update_progress(&self, elapsed_secs: f64, total_secs: f64) {

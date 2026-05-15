@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Audra
 Comment=Reproductor de música
-Exec=/home/amurpo/Documentos/audra/target/debug/audra
+Exec=/home/amurpo/.local/bin/audra
 Icon=com.audra.player
 Terminal=false
 Type=Application

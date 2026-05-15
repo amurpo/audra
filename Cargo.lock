@@ -136,6 +136,7 @@ dependencies = [
  "chrono",
  "dirs",
  "env_logger",
+ "gdk-pixbuf",
  "gio",
  "glib",
  "gtk4",
