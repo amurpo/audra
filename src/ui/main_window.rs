@@ -214,7 +214,7 @@ fn show_lastfm_dialog(
 
             if !LastFmClient::is_configured() {
                 status_label.set_markup(
-                    "<span foreground='#e01b24'>La app no tiene proxy compilado. Compila con LASTFM_PROXY_URL y LASTFM_APP_TOKEN.</span>",
+                    "<span foreground='#e01b24'>La app no tiene API Key compilada. Compila con LASTFM_API_KEY y LASTFM_API_SECRET.</span>",
                 );
                 return;
             }

@@ -1,24 +1,39 @@
 use anyhow::Result;
 use reqwest::blocking::Client;
-use serde_json::{json, Value};
-use std::time::Duration;
+use serde::Deserialize;
+use std::collections::HashMap;
 
-const PROXY_URL: &str = crate::credentials::PROXY_URL;
-const APP_TOKEN: &str = crate::credentials::APP_TOKEN;
+const API_URL: &str = "https://ws.audioscrobbler.com/2.0/";
+const API_KEY: &str = crate::credentials::API_KEY;
+const API_SECRET: &str = crate::credentials::API_SECRET;
 
 pub struct LastFmClient {
     session_key: Option<String>,
     client: Client,
 }
 
+#[derive(Deserialize)]
+struct SessionResponse {
+    session: Session,
+}
+
+#[derive(Deserialize)]
+struct Session {
+    key: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LastFmResult {
+    Ok(SessionResponse),
+    Err { #[allow(dead_code)] error: u32, message: String },
+}
+
 impl LastFmClient {
     pub fn new() -> Self {
         Self {
             session_key: None,
-            client: Client::builder()
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap_or_else(|_| Client::new()),
+            client: Client::new(),
         }
     }
 
@@ -28,92 +43,88 @@ impl LastFmClient {
     }
 
     pub fn is_configured() -> bool {
-        !PROXY_URL.is_empty() && !APP_TOKEN.is_empty()
+        !API_KEY.is_empty() && !API_SECRET.is_empty()
     }
 
-    // Llama al proxy con reintentos. 4xx no reintenta (error de datos/auth).
-    fn call(&self, method: &str, params: Value) -> Result<Value> {
-        let body = json!({ "method": method, "params": params });
-        let mut last_err = anyhow::anyhow!("sin respuesta del proxy");
-
-        for attempt in 0..3u32 {
-            if attempt > 0 {
-                std::thread::sleep(Duration::from_secs((attempt * 2) as u64));
-            }
-
-            match self.client
-                .post(PROXY_URL)
-                .header("Authorization", format!("Bearer {}", APP_TOKEN))
-                .json(&body)
-                .send()
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    return resp.json().map_err(Into::into);
-                }
-                Ok(resp) => {
-                    let status = resp.status();
-                    last_err = anyhow::anyhow!("proxy HTTP {}", status);
-                    if status.is_client_error() {
-                        break; // 4xx: no tiene sentido reintentar
-                    }
-                }
-                Err(e) => {
-                    last_err = e.into();
-                }
-            }
+    fn sign(&self, params: &HashMap<&str, String>) -> String {
+        let mut keys: Vec<&str> = params.keys().copied().collect();
+        keys.sort();
+        let mut base = String::new();
+        for k in &keys {
+            base.push_str(k);
+            base.push_str(&params[k]);
         }
-        Err(last_err)
+        base.push_str(API_SECRET);
+        format!("{:x}", md5::compute(base.as_bytes()))
     }
 
     pub fn authenticate_with_password(&self, username: &str, password: &str) -> Result<String> {
-        let resp = self.call("auth.getMobileSession", json!({
-            "username": username,
-            "password": password,
-        }))?;
+        let mut params: HashMap<&str, String> = HashMap::new();
+        params.insert("method", "auth.getMobileSession".to_string());
+        params.insert("api_key", API_KEY.to_string());
+        params.insert("username", username.to_string());
+        params.insert("password", password.to_string());
+        let sig = self.sign(&params);
+        params.insert("api_sig", sig);
+        params.insert("format", "json".to_string());
 
-        resp["session"]["key"]
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| {
-                let msg = resp["message"].as_str().unwrap_or("error desconocido");
-                anyhow::anyhow!("{}", msg)
-            })
+        let resp: LastFmResult = self.client
+            .post(API_URL)
+            .form(&params)
+            .send()?
+            .json()?;
+
+        match resp {
+            LastFmResult::Ok(s) => Ok(s.session.key),
+            LastFmResult::Err { message, .. } => anyhow::bail!("{}", message),
+        }
     }
 
     pub fn scrobble(&self, artist: &str, track: &str, album: &str, timestamp: i64) -> Result<()> {
         let sk = self.session_key.as_deref()
             .ok_or_else(|| anyhow::anyhow!("sin sesión Last.fm"))?;
 
-        self.call("track.scrobble", json!({
-            "sk": sk,
-            "artist[0]": artist,
-            "track[0]": track,
-            "album[0]": album,
-            "timestamp[0]": timestamp,
-        }))?;
+        let mut params: HashMap<&str, String> = HashMap::new();
+        params.insert("method", "track.scrobble".to_string());
+        params.insert("api_key", API_KEY.to_string());
+        params.insert("sk", sk.to_string());
+        params.insert("artist[0]", artist.to_string());
+        params.insert("track[0]", track.to_string());
+        params.insert("album[0]", album.to_string());
+        params.insert("timestamp[0]", timestamp.to_string());
 
+        let sig = self.sign(&params);
+        params.insert("api_sig", sig);
+        params.insert("format", "json".to_string());
+
+        let resp = self.client.post(API_URL).form(&params).send()?;
+        if !resp.status().is_success() {
+            anyhow::bail!("Last.fm scrobble error: {}", resp.status());
+        }
         Ok(())
     }
 
-    // best-effort: no reintenta ni encola, es informativo
     pub fn update_now_playing(&self, artist: &str, track: &str, album: &str) {
         let sk = match self.session_key.as_deref() {
             Some(s) => s.to_string(),
             None => return,
         };
-        let body = json!({
-            "method": "track.updateNowPlaying",
-            "params": { "sk": sk, "artist": artist, "track": track, "album": album }
-        });
-        let _ = self.client
-            .post(PROXY_URL)
-            .header("Authorization", format!("Bearer {}", APP_TOKEN))
-            .json(&body)
-            .send();
+
+        let mut params: HashMap<&str, String> = HashMap::new();
+        params.insert("method", "track.updateNowPlaying".to_string());
+        params.insert("api_key", API_KEY.to_string());
+        params.insert("sk", sk);
+        params.insert("artist", artist.to_string());
+        params.insert("track", track.to_string());
+        params.insert("album", album.to_string());
+
+        let sig = self.sign(&params);
+        params.insert("api_sig", sig);
+        params.insert("format", "json".to_string());
+
+        let _ = self.client.post(API_URL).form(&params).send();
     }
 
-    // Intenta enviar scrobbles pendientes en la DB. Se detiene al primer fallo
-    // (si uno falla por red, los siguientes también fallarán).
     pub fn flush_queue(&self, db: &crate::library::db::Database) {
         let pending = match db.pending_scrobbles() {
             Ok(p) if !p.is_empty() => p,
