@@ -13,11 +13,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use crate::library::{Artist, Album, Track};
 use crate::library::db::Database;
+use crate::ui::albums_view::make_album_detail_page;
 
 const CARD_SIZE: i32 = 200;
 const AVATAR_SIZE: i32 = 120;
 
-type PlayCallback = Box<dyn Fn(Vec<Track>)>;
+type PlayCallback = Box<dyn Fn(Vec<Track>, usize)>;
 type AvatarMap = Rc<RefCell<HashMap<String, adw::Avatar>>>;
 type ScaledPhoto = (String, Vec<u8>, i32, bool);
 
@@ -78,7 +79,6 @@ impl ArtistsView {
                         .cloned()
                         .collect();
 
-                    // Cargar portadas desde cache DB (rápido, sin I/O de audio)
                     {
                         let db_g = db_c.lock().unwrap();
                         for album in &mut artist_albums {
@@ -88,7 +88,12 @@ impl ArtistsView {
                         }
                     }
 
-                    let page = make_artist_detail_page(&name, artist_albums, Rc::clone(&on_play_c));
+                    let page = make_artist_detail_page(
+                        nav_c.clone(),
+                        &name,
+                        artist_albums,
+                        Rc::clone(&on_play_c),
+                    );
                     nav_c.push(&page);
                 }
             });
@@ -97,7 +102,7 @@ impl ArtistsView {
         Self { root: nav, flow, artists_list, all_albums, on_play, avatars }
     }
 
-    pub fn set_on_play(&self, callback: impl Fn(Vec<Track>) + 'static) {
+    pub fn set_on_play(&self, callback: impl Fn(Vec<Track>, usize) + 'static) {
         *self.on_play.borrow_mut() = Some(std::boxed::Box::new(callback));
     }
 
@@ -181,6 +186,7 @@ impl ArtistsView {
 }
 
 fn make_artist_detail_page(
+    nav: adw::NavigationView,
     artist_name: &str,
     albums: Vec<Album>,
     on_play: Rc<RefCell<Option<PlayCallback>>>,
@@ -221,7 +227,7 @@ fn make_artist_detail_page(
                 .flat_map(|a| a.tracks.iter().cloned())
                 .collect();
             if let Some(cb) = on_play_c.borrow().as_ref() {
-                cb(all_tracks);
+                cb(all_tracks, 0);
             }
         });
     }
@@ -229,12 +235,12 @@ fn make_artist_detail_page(
     {
         let albums_c = Rc::clone(&albums_rc);
         let on_play_c = Rc::clone(&on_play);
+        let nav_c = nav.clone();
         flow.connect_child_activated(move |_, child| {
             let idx = child.index() as usize;
             if let Some(album) = albums_c.get(idx) {
-                if let Some(cb) = on_play_c.borrow().as_ref() {
-                    cb(album.tracks.clone());
-                }
+                let page = make_album_detail_page(album, Rc::clone(&on_play_c));
+                nav_c.push(&page);
             }
         });
     }
