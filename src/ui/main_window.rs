@@ -30,6 +30,11 @@ picture.artist-image {
 }
 flowboxchild.mosaic-child {
     padding: 0;
+    cursor: pointer;
+    transition: opacity 120ms;
+}
+flowboxchild.mosaic-child:hover {
+    opacity: 0.82;
 }
 .album-overlay-box {
     padding: 28px 8px 7px 8px;
@@ -50,10 +55,18 @@ flowboxchild.mosaic-child {
 .lastfm-err {
     color: #e01b24;
 }
-/* Wrapper de carátula: border-radius + overflow:hidden para recortar imagen */
 .cover-thumb {
     border-radius: 6px;
     background-color: alpha(currentColor, 0.05);
+}
+flowboxchild.artist-card {
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background-color 150ms;
+    padding: 4px;
+}
+flowboxchild.artist-card:hover {
+    background-color: alpha(currentColor, 0.07);
 }
 ";
 
@@ -433,8 +446,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         lib_view.borrow_mut().load_tracks(tracks.clone());
         let albums = library::group_into_albums(&tracks);
         let artists = library::group_into_artists(&albums);
-        albums_view.load_albums(albums);
-        artists_view.load_artists(artists);
+        albums_view.load_albums(albums.clone());
+        artists_view.load_artists(artists, albums);
     }
 
     // --- Páginas del ViewStack ---
@@ -509,8 +522,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
                                 let albums = library::group_into_albums(&all);
                                 let artists = library::group_into_artists(&albums);
-                                albums_view.load_albums(albums);
-                                artists_view.load_artists(artists);
+                                albums_view.load_albums(albums.clone());
+                                artists_view.load_artists(artists, albums);
                             }
                         }
                     }
@@ -540,6 +553,26 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         albums_view.flow.connect_child_activated(move |_, child| {
             let idx = child.index() as usize;
             let tracks = albums_view_ref.get_album_tracks(idx);
+            if !tracks.is_empty() {
+                let mut p = player.borrow_mut();
+                p.load_queue(tracks, 0);
+                if let Ok(Some(track)) = p.play_current() {
+                    nnp(track);
+                    bar_ref.update_track(Some(track));
+                    bar_ref.set_playing(true);
+                    let cover = art::read_cover_art(&track.path);
+                    bar_ref.update_cover(cover.as_deref());
+                }
+            }
+        });
+    }
+
+    // --- Click en artista / álbum del artista: reproducir ---
+    {
+        let player = Rc::clone(&player);
+        let bar_ref = Rc::clone(&bar);
+        let nnp = Rc::clone(&notify_now_playing);
+        artists_view.set_on_play(move |tracks| {
             if !tracks.is_empty() {
                 let mut p = player.borrow_mut();
                 p.load_queue(tracks, 0);

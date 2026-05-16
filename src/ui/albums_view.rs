@@ -4,12 +4,13 @@ use gtk4::{
     ScrolledWindow, Stack, Align, ContentFit, SelectionMode, StackTransitionType,
 };
 use glib;
+use gdk_pixbuf;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use crate::library::Album;
 
-const CARD_SIZE: i32 = 160;
+const CARD_SIZE: i32 = 200;
 
 type CoverMap = Rc<RefCell<HashMap<String, (Stack, Picture)>>>;
 
@@ -24,14 +25,13 @@ impl AlbumsView {
     pub fn new() -> Self {
         let flow = FlowBox::new();
         flow.set_selection_mode(SelectionMode::Single);
-        // homogeneous=false: cada tarjeta mantiene su tamaño natural fijo
-        flow.set_homogeneous(false);
-        flow.set_column_spacing(3);
-        flow.set_row_spacing(3);
-        flow.set_margin_top(3);
-        flow.set_margin_bottom(3);
-        flow.set_margin_start(3);
-        flow.set_margin_end(3);
+        flow.set_homogeneous(true);
+        flow.set_column_spacing(8);
+        flow.set_row_spacing(8);
+        flow.set_margin_top(12);
+        flow.set_margin_bottom(12);
+        flow.set_margin_start(12);
+        flow.set_margin_end(12);
         flow.set_min_children_per_line(2);
         flow.set_max_children_per_line(12);
         flow.set_activate_on_single_click(true);
@@ -110,8 +110,7 @@ impl AlbumsView {
             let mut q = queue.lock().unwrap();
             for (key, bytes) in q.drain(..) {
                 if let Some((stack, picture)) = covers.borrow().get(&key) {
-                    let gbytes = glib::Bytes::from(&bytes);
-                    if let Ok(texture) = gtk4::gdk::Texture::from_bytes(&gbytes) {
+                    if let Some(texture) = scale_to_texture(&bytes, CARD_SIZE) {
                         picture.set_paintable(Some(&texture));
                         stack.set_visible_child_name("art");
                     }
@@ -127,6 +126,26 @@ impl AlbumsView {
     }
 }
 
+fn scale_to_texture(data: &[u8], size: i32) -> Option<gtk4::gdk::Texture> {
+    let loader = gdk_pixbuf::PixbufLoader::new();
+    let _ = loader.write(data);
+    let _ = loader.close();
+    let src = loader.pixbuf()?;
+    let w = src.width();
+    let h = src.height();
+    let (sw, sh) = if w <= h {
+        (size, size * h / w)
+    } else {
+        (size * w / h, size)
+    };
+    let scaled = src.scale_simple(sw, sh, gdk_pixbuf::InterpType::Bilinear)?;
+    let x = (sw - size) / 2;
+    let y = (sh - size) / 2;
+    let dest = gdk_pixbuf::Pixbuf::new(src.colorspace(), src.has_alpha(), src.bits_per_sample(), size, size)?;
+    scaled.copy_area(x, y, size, size, &dest, 0, 0);
+    Some(gtk4::gdk::Texture::for_pixbuf(&dest))
+}
+
 fn make_album_card(album: &Album) -> (FlowBoxChild, Stack, Picture) {
     // Overlay fijo CARD_SIZE×CARD_SIZE — no expande, siempre cuadrado
     let overlay = Overlay::new();
@@ -139,8 +158,6 @@ fn make_album_card(album: &Album) -> (FlowBoxChild, Stack, Picture) {
     let cover_stack = Stack::new();
     cover_stack.set_halign(Align::Fill);
     cover_stack.set_valign(Align::Fill);
-    cover_stack.set_hexpand(true);
-    cover_stack.set_vexpand(true);
     cover_stack.set_overflow(gtk4::Overflow::Hidden);
     cover_stack.set_transition_type(StackTransitionType::Crossfade);
     cover_stack.set_transition_duration(150);
@@ -150,8 +167,6 @@ fn make_album_card(album: &Album) -> (FlowBoxChild, Stack, Picture) {
     cover_picture.set_can_shrink(true);
     cover_picture.set_halign(Align::Fill);
     cover_picture.set_valign(Align::Fill);
-    cover_picture.set_hexpand(true);
-    cover_picture.set_vexpand(true);
     cover_stack.add_named(&cover_picture, Some("art"));
 
     let placeholder = Image::from_icon_name("media-optical-symbolic");
@@ -160,8 +175,7 @@ fn make_album_card(album: &Album) -> (FlowBoxChild, Stack, Picture) {
     cover_stack.add_named(&placeholder, Some("placeholder"));
 
     if let Some(ref data) = album.cover {
-        let gbytes = glib::Bytes::from(data.as_slice());
-        if let Ok(texture) = gtk4::gdk::Texture::from_bytes(&gbytes) {
+        if let Some(texture) = scale_to_texture(data.as_slice(), CARD_SIZE) {
             cover_picture.set_paintable(Some(&texture));
             cover_stack.set_visible_child_name("art");
         } else {
@@ -196,6 +210,8 @@ fn make_album_card(album: &Album) -> (FlowBoxChild, Stack, Picture) {
     let child = FlowBoxChild::new();
     child.add_css_class("mosaic-child");
     child.set_child(Some(&overlay));
+    child.set_halign(Align::Center);
+    child.set_valign(Align::Center);
 
     (child, cover_stack, cover_picture)
 }
