@@ -1,30 +1,31 @@
 use gtk4::prelude::*;
 use gtk4::{
-    FlowBox, FlowBoxChild, Image, Label, Orientation, Overlay, Picture,
-    ScrolledWindow, Stack, Align, ContentFit, SelectionMode, StackTransitionType,
+    Box as GtkBox, Button, FlowBox, FlowBoxChild, Image, Label, ListBox, ListBoxRow,
+    Orientation, Overlay, Picture, ScrolledWindow, Stack, Align, ContentFit, SelectionMode,
+    StackTransitionType,
 };
+use libadwaita as adw;
+use adw::prelude::*;
 use glib;
 use gdk_pixbuf;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use crate::library::Album;
+use crate::library::{Album, Track};
 use crate::library::db::Database;
 
 const CARD_SIZE: i32 = 200;
 
 type CoverMap = Rc<RefCell<HashMap<String, (Stack, Picture)>>>;
-
-// Pixels ya escalados listos para convertir en Texture en el hilo principal
-// (key, pixel_bytes, rowstride, has_alpha)
 type ScaledCover = (String, Vec<u8>, i32, bool);
 
 pub struct AlbumsView {
-    pub root: ScrolledWindow,
-    pub flow: FlowBox,
+    pub root: adw::NavigationView,
+    flow: FlowBox,
     albums_data: Rc<RefCell<Vec<Album>>>,
     covers: CoverMap,
+    on_play: Rc<RefCell<Option<Box<dyn Fn(Vec<Track>, usize)>>>>,
 }
 
 impl AlbumsView {
@@ -46,12 +47,41 @@ impl AlbumsView {
         scroll.set_vexpand(true);
         scroll.set_child(Some(&flow));
 
-        Self {
-            root: scroll,
-            flow,
-            albums_data: Rc::new(RefCell::new(Vec::new())),
-            covers: Rc::new(RefCell::new(HashMap::new())),
+        let nav = adw::NavigationView::new();
+        let root_page = adw::NavigationPage::new(&scroll, "Álbumes");
+        root_page.set_tag(Some("albums-root"));
+        nav.add(&root_page);
+
+        let albums_data: Rc<RefCell<Vec<Album>>> = Rc::new(RefCell::new(Vec::new()));
+        let covers: CoverMap = Rc::new(RefCell::new(HashMap::new()));
+        let on_play: Rc<RefCell<Option<Box<dyn Fn(Vec<Track>, usize)>>>> =
+            Rc::new(RefCell::new(None));
+
+        {
+            let nav_c = nav.clone();
+            let albums_c = Rc::clone(&albums_data);
+            let on_play_c = Rc::clone(&on_play);
+            flow.connect_child_activated(move |_, child| {
+                let idx = child.index() as usize;
+                let album = albums_c.borrow().get(idx).cloned();
+                if let Some(album) = album {
+                    let page = make_album_detail_page(&album, Rc::clone(&on_play_c));
+                    nav_c.push(&page);
+                }
+            });
         }
+
+        Self {
+            root: nav,
+            flow,
+            albums_data,
+            covers,
+            on_play,
+        }
+    }
+
+    pub fn set_on_play(&self, callback: impl Fn(Vec<Track>, usize) + 'static) {
+        *self.on_play.borrow_mut() = Some(Box::new(callback));
     }
 
     pub fn load_albums(&self, albums: Vec<Album>, db: Arc<Mutex<Database>>) {
@@ -81,14 +111,6 @@ impl AlbumsView {
         }
     }
 
-    pub fn get_album_tracks(&self, idx: usize) -> Vec<crate::library::Track> {
-        self.albums_data
-            .borrow()
-            .get(idx)
-            .map(|a| a.tracks.clone())
-            .unwrap_or_default()
-    }
-
     pub fn filter(&self, query: &str) {
         if query.is_empty() {
             self.flow.set_filter_func(|_| true);
@@ -110,7 +132,6 @@ impl AlbumsView {
     fn start_cover_fetch(&self, albums: Vec<(String, String, String)>, db: Arc<Mutex<Database>>) {
         use std::sync::atomic::{AtomicBool, Ordering};
 
-        // La queue almacena pixels ya escalados — el hilo principal solo crea el Texture (rápido)
         let queue: Arc<Mutex<Vec<ScaledCover>>> = Arc::new(Mutex::new(Vec::new()));
         let finished = Arc::new(AtomicBool::new(false));
 
@@ -123,7 +144,6 @@ impl AlbumsView {
             for (artist, album_name, track_path) in &albums {
                 let key = format!("{}|{}", artist, album_name);
 
-                // Fase 1: cache en DB
                 if let Some(bytes) = db.lock().unwrap().get_cover(artist, album_name) {
                     if let Some(scaled) = scale_to_pixels(&bytes, CARD_SIZE) {
                         queue_tx.lock().unwrap().push((key, scaled.0, scaled.1, scaled.2));
@@ -131,7 +151,6 @@ impl AlbumsView {
                     }
                 }
 
-                // Fase 2: disco local → guardar en DB
                 if let Some(bytes) = crate::library::art::read_cover_art(track_path) {
                     let _ = db.lock().unwrap().set_cover(artist, album_name, &bytes);
                     if let Some(scaled) = scale_to_pixels(&bytes, CARD_SIZE) {
@@ -140,7 +159,6 @@ impl AlbumsView {
                     }
                 }
 
-                // Fase 3: Last.fm como último recurso
                 need_lastfm.push((artist.clone(), album_name.clone()));
             }
 
@@ -163,7 +181,6 @@ impl AlbumsView {
         let covers = Rc::clone(&self.covers);
         glib::timeout_add_local(std::time::Duration::from_millis(300), move || {
             let mut q = queue.lock().unwrap();
-            // pixels_to_texture es solo una envoltura de bytes — muy rápido, no bloquea el UI
             for (key, pixels, rowstride, has_alpha) in q.drain(..) {
                 if let Some((stack, picture)) = covers.borrow().get(&key) {
                     let texture = pixels_to_texture(pixels, rowstride, has_alpha);
@@ -181,8 +198,92 @@ impl AlbumsView {
     }
 }
 
-/// Decodifica y escala la imagen en el hilo de fondo.
-/// Devuelve (pixel_bytes, rowstride, has_alpha) listos para crear un MemoryTexture.
+pub fn make_album_detail_page(
+    album: &Album,
+    on_play: Rc<RefCell<Option<Box<dyn Fn(Vec<Track>, usize)>>>>,
+) -> adw::NavigationPage {
+    let header = adw::HeaderBar::new();
+
+    let btn_play_all = Button::builder()
+        .label("Reproducir todo")
+        .css_classes(["suggested-action", "pill"])
+        .build();
+    header.pack_end(&btn_play_all);
+
+    let list = ListBox::new();
+    list.set_selection_mode(SelectionMode::None);
+    list.add_css_class("boxed-list");
+    list.set_margin_top(8);
+    list.set_margin_bottom(12);
+    list.set_margin_start(12);
+    list.set_margin_end(12);
+
+    let tracks = Rc::new(album.tracks.clone());
+
+    for (i, track) in tracks.iter().enumerate() {
+        list.append(&make_track_row(i, track));
+    }
+
+    {
+        let tracks_c = Rc::clone(&tracks);
+        let on_play_c = Rc::clone(&on_play);
+        btn_play_all.connect_clicked(move |_| {
+            if let Some(cb) = on_play_c.borrow().as_ref() {
+                cb((*tracks_c).clone(), 0);
+            }
+        });
+    }
+
+    {
+        let tracks_c = Rc::clone(&tracks);
+        list.connect_row_activated(move |_, row| {
+            let idx = row.index() as usize;
+            if let Some(cb) = on_play.borrow().as_ref() {
+                cb((*tracks_c).clone(), idx);
+            }
+        });
+    }
+
+    let scroll = ScrolledWindow::new();
+    scroll.set_vexpand(true);
+    scroll.set_child(Some(&list));
+
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&scroll));
+
+    adw::NavigationPage::new(&toolbar, &album.name)
+}
+
+fn make_track_row(idx: usize, track: &Track) -> ListBoxRow {
+    let hbox = GtkBox::new(Orientation::Horizontal, 12);
+    hbox.set_margin_top(8);
+    hbox.set_margin_bottom(8);
+    hbox.set_margin_start(12);
+    hbox.set_margin_end(12);
+
+    let num_label = Label::new(Some(&(idx + 1).to_string()));
+    num_label.add_css_class("dim-label");
+    num_label.set_width_chars(3);
+    num_label.set_xalign(1.0);
+    hbox.append(&num_label);
+
+    let title_label = Label::new(Some(&track.display_title()));
+    title_label.set_hexpand(true);
+    title_label.set_xalign(0.0);
+    title_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    hbox.append(&title_label);
+
+    let dur_label = Label::new(Some(&track.duration_str()));
+    dur_label.add_css_class("dim-label");
+    dur_label.add_css_class("caption");
+    hbox.append(&dur_label);
+
+    let row = ListBoxRow::new();
+    row.set_child(Some(&hbox));
+    row
+}
+
 fn scale_to_pixels(data: &[u8], size: i32) -> Option<(Vec<u8>, i32, bool)> {
     let loader = gdk_pixbuf::PixbufLoader::new();
     let _ = loader.write(data);
@@ -208,7 +309,6 @@ fn scale_to_pixels(data: &[u8], size: i32) -> Option<(Vec<u8>, i32, bool)> {
     Some((pixels, rowstride, has_alpha))
 }
 
-/// Crea un GDK Texture desde bytes ya escalados — corre en el hilo principal, es instantáneo.
 fn pixels_to_texture(pixels: Vec<u8>, rowstride: i32, has_alpha: bool) -> gtk4::gdk::Texture {
     let format = if has_alpha {
         gtk4::gdk::MemoryFormat::R8g8b8a8
@@ -250,7 +350,7 @@ fn make_album_card(album: &Album) -> (FlowBoxChild, Stack, Picture) {
 
     overlay.set_child(Some(&cover_stack));
 
-    let info = gtk4::Box::new(Orientation::Vertical, 1);
+    let info = GtkBox::new(Orientation::Vertical, 1);
     info.set_valign(Align::End);
     info.set_halign(Align::Fill);
     info.add_css_class("album-overlay-box");

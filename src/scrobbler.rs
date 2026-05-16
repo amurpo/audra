@@ -1,11 +1,9 @@
 use anyhow::Result;
 use reqwest::blocking::Client;
 use serde::Deserialize;
-use std::collections::HashMap;
+use serde_json::json;
 
-const API_URL: &str = "https://ws.audioscrobbler.com/2.0/";
-const API_KEY: &str = crate::credentials::API_KEY;
-const API_SECRET: &str = crate::credentials::API_SECRET;
+const PROXY_URL: &str = crate::credentials::PROXY_URL;
 
 pub struct LastFmClient {
     session_key: Option<String>,
@@ -13,20 +11,15 @@ pub struct LastFmClient {
 }
 
 #[derive(Deserialize)]
-struct SessionResponse {
-    session: Session,
+pub struct AuthTokenResponse {
+    pub token: String,
+    pub auth_url: String,
 }
 
 #[derive(Deserialize)]
-struct Session {
-    key: String,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum LastFmResult {
-    Ok(SessionResponse),
-    Err { #[allow(dead_code)] error: u32, message: String },
+pub struct AuthSessionResponse {
+    pub session_key: String,
+    pub username: String,
 }
 
 impl LastFmClient {
@@ -43,61 +36,53 @@ impl LastFmClient {
     }
 
     pub fn is_configured() -> bool {
-        !API_KEY.is_empty() && !API_SECRET.is_empty()
+        !PROXY_URL.is_empty()
     }
 
-    fn sign(&self, params: &HashMap<&str, String>) -> String {
-        let mut keys: Vec<&str> = params.keys().copied().collect();
-        keys.sort();
-        let mut base = String::new();
-        for k in &keys {
-            base.push_str(k);
-            base.push_str(&params[k]);
+    pub fn get_auth_token() -> Result<AuthTokenResponse> {
+        let proxy = PROXY_URL.trim_end_matches('/');
+        let resp = Client::new().get(format!("{proxy}/auth/token")).send()?;
+        if !resp.status().is_success() {
+            let text = resp.text().unwrap_or_default();
+            let msg = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v.get("error")?.as_str().map(str::to_string))
+                .unwrap_or(text);
+            anyhow::bail!("{}", msg);
         }
-        base.push_str(API_SECRET);
-        format!("{:x}", md5::compute(base.as_bytes()))
+        Ok(resp.json()?)
     }
 
-    pub fn authenticate_with_password(&self, username: &str, password: &str) -> Result<String> {
-        let mut params: HashMap<&str, String> = HashMap::new();
-        params.insert("method", "auth.getMobileSession".to_string());
-        params.insert("api_key", API_KEY.to_string());
-        params.insert("username", username.to_string());
-        params.insert("password", password.to_string());
-        let sig = self.sign(&params);
-        params.insert("api_sig", sig);
-        params.insert("format", "json".to_string());
-
-        let resp: LastFmResult = self.client
-            .post(API_URL)
-            .form(&params)
-            .send()?
-            .json()?;
-
-        match resp {
-            LastFmResult::Ok(s) => Ok(s.session.key),
-            LastFmResult::Err { message, .. } => anyhow::bail!("{}", message),
+    pub fn get_session(token: &str) -> Result<AuthSessionResponse> {
+        let proxy = PROXY_URL.trim_end_matches('/');
+        let resp = Client::new()
+            .get(format!("{proxy}/auth/session"))
+            .query(&[("token", token)])
+            .send()?;
+        if !resp.status().is_success() {
+            let text = resp.text().unwrap_or_default();
+            let msg = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v.get("error")?.as_str().map(str::to_string))
+                .unwrap_or(text);
+            anyhow::bail!("{}", msg);
         }
+        Ok(resp.json()?)
     }
 
     pub fn scrobble(&self, artist: &str, track: &str, album: &str, timestamp: i64) -> Result<()> {
         let sk = self.session_key.as_deref()
             .ok_or_else(|| anyhow::anyhow!("sin sesión Last.fm"))?;
 
-        let mut params: HashMap<&str, String> = HashMap::new();
-        params.insert("method", "track.scrobble".to_string());
-        params.insert("api_key", API_KEY.to_string());
-        params.insert("sk", sk.to_string());
-        params.insert("artist[0]", artist.to_string());
-        params.insert("track[0]", track.to_string());
-        params.insert("album[0]", album.to_string());
-        params.insert("timestamp[0]", timestamp.to_string());
-
-        let sig = self.sign(&params);
-        params.insert("api_sig", sig);
-        params.insert("format", "json".to_string());
-
-        let resp = self.client.post(API_URL).form(&params).send()?;
+        let proxy = PROXY_URL.trim_end_matches('/');
+        let body = json!({
+            "sk": sk,
+            "artist": artist,
+            "track": track,
+            "album": album,
+            "timestamp": timestamp,
+        });
+        let resp = self.client.post(format!("{proxy}/scrobble")).json(&body).send()?;
         if !resp.status().is_success() {
             anyhow::bail!("Last.fm scrobble error: {}", resp.status());
         }
@@ -110,19 +95,14 @@ impl LastFmClient {
             None => return,
         };
 
-        let mut params: HashMap<&str, String> = HashMap::new();
-        params.insert("method", "track.updateNowPlaying".to_string());
-        params.insert("api_key", API_KEY.to_string());
-        params.insert("sk", sk);
-        params.insert("artist", artist.to_string());
-        params.insert("track", track.to_string());
-        params.insert("album", album.to_string());
-
-        let sig = self.sign(&params);
-        params.insert("api_sig", sig);
-        params.insert("format", "json".to_string());
-
-        let _ = self.client.post(API_URL).form(&params).send();
+        let proxy = PROXY_URL.trim_end_matches('/');
+        let body = json!({
+            "sk": sk,
+            "artist": artist,
+            "track": track,
+            "album": album,
+        });
+        let _ = self.client.post(format!("{proxy}/nowplaying")).json(&body).send();
     }
 
     pub fn flush_queue(&self, db: &crate::library::db::Database) {

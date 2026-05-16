@@ -5,8 +5,12 @@ Reproductor de música nativo para Linux, construido con GTK4 y libadwaita.
 ## Características
 
 - Biblioteca de música con vistas por álbumes, artistas y canciones
+- Navegación jerárquica: artista → álbum → canciones
 - Soporte para MP3, FLAC, OGG y WAV
-- Scrobbling automático a [Last.fm](https://www.last.fm)
+- Scrobbling automático a [Last.fm](https://www.last.fm) con autenticación OAuth
+- Shuffle con orden aleatorio fijo (cada canción se escucha una vez)
+- Repetición de pista
+- Arte de artistas y carátulas descargadas automáticamente
 - Interfaz nativa siguiendo las guías de diseño de GNOME
 
 ## Requisitos
@@ -31,13 +35,16 @@ cargo build --release
 
 El binario queda en `target/release/audra`.
 
-Para compilar con integración de Last.fm, exporta tus claves antes de compilar:
+Para compilar con integración de Last.fm, exporta la URL del proxy antes de compilar:
 
 ```bash
-export LASTFM_API_KEY=tu_api_key
-export LASTFM_API_SECRET=tu_api_secret
+export LASTFM_PROXY_URL=https://tu-proxy.example.com/lastfm
 cargo build --release
 ```
+
+La autenticación de Last.fm usa el flujo OAuth estándar: el usuario autoriza en el sitio oficial
+de Last.fm y nunca ingresa credenciales en la aplicación. El proxy (Cloudflare Workers) firma
+las peticiones del lado del servidor — el binario solo contiene la URL pública del proxy.
 
 ## Construir el RPM
 

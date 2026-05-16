@@ -97,54 +97,84 @@ fn show_lastfm_dialog(
         .transient_for(parent)
         .modal(true)
         .default_width(460)
-        .default_height(500)
+        .default_height(440)
         .resizable(false)
         .build();
 
     let header = adw::HeaderBar::new();
 
-    // Stack: alterna entre formulario y vista "conectado"
     let stack = gtk4::Stack::new();
     stack.set_transition_type(gtk4::StackTransitionType::SlideLeftRight);
     stack.set_transition_duration(300);
 
-    // ── Página 1: formulario ──────────────────────────────────────────────
-    let form_box = gtk4::Box::new(gtk4::Orientation::Vertical, 16);
-    form_box.set_margin_top(16);
-    form_box.set_margin_bottom(20);
-    form_box.set_margin_start(16);
-    form_box.set_margin_end(16);
+    // ── Página 1: autorizar ───────────────────────────────────────────────
+    let auth_box = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
+    auth_box.set_valign(gtk4::Align::Center);
+    auth_box.set_vexpand(true);
+    auth_box.set_margin_top(24);
+    auth_box.set_margin_bottom(24);
+    auth_box.set_margin_start(24);
+    auth_box.set_margin_end(24);
 
-    let cred_group = adw::PreferencesGroup::new();
-    cred_group.set_title("Cuenta de Last.fm");
+    let auth_status = adw::StatusPage::new();
+    auth_status.set_icon_name(Some("avatar-default-symbolic"));
+    auth_status.set_title("Conectar a Last.fm");
+    auth_status.set_description(Some(
+        "Autoriza Audra en tu cuenta de Last.fm para registrar tus escuchas.",
+    ));
+    auth_status.set_vexpand(true);
 
-    let user_row = adw::EntryRow::new();
-    user_row.set_title("Usuario");
+    let auth_error_label = gtk4::Label::new(None);
+    auth_error_label.set_wrap(true);
+    auth_error_label.set_use_markup(true);
+    auth_error_label.set_halign(gtk4::Align::Center);
 
-    let pass_row = adw::PasswordEntryRow::new();
-    pass_row.set_title("Contraseña");
+    let btn_authorize = Button::with_label("Autorizar en Last.fm");
+    btn_authorize.add_css_class("suggested-action");
+    btn_authorize.set_halign(gtk4::Align::Center);
 
-    cred_group.add(&user_row);
-    cred_group.add(&pass_row);
+    auth_box.append(&auth_status);
+    auth_box.append(&auth_error_label);
+    auth_box.append(&btn_authorize);
 
-    let status_label = gtk4::Label::new(None);
-    status_label.set_wrap(true);
-    status_label.set_xalign(0.0);
-    status_label.set_use_markup(true);
+    // ── Página 2: esperando confirmación ─────────────────────────────────
+    let wait_box = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
+    wait_box.set_valign(gtk4::Align::Center);
+    wait_box.set_vexpand(true);
+    wait_box.set_margin_top(24);
+    wait_box.set_margin_bottom(24);
+    wait_box.set_margin_start(24);
+    wait_box.set_margin_end(24);
 
-    let form_btn_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-    form_btn_row.set_halign(gtk4::Align::End);
+    let wait_status = adw::StatusPage::new();
+    wait_status.set_icon_name(Some("network-transmit-receive-symbolic"));
+    wait_status.set_title("Esperando autorización");
+    wait_status.set_description(Some(
+        "Completa la autorización en el navegador y luego haz clic en «Ya autoricé».",
+    ));
+    wait_status.set_vexpand(true);
 
-    let btn_connect = Button::with_label("Conectar");
-    btn_connect.add_css_class("suggested-action");
+    let wait_error_label = gtk4::Label::new(None);
+    wait_error_label.set_wrap(true);
+    wait_error_label.set_use_markup(true);
+    wait_error_label.set_halign(gtk4::Align::Center);
 
-    form_btn_row.append(&btn_connect);
+    let wait_btn_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    wait_btn_row.set_halign(gtk4::Align::Center);
 
-    form_box.append(&cred_group);
-    form_box.append(&status_label);
-    form_box.append(&form_btn_row);
+    let btn_confirmed = Button::with_label("Ya autoricé");
+    btn_confirmed.add_css_class("suggested-action");
 
-    // ── Página 2: estado conectado ────────────────────────────────────────
+    let btn_cancel_wait = Button::with_label("Cancelar");
+
+    wait_btn_row.append(&btn_confirmed);
+    wait_btn_row.append(&btn_cancel_wait);
+
+    wait_box.append(&wait_status);
+    wait_box.append(&wait_error_label);
+    wait_box.append(&wait_btn_row);
+
+    // ── Página 3: conectado ───────────────────────────────────────────────
     let ok_box = gtk4::Box::new(gtk4::Orientation::Vertical, 24);
     ok_box.set_valign(gtk4::Align::Center);
     ok_box.set_vexpand(true);
@@ -171,7 +201,8 @@ fn show_lastfm_dialog(
     ok_box.append(&ok_status);
     ok_box.append(&ok_btn_row);
 
-    stack.add_named(&form_box, Some("form"));
+    stack.add_named(&auth_box, Some("authorize"));
+    stack.add_named(&wait_box, Some("waiting"));
     stack.add_named(&ok_box, Some("connected"));
 
     let toolbar = adw::ToolbarView::new();
@@ -180,7 +211,7 @@ fn show_lastfm_dialog(
 
     win.set_content(Some(&toolbar));
 
-    // Pre-cargar y decidir qué página mostrar
+    // Pre-cargar: decidir qué página mostrar
     {
         let db_g = db.lock().unwrap();
         let username_val = db_g.get_setting("lastfm_username").unwrap_or_default();
@@ -189,62 +220,108 @@ fn show_lastfm_dialog(
             .map(|k| !k.is_empty())
             .unwrap_or(false);
 
-        user_row.set_text(&username_val);
-
         if connected && !username_val.is_empty() {
             ok_status.set_description(Some(&username_val));
             stack.set_visible_child_name("connected");
         } else {
-            stack.set_visible_child_name("form");
+            stack.set_visible_child_name("authorize");
         }
     }
 
-    // Botón Conectar
-    btn_connect.connect_clicked(clone!(
-        #[weak] user_row,
-        #[weak] pass_row,
-        #[weak] status_label,
+    // Token pendiente (solo hilo principal — todos los callbacks GTK corren en main thread)
+    let pending_token: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+
+    // Botón "Autorizar en Last.fm"
+    btn_authorize.connect_clicked(clone!(
+        #[weak] auth_error_label,
+        #[weak] stack,
+        #[weak] btn_authorize,
+        #[strong] pending_token,
+        move |_| {
+            if !LastFmClient::is_configured() {
+                auth_error_label.set_markup(
+                    "<span foreground='#e01b24'>La URL del proxy no está configurada.</span>",
+                );
+                return;
+            }
+            btn_authorize.set_sensitive(false);
+            auth_error_label.set_text("");
+
+            let (tx, rx) = std::sync::mpsc::channel::<Result<(String, String), String>>();
+
+            std::thread::spawn(move || {
+                match LastFmClient::get_auth_token() {
+                    Ok(r) => { let _ = tx.send(Ok((r.token, r.auth_url))); }
+                    Err(e) => { let _ = tx.send(Err(e.to_string())); }
+                }
+            });
+
+            let pending_c = Rc::clone(&pending_token);
+            glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                use std::sync::mpsc::TryRecvError;
+                match rx.try_recv() {
+                    Ok(Ok((token, auth_url))) => {
+                        *pending_c.borrow_mut() = Some(token);
+                        let _ = std::process::Command::new("xdg-open").arg(&auth_url).spawn();
+                        stack.set_visible_child_name("waiting");
+                        btn_authorize.set_sensitive(true);
+                        glib::ControlFlow::Break
+                    }
+                    Ok(Err(e)) => {
+                        auth_error_label.set_markup(&format!(
+                            "<span foreground='#e01b24'>Error: {}</span>",
+                            escape_markup(&e)
+                        ));
+                        btn_authorize.set_sensitive(true);
+                        glib::ControlFlow::Break
+                    }
+                    Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
+                    Err(TryRecvError::Disconnected) => {
+                        btn_authorize.set_sensitive(true);
+                        glib::ControlFlow::Break
+                    }
+                }
+            });
+        }
+    ));
+
+    // Botón "Ya autoricé"
+    btn_confirmed.connect_clicked(clone!(
+        #[weak] wait_error_label,
         #[weak] stack,
         #[weak] ok_status,
+        #[weak] btn_confirmed,
+        #[strong] pending_token,
         #[strong] db,
         #[strong] lastfm,
-        move |btn| {
-            let username = user_row.text().to_string();
-            let password = pass_row.text().to_string();
+        move |_| {
+            let token = match pending_token.borrow().clone() {
+                Some(t) => t,
+                None => {
+                    wait_error_label.set_markup(
+                        "<span foreground='#e01b24'>No hay token pendiente. Vuelve a autorizar.</span>",
+                    );
+                    return;
+                }
+            };
+            btn_confirmed.set_sensitive(false);
+            wait_error_label.set_text("");
 
-            if !LastFmClient::is_configured() {
-                status_label.set_markup(
-                    "<span foreground='#e01b24'>La app no tiene API Key compilada. Compila con LASTFM_API_KEY y LASTFM_API_SECRET.</span>",
-                );
-                return;
-            }
-
-            if username.is_empty() || password.is_empty() {
-                status_label.set_markup(
-                    "<span foreground='#e01b24'>Completa usuario y contraseña.</span>",
-                );
-                return;
-            }
-
-            btn.set_sensitive(false);
-            status_label.set_text("Conectando…");
-
-            let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
+            let (tx, rx) = std::sync::mpsc::channel::<Result<(String, String), String>>();
             let db2 = Arc::clone(&db);
             let lastfm2 = Arc::clone(&lastfm);
 
             std::thread::spawn(move || {
-                let client = LastFmClient::new();
-                match client.authenticate_with_password(&username, &password) {
-                    Ok(sk) => {
+                match LastFmClient::get_session(&token) {
+                    Ok(r) => {
                         {
                             let db_g = db2.lock().unwrap();
-                            let _ = db_g.set_setting("lastfm_session_key", &sk);
-                            let _ = db_g.set_setting("lastfm_username", &username);
+                            let _ = db_g.set_setting("lastfm_session_key", &r.session_key);
+                            let _ = db_g.set_setting("lastfm_username", &r.username);
                         }
-                        let new_client = LastFmClient::new().with_session(&sk);
+                        let new_client = LastFmClient::new().with_session(&r.session_key);
                         *lastfm2.lock().unwrap() = Some(new_client);
-                        let _ = tx.send(Ok(username));
+                        let _ = tx.send(Ok((r.session_key, r.username)));
                     }
                     Err(e) => {
                         let _ = tx.send(Err(e.to_string()));
@@ -252,28 +329,26 @@ fn show_lastfm_dialog(
                 }
             });
 
-            let btn_c = btn.clone();
-            let status_c = status_label.clone();
             glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
                 use std::sync::mpsc::TryRecvError;
                 match rx.try_recv() {
-                    Ok(Ok(user)) => {
-                        ok_status.set_description(Some(&user));
+                    Ok(Ok((_sk, username))) => {
+                        ok_status.set_description(Some(&username));
                         stack.set_visible_child_name("connected");
-                        btn_c.set_sensitive(true);
+                        btn_confirmed.set_sensitive(true);
                         glib::ControlFlow::Break
                     }
                     Ok(Err(e)) => {
-                        status_c.set_markup(&format!(
+                        wait_error_label.set_markup(&format!(
                             "<span foreground='#e01b24'>Error: {}</span>",
                             escape_markup(&e)
                         ));
-                        btn_c.set_sensitive(true);
+                        btn_confirmed.set_sensitive(true);
                         glib::ControlFlow::Break
                     }
                     Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
                     Err(TryRecvError::Disconnected) => {
-                        btn_c.set_sensitive(true);
+                        btn_confirmed.set_sensitive(true);
                         glib::ControlFlow::Break
                     }
                 }
@@ -281,21 +356,27 @@ fn show_lastfm_dialog(
         }
     ));
 
-    // Botón Cambiar cuenta: vuelve al formulario sin borrar la sesión
-    btn_change.connect_clicked(clone!(
+    // Botón "Cancelar" (en página "waiting")
+    btn_cancel_wait.connect_clicked(clone!(
         #[weak] stack,
-        #[weak] pass_row,
+        #[strong] pending_token,
         move |_| {
-            pass_row.set_text("");
-            stack.set_visible_child_name("form");
+            *pending_token.borrow_mut() = None;
+            stack.set_visible_child_name("authorize");
         }
     ));
 
-    // Botón Desconectar: elimina sesión y vuelve al formulario
+    // Botón "Cambiar cuenta"
+    btn_change.connect_clicked(clone!(
+        #[weak] stack,
+        move |_| {
+            stack.set_visible_child_name("authorize");
+        }
+    ));
+
+    // Botón "Desconectar"
     btn_forget.connect_clicked(clone!(
         #[weak] stack,
-        #[weak] pass_row,
-        #[weak] status_label,
         #[strong] db,
         #[strong] lastfm,
         move |_| {
@@ -305,9 +386,7 @@ fn show_lastfm_dialog(
                 let _ = db_g.delete_setting("lastfm_username");
             }
             *lastfm.lock().unwrap() = None;
-            pass_row.set_text("");
-            status_label.set_text("Cuenta desvinculada.");
-            stack.set_visible_child_name("form");
+            stack.set_visible_child_name("authorize");
         }
     ));
 
@@ -556,18 +635,15 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
-    // --- Click en álbum: reproducir todo el álbum ---
+    // --- Click en álbum: navegar a lista de canciones ---
     {
-        let albums_view_ref = Rc::clone(&albums_view);
         let player = Rc::clone(&player);
         let bar_ref = Rc::clone(&bar);
         let nnp = Rc::clone(&notify_now_playing);
-        albums_view.flow.connect_child_activated(move |_, child| {
-            let idx = child.index() as usize;
-            let tracks = albums_view_ref.get_album_tracks(idx);
+        albums_view.set_on_play(move |tracks, start_idx| {
             if !tracks.is_empty() {
                 let mut p = player.borrow_mut();
-                p.load_queue(tracks, 0);
+                p.load_queue(tracks, start_idx);
                 if let Ok(Some(track)) = p.play_current() {
                     nnp(track);
                     bar_ref.update_track(Some(track));
@@ -579,15 +655,15 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         });
     }
 
-    // --- Click en artista / álbum del artista: reproducir ---
+    // --- Click en artista / álbum del artista: navegar a canciones ---
     {
         let player = Rc::clone(&player);
         let bar_ref = Rc::clone(&bar);
         let nnp = Rc::clone(&notify_now_playing);
-        artists_view.set_on_play(move |tracks| {
+        artists_view.set_on_play(move |tracks, start_idx| {
             if !tracks.is_empty() {
                 let mut p = player.borrow_mut();
-                p.load_queue(tracks, 0);
+                p.load_queue(tracks, start_idx);
                 if let Ok(Some(track)) = p.play_current() {
                     nnp(track);
                     bar_ref.update_track(Some(track));
@@ -674,6 +750,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             let mut p = player.borrow_mut();
             p.shuffle = !p.shuffle;
             if p.shuffle {
+                p.reshuffle();
                 btn.add_css_class("accent");
             } else {
                 btn.remove_css_class("accent");
