@@ -2,57 +2,160 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches:
+      - main
 
+# ─────────────────────────────────────────────────────────────────
+# Etapa 1 – Versión
+# ─────────────────────────────────────────────────────────────────
 jobs:
-  build-rpm:
-    name: Build RPM (Fedora)
+  version:
     runs-on: ubuntu-latest
-    container:
-      image: fedora:latest
+    outputs:
+      ver: ${{ steps.get.outputs.ver }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: get
+        run: |
+          VER=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "ver=$VER" >> $GITHUB_OUTPUT
 
+# ─────────────────────────────────────────────────────────────────
+# Etapa 2 – Builds en paralelo
+# ─────────────────────────────────────────────────────────────────
+  build-linux:
+    needs: version
+    name: Build Linux (RPM)
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    env:
+      VER: ${{ needs.version.outputs.ver }}
+      LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Instalar dependencias
+      - name: Deps
         run: |
           dnf install -y \
             rust cargo \
             gtk4-devel libadwaita-devel \
             sqlite-devel pkg-config \
-            rpm-build jq
+            rpm-build
 
-      - name: Leer versión desde Cargo.toml
-        id: version
-        run: |
-          VERSION=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[0].version')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      - uses: Swatinem/rust-cache@v2
 
       - name: Compilar
         run: cargo build --release
-        env:
-          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
-          LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
 
-      - name: Construir RPM
+      - name: Empaquetar RPM
         run: |
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          cp target/release/audra ~/rpmbuild/BUILD/
+          cp target/release/audra \
+             data/com.audra.player.desktop \
+             data/icons/hicolor/scalable/apps/com.audra.player.svg \
+             ~/rpmbuild/BUILD/
           rpmbuild -bb \
-            --define "ver ${{ steps.version.outputs.version }}" \
+            --define "ver $VER" \
+            --define "_sourcedir $HOME/rpmbuild/BUILD" \
             packaging/audra.spec
 
-      - name: Localizar RPM generado
-        id: rpm
-        run: |
-          RPM=$(find ~/rpmbuild/RPMS -name '*.rpm' | head -1)
-          echo "path=$RPM" >> $GITHUB_OUTPUT
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-rpm
+          path: ~/rpmbuild/RPMS/**/*.rpm
 
-      - name: Crear release en GitHub
+# ─────────────────────────────────────────────────────────────────
+  build-windows:
+    needs: version
+    name: Build Windows (.zip)
+    runs-on: windows-latest
+    env:
+      VER: ${{ needs.version.outputs.ver }}
+      LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deps (MSYS2)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          cache: true
+          install: >-
+            mingw-w64-x86_64-gtk4
+            mingw-w64-x86_64-libadwaita
+            mingw-w64-x86_64-sqlite3
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-rust
+
+      - name: Compilar
+        shell: msys2 {0}
+        run: cargo build --release
+
+      - name: Empaquetar
+        shell: msys2 {0}
+        run: |
+          mkdir -p dist/audra
+          cp target/release/audra.exe dist/audra/
+          ldd target/release/audra.exe \
+            | grep -i mingw64 \
+            | awk '{print $3}' \
+            | xargs -I{} cp {} dist/audra/ || true
+          cd dist && zip -r ../audra-${VER}-windows-x64.zip audra/
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: audra-${{ needs.version.outputs.ver }}-windows-x64.zip
+
+# ─────────────────────────────────────────────────────────────────
+  build-macos:
+    needs: version
+    name: Build macOS (.zip)
+    runs-on: macos-latest
+    env:
+      VER: ${{ needs.version.outputs.ver }}
+      LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deps (Homebrew)
+        run: brew install gtk4 libadwaita pkg-config sqlite
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Compilar
+        run: cargo build --release
+
+      - name: Empaquetar
+        run: zip -j audra-${VER}-macos-x64.zip target/release/audra
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-zip
+          path: audra-${{ needs.version.outputs.ver }}-macos-x64.zip
+
+# ─────────────────────────────────────────────────────────────────
+# Etapa 3 – Release
+# ─────────────────────────────────────────────────────────────────
+  release:
+    needs: [version, build-linux, build-windows, build-macos]
+    name: Publicar Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar artefactos
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Crear Release en GitHub
         uses: softprops/action-gh-release@v2
         with:
-          name: Audra v${{ steps.version.outputs.version }}
-          files: ${{ steps.rpm.outputs.path }}
+          tag_name: v${{ needs.version.outputs.ver }}
+          name: Audra v${{ needs.version.outputs.ver }}
+          files: dist/**
           generate_release_notes: true
