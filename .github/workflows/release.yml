@@ -5,9 +5,6 @@ on:
     branches:
       - main
 
-# ─────────────────────────────────────────────────────────────────
-# Etapa 1 – Versión
-# ─────────────────────────────────────────────────────────────────
 jobs:
   version:
     runs-on: ubuntu-latest
@@ -20,9 +17,6 @@ jobs:
           VER=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "ver=$VER" >> $GITHUB_OUTPUT
 
-# ─────────────────────────────────────────────────────────────────
-# Etapa 2 – Builds en paralelo
-# ─────────────────────────────────────────────────────────────────
   build-linux:
     needs: version
     name: Build Linux (RPM)
@@ -37,15 +31,22 @@ jobs:
       - name: Deps
         run: |
           dnf install -y \
-            rust cargo \
+            curl gcc \
             gtk4-devel libadwaita-devel \
             sqlite-devel pkg-config \
             rpm-build
+
+      - name: Instalar Rust (rustup)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Compilar
         run: cargo build --release
+        env:
+          RUST_BACKTRACE: 1
 
       - name: Empaquetar RPM
         run: |
@@ -65,7 +66,6 @@ jobs:
           name: linux-rpm
           path: ~/rpmbuild/RPMS/**/*.rpm
 
-# ─────────────────────────────────────────────────────────────────
   build-windows:
     needs: version
     name: Build Windows (.zip)
@@ -92,17 +92,20 @@ jobs:
       - name: Compilar
         shell: msys2 {0}
         run: cargo build --release
+        env:
+          RUST_BACKTRACE: 1
 
       - name: Empaquetar
-        shell: msys2 {0}
+        shell: pwsh
         run: |
-          mkdir -p dist/audra
-          cp target/release/audra.exe dist/audra/
-          ldd target/release/audra.exe \
-            | grep -i mingw64 \
-            | awk '{print $3}' \
-            | xargs -I{} cp {} dist/audra/ || true
-          cd dist && zip -r ../audra-${VER}-windows-x64.zip audra/
+          New-Item -ItemType Directory -Force dist\audra
+          Copy-Item target\release\audra.exe dist\audra\
+          $mingw = "C:\msys64\mingw64\bin"
+          $deps = (& "C:\msys64\usr\bin\ldd.exe" target\release\audra.exe) |
+                  Select-String $mingw |
+                  ForEach-Object { ($_ -split '\s+')[2] }
+          $deps | ForEach-Object { Copy-Item $_ dist\audra\ -ErrorAction SilentlyContinue }
+          Compress-Archive -Path dist\audra -DestinationPath "audra-$env:VER-windows-x64.zip"
 
       - name: Subir artefacto
         uses: actions/upload-artifact@v4
@@ -110,7 +113,6 @@ jobs:
           name: windows-zip
           path: audra-${{ needs.version.outputs.ver }}-windows-x64.zip
 
-# ─────────────────────────────────────────────────────────────────
   build-macos:
     needs: version
     name: Build macOS (.zip)
@@ -138,9 +140,6 @@ jobs:
           name: macos-zip
           path: audra-${{ needs.version.outputs.ver }}-macos-x64.zip
 
-# ─────────────────────────────────────────────────────────────────
-# Etapa 3 – Release
-# ─────────────────────────────────────────────────────────────────
   release:
     needs: [version, build-linux, build-windows, build-macos]
     name: Publicar Release
