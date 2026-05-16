@@ -83,11 +83,6 @@ impl Player {
         self.play_current()
     }
 
-    pub fn stop(&mut self) {
-        self.engine.stop();
-        self.state = PlayerState::Stopped;
-    }
-
     pub fn set_volume(&mut self, v: f32) {
         self.volume = v;
         self.engine.set_volume(v);

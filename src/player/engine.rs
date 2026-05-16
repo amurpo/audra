@@ -44,12 +44,6 @@ impl AudioEngine {
         }
     }
 
-    pub fn stop(&self) {
-        if let Some(sink) = self.sink.lock().unwrap().as_ref() {
-            sink.stop();
-        }
-    }
-
     pub fn set_volume(&self, volume: f32) {
         if let Some(sink) = self.sink.lock().unwrap().as_ref() {
             sink.set_volume(volume.clamp(0.0, 1.0));
@@ -63,15 +57,6 @@ impl AudioEngine {
             .as_ref()
             .map(|s| s.empty())
             .unwrap_or(true)
-    }
-
-    pub fn is_paused(&self) -> bool {
-        self.sink
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map(|s| s.is_paused())
-            .unwrap_or(false)
     }
 
     pub fn get_pos(&self) -> std::time::Duration {

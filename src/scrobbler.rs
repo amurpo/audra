@@ -78,24 +78,6 @@ impl LastFmClient {
         }
     }
 
-    pub fn authenticate(&self, token: &str) -> Result<String> {
-        let mut params: HashMap<&str, String> = HashMap::new();
-        params.insert("method", "auth.getSession".to_string());
-        params.insert("api_key", self.api_key.clone());
-        params.insert("token", token.to_string());
-        let sig = self.sign(params.clone());
-        params.insert("api_sig", sig);
-        params.insert("format", "json".to_string());
-
-        let resp: SessionResponse = self.client
-            .get(API_URL)
-            .query(&params)
-            .send()?
-            .json()?;
-
-        Ok(resp.session.key)
-    }
-
     pub fn scrobble(&self, artist: &str, track: &str, album: &str, timestamp: i64) -> Result<()> {
         let sk = self.session_key.as_deref().ok_or(anyhow::anyhow!("Sin sesión Last.fm"))?;
 
