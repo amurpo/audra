@@ -408,6 +408,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         .bidirectional()
         .build();
 
+    search_bar.set_key_capture_widget(Some(&window));
+
     // --- Player y vistas ---
     let player: Rc<RefCell<Player>> = Rc::new(RefCell::new(
         Player::new().expect("Error iniciando el motor de audio"),
@@ -482,8 +484,13 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // --- Búsqueda en tiempo real ---
     {
         let lib_view = Rc::clone(&lib_view);
+        let albums_view = Rc::clone(&albums_view);
+        let artists_view = Rc::clone(&artists_view);
         search_entry.connect_search_changed(move |entry| {
-            lib_view.borrow_mut().filter(&entry.text());
+            let query = entry.text();
+            lib_view.borrow_mut().filter(&query);
+            albums_view.filter(&query);
+            artists_view.filter(&query);
         });
     }
 

@@ -89,6 +89,24 @@ impl AlbumsView {
             .unwrap_or_default()
     }
 
+    pub fn filter(&self, query: &str) {
+        if query.is_empty() {
+            self.flow.set_filter_func(|_| true);
+        } else {
+            let q = query.to_lowercase();
+            let albums = Rc::clone(&self.albums_data);
+            self.flow.set_filter_func(move |child| {
+                let idx = child.index() as usize;
+                if let Some(album) = albums.borrow().get(idx) {
+                    album.name.to_lowercase().contains(&q)
+                        || album.artist.to_lowercase().contains(&q)
+                } else {
+                    false
+                }
+            });
+        }
+    }
+
     fn start_cover_fetch(&self, albums: Vec<(String, String, String)>, db: Arc<Mutex<Database>>) {
         use std::sync::atomic::{AtomicBool, Ordering};
 

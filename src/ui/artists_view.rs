@@ -95,6 +95,23 @@ impl ArtistsView {
         *self.on_play.borrow_mut() = Some(std::boxed::Box::new(callback));
     }
 
+    pub fn filter(&self, query: &str) {
+        if query.is_empty() {
+            self.flow.set_filter_func(|_| true);
+        } else {
+            let q = query.to_lowercase();
+            let artists = Rc::clone(&self.artists_list);
+            self.flow.set_filter_func(move |child| {
+                let idx = child.index() as usize;
+                if let Some(artist) = artists.borrow().get(idx) {
+                    artist.name.to_lowercase().contains(&q)
+                } else {
+                    false
+                }
+            });
+        }
+    }
+
     pub fn load_artists(&self, artists: Vec<Artist>, albums: Vec<Album>) {
         while let Some(child) = self.flow.first_child() {
             self.flow.remove(&child);

@@ -123,13 +123,10 @@ impl LibraryView {
     }
 
     fn apply_displayed(&mut self, tracks: Vec<Track>) {
-        *self.displayed.borrow_mut() = tracks.clone();
-        while self.model.n_items() > 0 {
-            self.model.remove(0);
-        }
-        for _ in &tracks {
-            self.model.append("");
-        }
+        let n = self.model.n_items();
+        let additions: Vec<&str> = tracks.iter().map(|_| "").collect();
+        *self.displayed.borrow_mut() = tracks;
+        self.model.splice(0, n, &additions);
     }
 
     pub fn all_tracks(&self) -> Vec<Track> {
