@@ -67,7 +67,12 @@ impl Player {
         let next_idx = if self.shuffle {
             rand::random::<usize>() % len
         } else {
-            self.index.map(|i| (i + 1) % len).unwrap_or(0)
+            let current = self.index.unwrap_or(0);
+            if current + 1 >= len {
+                self.state = PlayerState::Stopped;
+                return Ok(None);
+            }
+            current + 1
         };
         self.index = Some(next_idx);
         self.play_current()

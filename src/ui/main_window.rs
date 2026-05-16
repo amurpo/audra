@@ -209,14 +209,12 @@ fn show_lastfm_dialog(
         #[strong] db,
         #[strong] lastfm,
         move |btn| {
-            let api_key = crate::credentials::API_KEY.to_string();
-            let api_secret = crate::credentials::API_SECRET.to_string();
             let username = user_row.text().to_string();
             let password = pass_row.text().to_string();
 
-            if api_key.is_empty() || api_secret.is_empty() {
+            if !LastFmClient::is_configured() {
                 status_label.set_markup(
-                    "<span foreground='#e01b24'>La app no tiene API Key compilada. Compila con LASTFM_API_KEY y LASTFM_API_SECRET.</span>",
+                    "<span foreground='#e01b24'>La app no tiene proxy compilado. Compila con LASTFM_PROXY_URL y LASTFM_APP_TOKEN.</span>",
                 );
                 return;
             }
@@ -236,7 +234,7 @@ fn show_lastfm_dialog(
             let lastfm2 = Arc::clone(&lastfm);
 
             std::thread::spawn(move || {
-                let client = LastFmClient::new(&api_key, &api_secret);
+                let client = LastFmClient::new();
                 match client.authenticate_with_password(&username, &password) {
                     Ok(sk) => {
                         {
@@ -244,8 +242,7 @@ fn show_lastfm_dialog(
                             let _ = db_g.set_setting("lastfm_session_key", &sk);
                             let _ = db_g.set_setting("lastfm_username", &username);
                         }
-                        let new_client =
-                            LastFmClient::new(&api_key, &api_secret).with_session(&sk);
+                        let new_client = LastFmClient::new().with_session(&sk);
                         *lastfm2.lock().unwrap() = Some(new_client);
                         let _ = tx.send(Ok(username));
                     }
@@ -337,15 +334,23 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // --- Estado Last.fm: cargado al inicio ---
     let lastfm: Arc<Mutex<Option<LastFmClient>>> = Arc::new(Mutex::new(None));
     {
-        let api_key = crate::credentials::API_KEY;
-        let api_secret = crate::credentials::API_SECRET;
-        if !api_key.is_empty() && !api_secret.is_empty() {
+        if LastFmClient::is_configured() {
             let db_g = db.lock().unwrap();
             if let Some(sk) = db_g.get_setting("lastfm_session_key").filter(|s| !s.is_empty()) {
-                *lastfm.lock().unwrap() =
-                    Some(LastFmClient::new(api_key, api_secret).with_session(&sk));
+                *lastfm.lock().unwrap() = Some(LastFmClient::new().with_session(&sk));
             }
         }
+    }
+    // Flush de scrobbles pendientes al arrancar
+    {
+        let lf = Arc::clone(&lastfm);
+        let db_flush = Arc::clone(&db);
+        std::thread::spawn(move || {
+            let guard = lf.lock().unwrap();
+            if let Some(client) = guard.as_ref() {
+                client.flush_queue(&db_flush.lock().unwrap());
+            }
+        });
     }
 
     // --- Header bar ---
@@ -436,7 +441,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             std::thread::spawn(move || {
                 let guard = lf.lock().unwrap();
                 if let Some(client) = guard.as_ref() {
-                    let _ = client.update_now_playing(&artist, &title, &album);
+                    client.update_now_playing(&artist, &title, &album);
                 }
             });
         })
@@ -744,14 +749,23 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                                     .duration_since(std::time::UNIX_EPOCH)
                                     .unwrap_or_default()
                                     .as_secs() as i64;
-                                let artist = track.artist.clone().unwrap_or_default();
-                                let title = track.title.clone().unwrap_or_default();
-                                let album = track.album.clone().unwrap_or_default();
-                                let lf = Arc::clone(&lastfm);
+                                let artist   = track.artist.clone().unwrap_or_default();
+                                let title    = track.title.clone().unwrap_or_default();
+                                let album    = track.album.clone().unwrap_or_default();
+                                let track_id = track.id;
+                                let lf       = Arc::clone(&lastfm);
+                                let db_sc    = Arc::clone(&db);
                                 std::thread::spawn(move || {
                                     let guard = lf.lock().unwrap();
                                     if let Some(client) = guard.as_ref() {
-                                        let _ = client.scrobble(&artist, &title, &album, ts);
+                                        if client.scrobble(&artist, &title, &album, ts).is_err() {
+                                            // Sin conexión o proxy caído — encolar para resync
+                                            if let Some(id) = track_id {
+                                                let _ = db_sc.lock().unwrap()
+                                                    .queue_scrobble(id, &ts.to_string());
+                                                log::warn!("scrobbler: encolado '{}' - '{}'", artist, title);
+                                            }
+                                        }
                                     }
                                 });
                             }

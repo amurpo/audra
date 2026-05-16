@@ -27,7 +27,6 @@ pub struct ArtistsView {
     artists_list: Rc<RefCell<Vec<Artist>>>,
     all_albums: Rc<RefCell<Vec<Album>>>,
     on_play: Rc<RefCell<Option<PlayCallback>>>,
-    db: Arc<Mutex<Database>>,
     avatars: AvatarMap,
 }
 
@@ -95,7 +94,7 @@ impl ArtistsView {
             });
         }
 
-        Self { root: nav, flow, artists_list, all_albums, on_play, db, avatars }
+        Self { root: nav, flow, artists_list, all_albums, on_play, avatars }
     }
 
     pub fn set_on_play(&self, callback: impl Fn(Vec<Track>) + 'static) {
