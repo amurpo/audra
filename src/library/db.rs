@@ -45,6 +45,12 @@ impl Database {
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS album_covers (
+                artist TEXT NOT NULL,
+                album  TEXT NOT NULL,
+                data   BLOB NOT NULL,
+                PRIMARY KEY (artist, album)
+            );
         ")?;
         Ok(())
     }
@@ -142,6 +148,24 @@ impl Database {
         self.conn.execute(
             "DELETE FROM settings WHERE key = ?1",
             params![key],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_cover(&self, artist: &str, album: &str) -> Option<Vec<u8>> {
+        self.conn
+            .query_row(
+                "SELECT data FROM album_covers WHERE artist = ?1 AND album = ?2",
+                params![artist, album],
+                |row| row.get(0),
+            )
+            .ok()
+    }
+
+    pub fn set_cover(&self, artist: &str, album: &str, data: &[u8]) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO album_covers (artist, album, data) VALUES (?1, ?2, ?3)",
+            params![artist, album, data],
         )?;
         Ok(())
     }

@@ -415,7 +415,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     let lib_view = Rc::new(RefCell::new(LibraryView::new()));
     let albums_view = Rc::new(AlbumsView::new());
-    let artists_view = Rc::new(ArtistsView::new());
+    let artists_view = Rc::new(ArtistsView::new(Arc::clone(&db)));
     let bar = Rc::new(PlayerBar::new());
 
     // Tracker de scrobbling (sólo hilo principal)
@@ -446,7 +446,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         lib_view.borrow_mut().load_tracks(tracks.clone());
         let albums = library::group_into_albums(&tracks);
         let artists = library::group_into_artists(&albums);
-        albums_view.load_albums(albums.clone());
+        albums_view.load_albums(albums.clone(), Arc::clone(&db));
         artists_view.load_artists(artists, albums);
     }
 
@@ -522,7 +522,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
                                 let albums = library::group_into_albums(&all);
                                 let artists = library::group_into_artists(&albums);
-                                albums_view.load_albums(albums.clone());
+                                albums_view.load_albums(albums.clone(), Arc::clone(&db));
                                 artists_view.load_artists(artists, albums);
                             }
                         }

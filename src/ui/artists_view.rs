@@ -8,7 +8,9 @@ use adw::prelude::*;
 use gdk_pixbuf;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 use crate::library::{Artist, Album, Track};
+use crate::library::db::Database;
 
 const CARD_SIZE: i32 = 200;
 
@@ -20,10 +22,11 @@ pub struct ArtistsView {
     artists_list: Rc<RefCell<Vec<Artist>>>,
     all_albums: Rc<RefCell<Vec<Album>>>,
     on_play: Rc<RefCell<Option<PlayCallback>>>,
+    db: Arc<Mutex<Database>>,
 }
 
 impl ArtistsView {
-    pub fn new() -> Self {
+    pub fn new(db: Arc<Mutex<Database>>) -> Self {
         let nav = adw::NavigationView::new();
 
         let flow = FlowBox::new();
@@ -56,24 +59,36 @@ impl ArtistsView {
             let artists_c = Rc::clone(&artists_list);
             let albums_c = Rc::clone(&all_albums);
             let on_play_c = Rc::clone(&on_play);
+            let db_c = Arc::clone(&db);
 
             flow.connect_child_activated(move |_, child| {
                 let idx = child.index() as usize;
                 let artist_name = artists_c.borrow().get(idx).map(|a| a.name.clone());
                 if let Some(name) = artist_name {
-                    let artist_albums: Vec<Album> = albums_c
+                    let mut artist_albums: Vec<Album> = albums_c
                         .borrow()
                         .iter()
                         .filter(|a| a.artist == name)
                         .cloned()
                         .collect();
+
+                    // Cargar portadas desde cache DB (rápido, sin I/O de audio)
+                    {
+                        let db_g = db_c.lock().unwrap();
+                        for album in &mut artist_albums {
+                            if album.cover.is_none() {
+                                album.cover = db_g.get_cover(&album.artist, &album.name);
+                            }
+                        }
+                    }
+
                     let page = make_artist_detail_page(&name, artist_albums, Rc::clone(&on_play_c));
                     nav_c.push(&page);
                 }
             });
         }
 
-        Self { root: nav, flow, artists_list, all_albums, on_play }
+        Self { root: nav, flow, artists_list, all_albums, on_play, db }
     }
 
     pub fn set_on_play(&self, callback: impl Fn(Vec<Track>) + 'static) {

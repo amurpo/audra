@@ -30,7 +30,7 @@ pub fn group_into_albums(tracks: &[Track]) -> Vec<Album> {
         .into_iter()
         .map(|((artist, name), mut tracks)| {
             tracks.sort_by_key(|t| t.track_num.unwrap_or(999));
-            let cover = tracks.first().and_then(|t| art::read_cover_art(&t.path));
+            let cover = None; // cargado de forma asíncrona por la UI
             Album { name, artist, tracks, cover }
         })
         .collect();
