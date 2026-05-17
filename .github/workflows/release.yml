@@ -98,6 +98,8 @@ jobs:
             mingw-w64-x86_64-python
             mingw-w64-x86_64-python-pip
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Compilar
         shell: msys2 {0}
         run: cargo build --release
@@ -165,7 +167,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Deps (Homebrew)
-        run: brew install gtk4 libadwaita pkg-config sqlite
+        run: brew install gtk4 libadwaita pkg-config sqlite dylibbundler librsvg
 
       - uses: Swatinem/rust-cache@v2
 
@@ -174,7 +176,6 @@ jobs:
 
       - name: Bundlear dylibs y recursos
         run: |
-          brew install dylibbundler
           BREW=/opt/homebrew
           mkdir -p dist/audra/libs
 
@@ -182,7 +183,12 @@ jobs:
           dylibbundler -od -b \
             -x dist/audra/audra \
             -d dist/audra/libs/ \
-            -p @executable_path/libs/
+            -p @executable_path/libs/ \
+            -s /opt/homebrew/lib \
+            -s /opt/homebrew/opt/librsvg/lib \
+            -s /opt/homebrew/opt/glib/lib \
+            -s /opt/homebrew/opt/gtk4/lib \
+            -s /opt/homebrew/opt/libadwaita/lib
 
           # Schemas de GLib
           mkdir -p dist/audra/share/glib-2.0/schemas
