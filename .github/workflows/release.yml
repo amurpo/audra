@@ -181,9 +181,11 @@ jobs:
 
           cp target/release/audra dist/audra/
 
-          # Copiar librsvg manualmente antes de dylibbundler
-          # (el nombre del dylib varía según versión instalada)
-          cp "$BREW/opt/librsvg/lib/"librsvg-*.dylib dist/audra/libs/ 2>/dev/null || true
+          # Resolver librsvg: copiarla con el nombre exacto que los loaders esperan
+          LIBRSVG_REAL=$(ls "$BREW/opt/librsvg/lib/"librsvg-*.dylib 2>/dev/null | head -1)
+          if [ -n "$LIBRSVG_REAL" ]; then
+            cp "$LIBRSVG_REAL" dist/audra/libs/librsvg-2.2.dylib
+          fi
 
           dylibbundler -od -b \
             -x dist/audra/audra \
@@ -213,9 +215,16 @@ jobs:
           if [ -d "$BREW/lib/gdk-pixbuf-2.0" ]; then
             mkdir -p dist/audra/lib
             cp -r "$BREW/lib/gdk-pixbuf-2.0" dist/audra/lib/
-            # Copiar dylibs de los loaders también
+
+            # Procesar cada loader con dylibbundler usando -s apuntando a libs/ ya poblado
             find dist/audra/lib/gdk-pixbuf-2.0 -name "*.so" | while read loader; do
-              dylibbundler -od -b -x "$loader" -d dist/audra/libs/ -p @executable_path/libs/ || true
+              dylibbundler -od -b \
+                -x "$loader" \
+                -d dist/audra/libs/ \
+                -p @executable_path/libs/ \
+                -s dist/audra/libs/ \
+                -s /opt/homebrew/lib \
+                -s /opt/homebrew/opt/librsvg/lib || true
             done
           fi
 
@@ -227,7 +236,7 @@ jobs:
           gtk-theme-name=Adwaita
           EOF
 
-          # Script launcher que configura las variables de entorno
+          # Script launcher
           cat > dist/audra/audra-launch.sh << 'EOF'
           #!/bin/bash
           DIR="$(cd "$(dirname "$0")" && pwd)"
