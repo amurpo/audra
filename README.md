@@ -1,3 +1,4 @@
+[![Release](https://github.com/amurpo/audra/actions/workflows/release.yml/badge.svg)](https://github.com/amurpo/audra/actions/workflows/release.yml)
 # Audra
 
 Reproductor de música nativo para Linux, construido con GTK4 y libadwaita.
