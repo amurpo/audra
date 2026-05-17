@@ -173,13 +173,13 @@ jobs:
         run: cargo build --release
 
       - name: Empaquetar
-        run: zip -j audra-${VER}-macos-x64.zip target/release/audra
+        run: zip -j audra-${VER}-macos-arm64.zip target/release/audra
 
       - name: Subir artefacto
         uses: actions/upload-artifact@v7
         with:
           name: macos-zip
-          path: audra-${{ needs.version.outputs.ver }}-macos-x64.zip
+          path: audra-${{ needs.version.outputs.ver }}-macos-arm64.zip
 
   release:
     needs: [version, build-linux, build-windows, build-macos]

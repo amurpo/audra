@@ -1,15 +1,15 @@
 Name:           audra
 Version:        %{ver}
 Release:        1%{?dist}
-Summary:        Reproductor de música nativo para Linux con scrobbling de Last.fm
+Summary:        Native music player for Linux with Last.fm scrobbling
 License:        GPL-3.0-or-later
 
 Requires:       gtk4
 Requires:       libadwaita
 
 %description
-Audra es un reproductor de música nativo para Linux (GTK4/libadwaita)
-con integración de Last.fm y scrobbling automático.
+Audra is a native music player for Linux (GTK4/libadwaita)
+with Last.fm integration and automatic scrobbling.
 
 %install
 install -Dm755 %{_sourcedir}/audra          %{buildroot}%{_bindir}/audra
@@ -45,4 +45,4 @@ install -Dm644 %{_sourcedir}/com.audra.player.svg \
 
 %changelog
 * Thu Jan 01 2026 Daniel Avila <daigo.tnt@gmail.com> - %{ver}-1
-- Versión inicial
+- Initial release

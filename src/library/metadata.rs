@@ -97,7 +97,14 @@ fn audiodb_album_cover(
         .json()
         .ok()?;
 
-    let url = resp["album"][0]["strAlbumThumb"].as_str()?.to_string();
+    let albums = resp["album"].as_array().filter(|a| !a.is_empty()).or_else(|| {
+        log::debug!("metadata: TheAudioDB no encontró álbum '{}' - '{}'", artist, album);
+        None
+    })?;
+    let url = albums[0]["strAlbumThumb"].as_str().or_else(|| {
+        log::debug!("metadata: TheAudioDB sin imagen para '{}' - '{}'", artist, album);
+        None
+    })?.to_string();
     let data = download(client, &url)?;
     log::debug!("metadata: carátula TheAudioDB '{}' - '{}'", artist, album);
     Some(data)
@@ -135,8 +142,16 @@ fn deezer_artist_photo(client: &reqwest::blocking::Client, artist: &str) -> Opti
         .json()
         .ok()?;
 
-    let url = resp["data"][0]["picture_xl"].as_str()
-        .or_else(|| resp["data"][0]["picture_big"].as_str())?
+    let data = resp["data"].as_array().filter(|a| !a.is_empty()).or_else(|| {
+        log::debug!("metadata: Deezer no encontró artista '{}'", artist);
+        None
+    })?;
+    let url = data[0]["picture_xl"].as_str()
+        .or_else(|| data[0]["picture_big"].as_str())
+        .or_else(|| {
+            log::debug!("metadata: Deezer sin foto para '{}'", artist);
+            None
+        })?
         .to_string();
 
     // Deezer retorna "artist//" (hash vacío) cuando no tiene foto del artista
@@ -155,7 +170,10 @@ fn audiodb_artist_photo(client: &reqwest::blocking::Client, artist: &str) -> Opt
         .json()
         .ok()?;
 
-    resp["artists"][0]["strArtistThumb"].as_str().map(|s| s.to_string())
+    resp["artists"].as_array()
+        .filter(|a| !a.is_empty())
+        .and_then(|a| a[0]["strArtistThumb"].as_str())
+        .map(|s| s.to_string())
 }
 
 // Último recurso: portada del álbum más reciente vía iTunes (música-específico, sin clave)
@@ -173,6 +191,12 @@ fn itunes_album_art(client: &reqwest::blocking::Client, artist: &str) -> Option<
         .json()
         .ok()?;
 
-    let url = resp["results"][0]["artworkUrl100"].as_str()?;
+    let url = resp["results"].as_array()
+        .filter(|a| !a.is_empty())
+        .and_then(|a| a[0]["artworkUrl100"].as_str())
+        .or_else(|| {
+            log::debug!("metadata: iTunes sin resultado para '{}'", artist);
+            None
+        })?;
     Some(url.replace("100x100bb", "600x600bb"))
 }
