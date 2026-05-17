@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::{
     Box, Button, CenterBox, Image, Label, Orientation,
-    ProgressBar, Scale, Align,
+    ProgressBar, Scale, Align, Stack, StackTransitionType,
 };
 use crate::library::Track;
 
@@ -21,6 +21,7 @@ pub struct PlayerBar {
     pub prog_bar: ProgressBar,
     pub vol_scale: Scale,
     cover_img: Image,
+    cover_stack: Stack,
 }
 
 impl PlayerBar {
@@ -29,14 +30,38 @@ impl PlayerBar {
         root.set_vexpand(false);
 
         // --- Carátula ---
+        // Stack con dos hijos: placeholder (CSS+Unicode) y la imagen real.
+        // Usar un Stack en lugar de Image::from_icon_name evita la dependencia
+        // del tema de íconos del sistema, que produce resultados distintos en
+        // Fedora, Debian y Windows.
+        let cover_stack = Stack::new();
+        cover_stack.set_transition_type(StackTransitionType::Crossfade);
+        cover_stack.set_transition_duration(150);
+        cover_stack.set_halign(Align::Fill);
+        cover_stack.set_valign(Align::Fill);
+
+        let placeholder_box = Box::new(Orientation::Vertical, 0);
+        placeholder_box.add_css_class("bar-cover-placeholder");
+        placeholder_box.set_halign(Align::Fill);
+        placeholder_box.set_valign(Align::Fill);
+        let note_lbl = Label::new(Some("♪"));
+        note_lbl.add_css_class("bar-cover-note");
+        note_lbl.add_css_class("dim-label");
+        note_lbl.set_halign(Align::Center);
+        note_lbl.set_valign(Align::Center);
+        note_lbl.set_vexpand(true);
+        placeholder_box.append(&note_lbl);
+
         // set_pixel_size hace que Image reporte exactamente COVER_SIZE como tamaño
-        // natural sin importar qué paintable esté cargado. Es la única forma
-        // en GTK4 de fijar el tamaño máximo de un Image sin subclassing ni CSS max-*.
-        let cover_img = Image::from_icon_name("audio-x-generic-symbolic");
+        // natural sin importar qué paintable esté cargado.
+        let cover_img = Image::new();
         cover_img.set_pixel_size(COVER_SIZE);
-        cover_img.add_css_class("dim-label");
-        cover_img.set_hexpand(false);
-        cover_img.set_vexpand(false);
+        cover_img.set_halign(Align::Fill);
+        cover_img.set_valign(Align::Fill);
+
+        cover_stack.add_named(&placeholder_box, Some("placeholder"));
+        cover_stack.add_named(&cover_img, Some("art"));
+        cover_stack.set_visible_child_name("placeholder");
 
         // Wrapper para overflow:hidden + border-radius (Image solo no puede clipear)
         let cover_wrap = Box::new(Orientation::Horizontal, 0);
@@ -47,7 +72,7 @@ impl PlayerBar {
         cover_wrap.set_halign(Align::Start);
         cover_wrap.set_valign(Align::Center);
         cover_wrap.set_overflow(gtk4::Overflow::Hidden);
-        cover_wrap.append(&cover_img);
+        cover_wrap.append(&cover_stack);
 
         // --- Zona central: controles + info ---
         let center = Box::new(Orientation::Vertical, 4);
@@ -176,6 +201,7 @@ impl PlayerBar {
             prog_bar,
             vol_scale,
             cover_img,
+            cover_stack,
         }
     }
 
@@ -189,7 +215,7 @@ impl PlayerBar {
                 self.prog_bar.set_fraction(0.0);
             }
             None => {
-                self.cover_img.set_icon_name(Some("audio-x-generic-symbolic"));
+                self.cover_stack.set_visible_child_name("placeholder");
                 self.lbl_title.set_text("Sin reproducción");
                 self.lbl_artist.set_text("");
                 self.lbl_total.set_text("0:00");
@@ -203,15 +229,12 @@ impl PlayerBar {
         if let Some(data) = bytes {
             let gbytes = glib::Bytes::from(data);
             if let Ok(texture) = gtk4::gdk::Texture::from_bytes(&gbytes) {
-                // pixel_size ya está en COVER_SIZE: Image renderiza la textura
-                // a ese tamaño exacto sin importar las dimensiones originales
                 self.cover_img.set_paintable(Some(&texture));
-                self.cover_img.remove_css_class("dim-label");
+                self.cover_stack.set_visible_child_name("art");
                 return;
             }
         }
-        self.cover_img.set_icon_name(Some("audio-x-generic-symbolic"));
-        self.cover_img.add_css_class("dim-label");
+        self.cover_stack.set_visible_child_name("placeholder");
     }
 
     pub fn update_progress(&self, elapsed_secs: f64, total_secs: f64) {

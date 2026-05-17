@@ -30,7 +30,6 @@ picture.artist-image {
 }
 flowboxchild.mosaic-child {
     padding: 0;
-    cursor: pointer;
     transition: opacity 120ms;
 }
 flowboxchild.mosaic-child:hover {
@@ -61,12 +60,28 @@ flowboxchild.mosaic-child:hover {
 }
 flowboxchild.artist-card {
     border-radius: 12px;
-    cursor: pointer;
     transition: background-color 150ms;
     padding: 4px;
 }
 flowboxchild.artist-card:hover {
     background-color: alpha(currentColor, 0.07);
+}
+.scan-loading-overlay {
+    background-color: alpha(@window_bg_color, 0.92);
+}
+.scan-loading-card {
+    border-radius: 18px;
+    padding: 36px 52px;
+}
+.bar-cover-placeholder {
+    border-radius: 6px;
+    background-color: alpha(currentColor, 0.06);
+}
+.bar-cover-note {
+    font-size: 26px;
+}
+.album-cover-note {
+    font-size: 52px;
 }
 ";
 
@@ -563,7 +578,35 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     toolbar_view.set_content(Some(&view_stack));
     toolbar_view.add_bottom_bar(&bar.root);
 
-    window.set_content(Some(&toolbar_view));
+    let scan_overlay = gtk4::Overlay::new();
+    scan_overlay.set_child(Some(&toolbar_view));
+
+    let scan_loading_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    scan_loading_box.add_css_class("scan-loading-overlay");
+    scan_loading_box.set_visible(false);
+
+    let scan_card = gtk4::Box::new(gtk4::Orientation::Vertical, 16);
+    scan_card.add_css_class("scan-loading-card");
+    scan_card.set_halign(gtk4::Align::Center);
+    scan_card.set_valign(gtk4::Align::Center);
+
+    let scan_spinner = gtk4::Spinner::new();
+    scan_spinner.set_size_request(48, 48);
+
+    let scan_title_lbl = gtk4::Label::new(Some("Escaneando colección…"));
+    scan_title_lbl.add_css_class("title-2");
+
+    let scan_sub_lbl = gtk4::Label::new(Some("Esto puede tomar un momento"));
+    scan_sub_lbl.add_css_class("dim-label");
+
+    scan_card.append(&scan_spinner);
+    scan_card.append(&scan_title_lbl);
+    scan_card.append(&scan_sub_lbl);
+    scan_loading_box.append(&scan_card);
+
+    scan_overlay.add_overlay(&scan_loading_box);
+
+    window.set_content(Some(&scan_overlay));
 
     // --- Búsqueda en tiempo real ---
     {
@@ -586,6 +629,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         #[strong] albums_view,
         #[strong] artists_view,
         #[weak] popover,
+        #[weak] scan_loading_box,
+        #[weak] scan_spinner,
         move |_| {
             popover.popdown();
             let dialog = FileDialog::new();
@@ -597,24 +642,58 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                     #[strong] lib_view,
                     #[strong] albums_view,
                     #[strong] artists_view,
+                    #[weak] scan_loading_box,
+                    #[weak] scan_spinner,
                     move |result| {
                         if let Ok(file) = result {
                             if let Some(path) = file.path() {
                                 let path_str = path.to_string_lossy().to_string();
-                                let tracks = scanner::scan_folder(&path_str);
-                                {
-                                    let db = db.lock().unwrap();
-                                    for t in &tracks {
-                                        let _ = db.upsert_track(t);
-                                    }
-                                }
-                                let all = db.lock().unwrap().all_tracks().unwrap_or_default();
-                                lib_view.borrow_mut().load_tracks(all.clone());
 
-                                let albums = library::group_into_albums(&all);
-                                let artists = library::group_into_artists(&albums);
-                                albums_view.load_albums(albums.clone(), Arc::clone(&db));
-                                artists_view.load_artists(artists, albums);
+                                scan_loading_box.set_visible(true);
+                                scan_spinner.start();
+
+                                let (tx, rx) = std::sync::mpsc::channel::<Vec<crate::library::Track>>();
+                                std::thread::spawn(move || {
+                                    let tracks = scanner::scan_folder(&path_str);
+                                    let _ = tx.send(tracks);
+                                });
+
+                                let db_c = Arc::clone(&db);
+                                let lib_view_c = lib_view.clone();
+                                let albums_view_c = albums_view.clone();
+                                let artists_view_c = artists_view.clone();
+                                let loading_c = scan_loading_box.clone();
+                                let spinner_c = scan_spinner.clone();
+
+                                glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                                    use std::sync::mpsc::TryRecvError;
+                                    match rx.try_recv() {
+                                        Ok(tracks) => {
+                                            {
+                                                let db_g = db_c.lock().unwrap();
+                                                for t in &tracks {
+                                                    let _ = db_g.upsert_track(t);
+                                                }
+                                            }
+                                            let all = db_c.lock().unwrap().all_tracks().unwrap_or_default();
+                                            lib_view_c.borrow_mut().load_tracks(all.clone());
+                                            let albums = library::group_into_albums(&all);
+                                            let artists = library::group_into_artists(&albums);
+                                            albums_view_c.load_albums(albums.clone(), Arc::clone(&db_c));
+                                            artists_view_c.load_artists(artists, albums);
+
+                                            loading_c.set_visible(false);
+                                            spinner_c.stop();
+                                            glib::ControlFlow::Break
+                                        }
+                                        Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
+                                        Err(TryRecvError::Disconnected) => {
+                                            loading_c.set_visible(false);
+                                            spinner_c.stop();
+                                            glib::ControlFlow::Break
+                                        }
+                                    }
+                                });
                             }
                         }
                     }
