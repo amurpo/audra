@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box, Button, CenterBox, Image, Label, Orientation,
+    Box, Button, CenterBox, GestureClick, Image, Label, Orientation,
     ProgressBar, Scale, Align, Stack, StackTransitionType,
 };
 use crate::library::Track;
@@ -18,6 +18,8 @@ pub struct PlayerBar {
     pub lbl_artist: Label,
     pub lbl_elapsed: Label,
     pub lbl_total: Label,
+    pub lbl_volume: Label,
+    pub prog_gesture: GestureClick,
     pub prog_bar: ProgressBar,
     pub vol_scale: Scale,
     cover_img: Image,
@@ -142,8 +144,15 @@ impl PlayerBar {
         vol_scale.set_draw_value(false);
         vol_scale.set_tooltip_text(Some("Volumen"));
 
+        let lbl_volume = Label::new(Some("100%"));
+        lbl_volume.add_css_class("dim-label");
+        lbl_volume.add_css_class("caption");
+        lbl_volume.set_width_chars(4);
+        lbl_volume.set_xalign(1.0);
+
         vol_box.append(&vol_icon);
         vol_box.append(&vol_scale);
+        vol_box.append(&lbl_volume);
 
         // CenterBox: centra los controles sin importar el ancho de cover o volumen
         let top_row = CenterBox::new();
@@ -173,6 +182,8 @@ impl PlayerBar {
         let prog_bar = ProgressBar::new();
         prog_bar.set_hexpand(true);
         prog_bar.set_valign(Align::Center);
+        let prog_gesture = GestureClick::new();
+        prog_bar.add_controller(prog_gesture.clone());
 
         let lbl_total = Label::new(Some("0:00"));
         lbl_total.add_css_class("dim-label");
@@ -199,7 +210,9 @@ impl PlayerBar {
             lbl_elapsed,
             lbl_total,
             prog_bar,
+            prog_gesture,
             vol_scale,
+            lbl_volume,
             cover_img,
             cover_stack,
         }
