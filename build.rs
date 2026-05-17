@@ -11,7 +11,6 @@ fn main() {
     fs::write(Path::new(&out_dir).join("credentials_gen.rs"), content).unwrap();
 
     if env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
-        println!("cargo:rustc-link-arg=/SUBSYSTEM:WINDOWS");
-        println!("cargo:rustc-link-arg=/ENTRY:mainCRTStartup");
+        println!("cargo:rustc-link-arg=-mwindows");
     }
 }
