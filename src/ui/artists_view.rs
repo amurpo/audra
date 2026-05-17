@@ -5,8 +5,8 @@ use gtk4::{
 };
 use libadwaita as adw;
 use adw::prelude::*;
-use gdk_pixbuf;
 use glib;
+use crate::ui::image_utils::{scale_to_pixels, pixels_to_texture};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -32,7 +32,7 @@ pub struct ArtistsView {
 }
 
 impl ArtistsView {
-    pub fn new(db: Arc<Mutex<Database>>) -> Self {
+    pub fn new(db: Arc<Mutex<Database>>, current_path: Rc<RefCell<Option<String>>>) -> Self {
         let nav = adw::NavigationView::new();
 
         let flow = FlowBox::new();
@@ -67,6 +67,7 @@ impl ArtistsView {
             let albums_c = Rc::clone(&all_albums);
             let on_play_c = Rc::clone(&on_play);
             let db_c = Arc::clone(&db);
+            let current_path_c = Rc::clone(&current_path);
 
             flow.connect_child_activated(move |_, child| {
                 let idx = child.index() as usize;
@@ -93,6 +94,7 @@ impl ArtistsView {
                         &name,
                         artist_albums,
                         Rc::clone(&on_play_c),
+                        Rc::clone(&current_path_c),
                     );
                     nav_c.push(&page);
                 }
@@ -190,6 +192,7 @@ fn make_artist_detail_page(
     artist_name: &str,
     albums: Vec<Album>,
     on_play: Rc<RefCell<Option<PlayCallback>>>,
+    current_path: Rc<RefCell<Option<String>>>,
 ) -> adw::NavigationPage {
     let header = adw::HeaderBar::new();
     header.set_show_end_title_buttons(false);
@@ -238,10 +241,15 @@ fn make_artist_detail_page(
         let albums_c = Rc::clone(&albums_rc);
         let on_play_c = Rc::clone(&on_play);
         let nav_c = nav.clone();
+        let current_path_c = Rc::clone(&current_path);
         flow.connect_child_activated(move |_, child| {
             let idx = child.index() as usize;
             if let Some(album) = albums_c.get(idx) {
-                let page = make_album_detail_page(album, Rc::clone(&on_play_c));
+                let page = make_album_detail_page(
+                    album,
+                    Rc::clone(&on_play_c),
+                    Rc::clone(&current_path_c),
+                );
                 nav_c.push(&page);
             }
         });
@@ -256,39 +264,6 @@ fn make_artist_detail_page(
     toolbar.set_content(Some(&scroll));
 
     adw::NavigationPage::new(&toolbar, artist_name)
-}
-
-fn scale_to_pixels(data: &[u8], size: i32) -> Option<(Vec<u8>, i32, bool)> {
-    let loader = gdk_pixbuf::PixbufLoader::new();
-    let _ = loader.write(data);
-    let _ = loader.close();
-    let src = loader.pixbuf()?;
-    let w = src.width();
-    let h = src.height();
-    let (sw, sh) = if w <= h {
-        (size, size * h / w)
-    } else {
-        (size * w / h, size)
-    };
-    let scaled = src.scale_simple(sw, sh, gdk_pixbuf::InterpType::Bilinear)?;
-    let x = (sw - size) / 2;
-    let y = (sh - size) / 2;
-    let dest = gdk_pixbuf::Pixbuf::new(src.colorspace(), src.has_alpha(), src.bits_per_sample(), size, size)?;
-    scaled.copy_area(x, y, size, size, &dest, 0, 0);
-    let rowstride = dest.rowstride();
-    let has_alpha = dest.has_alpha();
-    let pixels = dest.read_pixel_bytes().to_vec();
-    Some((pixels, rowstride, has_alpha))
-}
-
-fn pixels_to_texture(pixels: Vec<u8>, rowstride: i32, has_alpha: bool, size: i32) -> gtk4::gdk::Texture {
-    let format = if has_alpha {
-        gtk4::gdk::MemoryFormat::R8g8b8a8
-    } else {
-        gtk4::gdk::MemoryFormat::R8g8b8
-    };
-    let bytes = glib::Bytes::from_owned(pixels);
-    gtk4::gdk::MemoryTexture::new(size, size, format, &bytes, rowstride as usize).upcast()
 }
 
 fn make_album_card(album: &Album) -> FlowBoxChild {
