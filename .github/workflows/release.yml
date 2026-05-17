@@ -89,6 +89,8 @@ jobs:
             mingw-w64-x86_64-sqlite3
             mingw-w64-x86_64-pkg-config
             mingw-w64-x86_64-rust
+            mingw-w64-x86_64-python
+            mingw-w64-x86_64-python-pip
 
       - name: Compilar
         shell: msys2 {0}
@@ -104,13 +106,36 @@ jobs:
 
           cp /mingw64/bin/*.dll dist/audra/
 
+          # Schemas de GLib
           mkdir -p dist/audra/share/glib-2.0/schemas
           cp /mingw64/share/glib-2.0/schemas/* dist/audra/share/glib-2.0/schemas/
 
+          # Tema de iconos Adwaita (necesario para iconos de controles)
+          mkdir -p dist/audra/share/icons
+          cp -r /mingw64/share/icons/Adwaita dist/audra/share/icons/
+          cp -r /mingw64/share/icons/hicolor dist/audra/share/icons/
+
+          # Icono de la aplicación
+          mkdir -p dist/audra/share/icons/hicolor/scalable/apps
+          cp data/icons/hicolor/scalable/apps/com.audra.player.svg \
+             dist/audra/share/icons/hicolor/scalable/apps/
+
+          # GDK Pixbuf loaders (para renderizar SVG e imágenes)
           if [ -d /mingw64/lib/gdk-pixbuf-2.0 ]; then
             mkdir -p dist/audra/lib
             cp -r /mingw64/lib/gdk-pixbuf-2.0 dist/audra/lib/
           fi
+
+          # Librsvg (necesario para renderizar SVGs como iconos)
+          cp /mingw64/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.dll dist/audra/lib/gdk-pixbuf-2.0/2.10.0/loaders/ || true
+
+          # GTK settings por defecto (tema visual)
+          mkdir -p dist/audra/share/gtk-4.0
+          cat > dist/audra/share/gtk-4.0/settings.ini << 'EOF'
+          [Settings]
+          gtk-icon-theme-name=Adwaita
+          gtk-theme-name=Adwaita
+          EOF
 
       - name: Empaquetar zip
         shell: pwsh
