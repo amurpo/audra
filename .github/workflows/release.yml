@@ -145,6 +145,8 @@ jobs:
     needs: [version, build-linux, build-windows, build-macos]
     name: Publicar Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Descargar artefactos
         uses: actions/download-artifact@v4
