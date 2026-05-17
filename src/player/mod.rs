@@ -117,6 +117,10 @@ impl Player {
         self.play_current()
     }
 
+    pub fn seek(&self, secs: f64) {
+        self.engine.seek(std::time::Duration::from_secs_f64(secs));
+    }
+
     pub fn set_volume(&mut self, v: f32) {
         self.volume = v;
         self.engine.set_volume(v);

@@ -192,6 +192,8 @@ fn make_artist_detail_page(
     on_play: Rc<RefCell<Option<PlayCallback>>>,
 ) -> adw::NavigationPage {
     let header = adw::HeaderBar::new();
+    header.set_show_end_title_buttons(false);
+    header.set_show_start_title_buttons(false);
 
     let btn_play_all = Button::builder()
         .label("Reproducir todo")

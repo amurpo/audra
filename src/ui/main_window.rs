@@ -425,6 +425,11 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         .icon_name("com.audra.player")
         .build();
 
+    // On Windows the OS adds its own frame on top of the Adwaita CSD header;
+    // disable it to avoid double window controls.
+    #[cfg(target_os = "windows")]
+    window.set_decorated(false);
+
     // --- Estado Last.fm: cargado al inicio ---
     let lastfm: Arc<Mutex<Option<LastFmClient>>> = Arc::new(Mutex::new(None));
     {
@@ -851,11 +856,33 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         });
     }
 
+    // --- Seek por click en barra de progreso ---
+    {
+        let player = Rc::clone(&player);
+        let prog_bar = bar.prog_bar.clone();
+        bar.prog_gesture.connect_pressed(move |_, _, x, _y| {
+            let p = player.borrow();
+            let total = p
+                .current_track()
+                .and_then(|t| t.duration_secs)
+                .map(|d| d as f64)
+                .unwrap_or(0.0);
+            if total <= 0.0 { return; }
+            let width = prog_bar.width() as f64;
+            if width <= 0.0 { return; }
+            let fraction = (x / width).clamp(0.0, 1.0);
+            p.seek(fraction * total);
+        });
+    }
+
     // --- Volumen ---
     {
         let player = Rc::clone(&player);
+        let lbl_volume = bar.lbl_volume.clone();
         bar.vol_scale.connect_value_changed(move |scale| {
-            player.borrow_mut().set_volume(scale.value() as f32);
+            let v = scale.value();
+            player.borrow_mut().set_volume(v as f32);
+            lbl_volume.set_text(&format!("{:.0}%", v * 100.0));
         });
     }
 
