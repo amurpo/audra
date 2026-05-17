@@ -180,6 +180,11 @@ jobs:
           mkdir -p dist/audra/libs
 
           cp target/release/audra dist/audra/
+
+          # Copiar librsvg manualmente antes de dylibbundler
+          # (el nombre del dylib varía según versión instalada)
+          cp "$BREW/opt/librsvg/lib/"librsvg-*.dylib dist/audra/libs/ 2>/dev/null || true
+
           dylibbundler -od -b \
             -x dist/audra/audra \
             -d dist/audra/libs/ \
