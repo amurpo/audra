@@ -1,6 +1,6 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, FlowBox, FlowBoxChild, Image, Label, ListBox, ListBoxRow,
+    Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, ListBox, ListBoxRow,
     Orientation, Overlay, Picture, ScrolledWindow, Stack, Align, ContentFit, SelectionMode,
     StackTransitionType,
 };
@@ -341,9 +341,18 @@ fn make_album_card(album: &Album) -> (FlowBoxChild, Stack, Picture) {
     cover_picture.set_valign(Align::Fill);
     cover_stack.add_named(&cover_picture, Some("art"));
 
-    let placeholder = Image::from_icon_name("media-optical-symbolic");
-    placeholder.set_pixel_size(64);
-    placeholder.add_css_class("dim-label");
+    let placeholder = GtkBox::new(Orientation::Vertical, 0);
+    placeholder.set_halign(Align::Fill);
+    placeholder.set_valign(Align::Fill);
+    placeholder.set_hexpand(true);
+    placeholder.set_vexpand(true);
+    let note_lbl = Label::new(Some("♪"));
+    note_lbl.add_css_class("album-cover-note");
+    note_lbl.add_css_class("dim-label");
+    note_lbl.set_halign(Align::Center);
+    note_lbl.set_valign(Align::Center);
+    note_lbl.set_vexpand(true);
+    placeholder.append(&note_lbl);
     cover_stack.add_named(&placeholder, Some("placeholder"));
 
     cover_stack.set_visible_child_name("placeholder");
