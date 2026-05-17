@@ -89,7 +89,6 @@ jobs:
             mingw-w64-x86_64-sqlite3
             mingw-w64-x86_64-pkg-config
             mingw-w64-x86_64-rust
-            mingw-w64-x86_64-ntldd
 
       - name: Compilar
         shell: msys2 {0}
@@ -103,19 +102,11 @@ jobs:
           mkdir -p dist/audra
           cp target/release/audra.exe dist/audra/
 
-          # ntldd con cygpath para corregir rutas en Windows
-          ntldd -R target/release/audra.exe \
-            | grep -i mingw64 \
-            | awk '{print $3}' \
-            | while read f; do
-                cp "$(cygpath -u "$f")" dist/audra/ || true
-              done
+          cp /mingw64/bin/*.dll dist/audra/
 
-          # Schemas de GLib
           mkdir -p dist/audra/share/glib-2.0/schemas
           cp /mingw64/share/glib-2.0/schemas/* dist/audra/share/glib-2.0/schemas/
 
-          # Loaders de GDK-Pixbuf
           if [ -d /mingw64/lib/gdk-pixbuf-2.0 ]; then
             mkdir -p dist/audra/lib
             cp -r /mingw64/lib/gdk-pixbuf-2.0 dist/audra/lib/
