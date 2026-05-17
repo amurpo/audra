@@ -101,11 +101,63 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist\audra
           Copy-Item target\release\audra.exe dist\audra\
+
+          # Copiar DLLs via ldd (dependencias directas)
           $mingw = "C:\msys64\mingw64\bin"
           $deps = (& "C:\msys64\usr\bin\ldd.exe" target\release\audra.exe) |
                   Select-String -SimpleMatch $mingw |
                   ForEach-Object { ($_ -split '\s+')[2] }
           $deps | ForEach-Object { Copy-Item $_ dist\audra\ -ErrorAction SilentlyContinue }
+
+          # Copiar DLLs de GTK4/GDK/GLib que ldd no detecta como transitivas
+          $extra = @(
+            "libgdk_pixbuf-2.0-0.dll",
+            "libcairo-2.dll",
+            "libgio-2.0-0.dll",
+            "libglib-2.0-0.dll",
+            "libgobject-2.0-0.dll",
+            "libgmodule-2.0-0.dll",
+            "libpango-1.0-0.dll",
+            "libpangocairo-1.0-0.dll",
+            "libpangowin32-1.0-0.dll",
+            "libffi-8.dll",
+            "libintl-8.dll",
+            "libpcre2-8-0.dll",
+            "libharfbuzz-0.dll",
+            "libfreetype-6.dll",
+            "libfontconfig-1.dll",
+            "libpixman-1-0.dll",
+            "libcairo-gobject-2.dll",
+            "libepoxy-0.dll",
+            "libgraphene-1.0-0.dll",
+            "libgtk-4-1.dll",
+            "libadwaita-1-0.dll",
+            "libpng16-16.dll",
+            "zlib1.dll",
+            "libbz2-1.dll",
+            "libexpat-1.dll",
+            "libiconv-2.dll",
+            "libsqlite3-0.dll"
+          )
+          $extra | ForEach-Object {
+            $src = Join-Path $mingw $_
+            if (Test-Path $src) { Copy-Item $src dist\audra\ -ErrorAction SilentlyContinue }
+          }
+
+          # Copiar schemas de GLib (necesarios para GTK4)
+          $schemasDir = "C:\msys64\mingw64\share\glib-2.0\schemas"
+          if (Test-Path $schemasDir) {
+            New-Item -ItemType Directory -Force dist\audra\share\glib-2.0\schemas
+            Copy-Item "$schemasDir\*" dist\audra\share\glib-2.0\schemas\
+          }
+
+          # Copiar loaders de GDK-Pixbuf
+          $loadersDir = "C:\msys64\mingw64\lib\gdk-pixbuf-2.0"
+          if (Test-Path $loadersDir) {
+            New-Item -ItemType Directory -Force dist\audra\lib\gdk-pixbuf-2.0
+            Copy-Item $loadersDir dist\audra\lib\ -Recurse -ErrorAction SilentlyContinue
+          }
+
           Compress-Archive -Path dist\audra -DestinationPath "audra-$env:VER-windows-x64.zip"
 
       - name: Subir artefacto
