@@ -97,26 +97,34 @@ jobs:
         env:
           RUST_BACKTRACE: 1
 
-      - name: Empaquetar
+      - name: Copiar DLLs
         shell: msys2 {0}
         run: |
           mkdir -p dist/audra
           cp target/release/audra.exe dist/audra/
 
+          # ntldd con cygpath para corregir rutas en Windows
           ntldd -R target/release/audra.exe \
             | grep -i mingw64 \
             | awk '{print $3}' \
-            | xargs -I{} cp {} dist/audra/ || true
+            | while read f; do
+                cp "$(cygpath -u "$f")" dist/audra/ || true
+              done
 
+          # Schemas de GLib
           mkdir -p dist/audra/share/glib-2.0/schemas
           cp /mingw64/share/glib-2.0/schemas/* dist/audra/share/glib-2.0/schemas/
 
+          # Loaders de GDK-Pixbuf
           if [ -d /mingw64/lib/gdk-pixbuf-2.0 ]; then
             mkdir -p dist/audra/lib
             cp -r /mingw64/lib/gdk-pixbuf-2.0 dist/audra/lib/
           fi
 
-          cd dist && zip -r ../audra-${VER}-windows-x64.zip audra/
+      - name: Empaquetar zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\audra -DestinationPath "audra-$env:VER-windows-x64.zip"
 
       - name: Subir artefacto
         uses: actions/upload-artifact@v4
