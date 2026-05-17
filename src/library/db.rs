@@ -152,6 +152,33 @@ impl Database {
         Ok(())
     }
 
+    pub fn remove_track_by_path(&self, path: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM tracks WHERE path = ?1", params![path])?;
+        Ok(())
+    }
+
+    pub fn remove_missing_from_folder(&self, folder: &str, existing_paths: &[String]) -> Result<usize> {
+        let folder_path = std::path::Path::new(folder);
+        let existing_set: std::collections::HashSet<&str> =
+            existing_paths.iter().map(|s| s.as_str()).collect();
+
+        let mut stmt = self.conn.prepare("SELECT path FROM tracks")?;
+        let to_delete: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .filter(|p| {
+                std::path::Path::new(p).starts_with(folder_path)
+                    && !existing_set.contains(p.as_str())
+            })
+            .collect();
+        drop(stmt);
+
+        for path in &to_delete {
+            self.conn.execute("DELETE FROM tracks WHERE path = ?1", params![path])?;
+        }
+        Ok(to_delete.len())
+    }
+
     pub fn get_cover(&self, artist: &str, album: &str) -> Option<Vec<u8>> {
         self.conn
             .query_row(

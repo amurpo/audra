@@ -172,8 +172,65 @@ jobs:
       - name: Compilar
         run: cargo build --release
 
+      - name: Bundlear dylibs y recursos
+        run: |
+          brew install dylibbundler
+          BREW=/opt/homebrew
+          mkdir -p dist/audra/libs
+
+          cp target/release/audra dist/audra/
+          dylibbundler -od -b \
+            -x dist/audra/audra \
+            -d dist/audra/libs/ \
+            -p @executable_path/libs/
+
+          # Schemas de GLib
+          mkdir -p dist/audra/share/glib-2.0/schemas
+          cp "$BREW/share/glib-2.0/schemas/"* dist/audra/share/glib-2.0/schemas/
+
+          # Temas de iconos
+          mkdir -p dist/audra/share/icons
+          cp -r "$BREW/share/icons/Adwaita" dist/audra/share/icons/ || true
+          cp -r "$BREW/share/icons/hicolor"  dist/audra/share/icons/ || true
+
+          # Icono de la aplicación
+          mkdir -p dist/audra/share/icons/hicolor/scalable/apps
+          cp data/icons/hicolor/scalable/apps/com.audra.player.svg \
+             dist/audra/share/icons/hicolor/scalable/apps/
+
+          # GDK Pixbuf loaders (SVG e imágenes)
+          if [ -d "$BREW/lib/gdk-pixbuf-2.0" ]; then
+            mkdir -p dist/audra/lib
+            cp -r "$BREW/lib/gdk-pixbuf-2.0" dist/audra/lib/
+            # Copiar dylibs de los loaders también
+            find dist/audra/lib/gdk-pixbuf-2.0 -name "*.so" | while read loader; do
+              dylibbundler -od -b -x "$loader" -d dist/audra/libs/ -p @executable_path/libs/ || true
+            done
+          fi
+
+          # GTK settings
+          mkdir -p dist/audra/share/gtk-4.0
+          cat > dist/audra/share/gtk-4.0/settings.ini << 'EOF'
+          [Settings]
+          gtk-icon-theme-name=Adwaita
+          gtk-theme-name=Adwaita
+          EOF
+
+          # Script launcher que configura las variables de entorno
+          cat > dist/audra/audra-launch.sh << 'EOF'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          export DYLD_LIBRARY_PATH="$DIR/libs:$DYLD_LIBRARY_PATH"
+          export GSETTINGS_SCHEMA_DIR="$DIR/share/glib-2.0/schemas"
+          export GDK_PIXBUF_MODULEDIR="$DIR/lib/gdk-pixbuf-2.0/2.10.0/loaders"
+          export GDK_PIXBUF_MODULE_FILE="$DIR/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache"
+          export XDG_DATA_DIRS="$DIR/share:$XDG_DATA_DIRS"
+          exec "$DIR/audra" "$@"
+          EOF
+          chmod +x dist/audra/audra-launch.sh
+
       - name: Empaquetar
-        run: zip -j audra-${VER}-macos-arm64.zip target/release/audra
+        run: zip -r audra-${VER}-macos-arm64.zip dist/audra/
 
       - name: Subir artefacto
         uses: actions/upload-artifact@v7

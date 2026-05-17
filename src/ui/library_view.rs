@@ -14,10 +14,11 @@ pub struct LibraryView {
     model: StringList,
     full_tracks: Vec<Track>,
     displayed: Rc<RefCell<Vec<Track>>>,
+    current_path: Rc<RefCell<Option<String>>>,
 }
 
 impl LibraryView {
-    pub fn new() -> Self {
+    pub fn new(current_path: Rc<RefCell<Option<String>>>) -> Self {
         let displayed: Rc<RefCell<Vec<Track>>> = Rc::new(RefCell::new(Vec::new()));
         let model = StringList::new(&[]);
         let selection = SingleSelection::new(Some(model.clone()));
@@ -65,6 +66,7 @@ impl LibraryView {
 
         {
             let displayed_ref = Rc::clone(&displayed);
+            let current_path_ref = Rc::clone(&current_path);
             factory.connect_bind(move |_, item| {
                 let item = item.downcast_ref::<ListItem>().unwrap();
                 let pos = item.position() as usize;
@@ -80,6 +82,16 @@ impl LibraryView {
                 lbl_title.set_text(&track.display_title());
                 lbl_artist.set_text(&track.display_artist());
                 lbl_dur.set_text(&track.duration_str());
+
+                let is_playing = current_path_ref
+                    .borrow()
+                    .as_deref()
+                    .map_or(false, |p| p == track.path);
+                if is_playing {
+                    lbl_title.add_css_class("now-playing-title");
+                } else {
+                    lbl_title.remove_css_class("now-playing-title");
+                }
             });
         }
 
@@ -96,6 +108,7 @@ impl LibraryView {
             model,
             full_tracks: Vec::new(),
             displayed,
+            current_path,
         }
     }
 
@@ -120,6 +133,13 @@ impl LibraryView {
                 .collect();
             self.apply_displayed(filtered);
         }
+    }
+
+    pub fn set_playing_path(&self, path: Option<&str>) {
+        *self.current_path.borrow_mut() = path.map(|s| s.to_string());
+        let n = self.model.n_items();
+        let empty: Vec<&str> = (0..n).map(|_| "").collect();
+        self.model.splice(0, n, &empty);
     }
 
     fn apply_displayed(&mut self, tracks: Vec<Track>) {

@@ -7,8 +7,8 @@ use gtk4::{
 use libadwaita as adw;
 use adw::prelude::*;
 use glib;
-use gdk_pixbuf;
 use std::rc::Rc;
+use crate::ui::image_utils::{scale_to_pixels, pixels_to_texture};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -29,7 +29,7 @@ pub struct AlbumsView {
 }
 
 impl AlbumsView {
-    pub fn new() -> Self {
+    pub fn new(current_path: Rc<RefCell<Option<String>>>) -> Self {
         let flow = FlowBox::new();
         flow.set_selection_mode(SelectionMode::Single);
         flow.set_homogeneous(true);
@@ -61,11 +61,16 @@ impl AlbumsView {
             let nav_c = nav.clone();
             let albums_c = Rc::clone(&albums_data);
             let on_play_c = Rc::clone(&on_play);
+            let current_path_c = Rc::clone(&current_path);
             flow.connect_child_activated(move |_, child| {
                 let idx = child.index() as usize;
                 let album = albums_c.borrow().get(idx).cloned();
                 if let Some(album) = album {
-                    let page = make_album_detail_page(&album, Rc::clone(&on_play_c));
+                    let page = make_album_detail_page(
+                        &album,
+                        Rc::clone(&on_play_c),
+                        Rc::clone(&current_path_c),
+                    );
                     nav_c.push(&page);
                 }
             });
@@ -183,7 +188,7 @@ impl AlbumsView {
             let mut q = queue.lock().unwrap();
             for (key, pixels, rowstride, has_alpha) in q.drain(..) {
                 if let Some((stack, picture)) = covers.borrow().get(&key) {
-                    let texture = pixels_to_texture(pixels, rowstride, has_alpha);
+                    let texture = pixels_to_texture(pixels, rowstride, has_alpha, CARD_SIZE);
                     picture.set_paintable(Some(&texture));
                     stack.set_visible_child_name("art");
                 }
@@ -201,6 +206,7 @@ impl AlbumsView {
 pub fn make_album_detail_page(
     album: &Album,
     on_play: Rc<RefCell<Option<Box<dyn Fn(Vec<Track>, usize)>>>>,
+    current_path: Rc<RefCell<Option<String>>>,
 ) -> adw::NavigationPage {
     let header = adw::HeaderBar::new();
     header.set_show_end_title_buttons(false);
@@ -246,6 +252,33 @@ pub fn make_album_detail_page(
         });
     }
 
+    // Timer que actualiza el highlight de la pista en reproducción
+    {
+        let list_weak = list.downgrade();
+        let tracks_ref = Rc::clone(&tracks);
+        let mut last_path: Option<String> = None;
+        glib::timeout_add_local(std::time::Duration::from_millis(300), move || {
+            let Some(list) = list_weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            let current = current_path.borrow().clone();
+            if current == last_path {
+                return glib::ControlFlow::Continue;
+            }
+            last_path = current.clone();
+            let mut i = 0i32;
+            while let Some(row) = list.row_at_index(i) {
+                let is_playing = current
+                    .as_deref()
+                    .and_then(|p| tracks_ref.get(i as usize).map(|t| t.path == p))
+                    .unwrap_or(false);
+                update_track_row_highlight(&row, i as usize, is_playing);
+                i += 1;
+            }
+            glib::ControlFlow::Continue
+        });
+    }
+
     let scroll = ScrolledWindow::new();
     scroll.set_vexpand(true);
     scroll.set_child(Some(&list));
@@ -255,6 +288,28 @@ pub fn make_album_detail_page(
     toolbar.set_content(Some(&scroll));
 
     adw::NavigationPage::new(&toolbar, &album.name)
+}
+
+fn update_track_row_highlight(row: &ListBoxRow, idx: usize, is_playing: bool) {
+    let Some(hbox) = row.child().and_downcast::<GtkBox>() else { return };
+    let Some(num_lbl) = hbox.first_child().and_downcast::<Label>() else { return };
+    let title_lbl = num_lbl
+        .next_sibling()
+        .and_downcast::<Label>();
+
+    if is_playing {
+        num_lbl.set_text("▶");
+        num_lbl.add_css_class("now-playing-title");
+        if let Some(t) = &title_lbl {
+            t.add_css_class("now-playing-title");
+        }
+    } else {
+        num_lbl.set_text(&(idx + 1).to_string());
+        num_lbl.remove_css_class("now-playing-title");
+        if let Some(t) = &title_lbl {
+            t.remove_css_class("now-playing-title");
+        }
+    }
 }
 
 fn make_track_row(idx: usize, track: &Track) -> ListBoxRow {
@@ -284,42 +339,6 @@ fn make_track_row(idx: usize, track: &Track) -> ListBoxRow {
     let row = ListBoxRow::new();
     row.set_child(Some(&hbox));
     row
-}
-
-fn scale_to_pixels(data: &[u8], size: i32) -> Option<(Vec<u8>, i32, bool)> {
-    let loader = gdk_pixbuf::PixbufLoader::new();
-    let _ = loader.write(data);
-    let _ = loader.close();
-    let src = loader.pixbuf()?;
-    let w = src.width();
-    let h = src.height();
-    let (sw, sh) = if w <= h {
-        (size, size * h / w)
-    } else {
-        (size * w / h, size)
-    };
-    let scaled = src.scale_simple(sw, sh, gdk_pixbuf::InterpType::Bilinear)?;
-    let x = (sw - size) / 2;
-    let y = (sh - size) / 2;
-    let dest = gdk_pixbuf::Pixbuf::new(
-        src.colorspace(), src.has_alpha(), src.bits_per_sample(), size, size,
-    )?;
-    scaled.copy_area(x, y, size, size, &dest, 0, 0);
-    let rowstride = dest.rowstride();
-    let has_alpha = dest.has_alpha();
-    let pixels = dest.read_pixel_bytes().to_vec();
-    Some((pixels, rowstride, has_alpha))
-}
-
-fn pixels_to_texture(pixels: Vec<u8>, rowstride: i32, has_alpha: bool) -> gtk4::gdk::Texture {
-    let format = if has_alpha {
-        gtk4::gdk::MemoryFormat::R8g8b8a8
-    } else {
-        gtk4::gdk::MemoryFormat::R8g8b8
-    };
-    let bytes = glib::Bytes::from_owned(pixels);
-    gtk4::gdk::MemoryTexture::new(CARD_SIZE, CARD_SIZE, format, &bytes, rowstride as usize)
-        .upcast()
 }
 
 fn make_album_card(album: &Album) -> (FlowBoxChild, Stack, Picture) {
