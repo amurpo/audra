@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - 'LICENSE*'
+      - '.gitignore'
+      - 'docs/**'
 
 jobs:
   version:
@@ -11,7 +17,7 @@ jobs:
     outputs:
       ver: ${{ steps.get.outputs.ver }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: get
         run: |
           VER=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
@@ -26,7 +32,7 @@ jobs:
       VER: ${{ needs.version.outputs.ver }}
       LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Deps
         run: |
@@ -62,7 +68,7 @@ jobs:
             packaging/audra.spec
 
       - name: Subir artefacto
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-rpm
           path: ~/rpmbuild/RPMS/**/*.rpm
@@ -75,7 +81,7 @@ jobs:
       VER: ${{ needs.version.outputs.ver }}
       LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Deps (MSYS2)
         uses: msys2/setup-msys2@v2
@@ -156,7 +162,7 @@ jobs:
       VER: ${{ needs.version.outputs.ver }}
       LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Deps (Homebrew)
         run: brew install gtk4 libadwaita pkg-config sqlite
@@ -170,7 +176,7 @@ jobs:
         run: zip -j audra-${VER}-macos-x64.zip target/release/audra
 
       - name: Subir artefacto
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-zip
           path: audra-${{ needs.version.outputs.ver }}-macos-x64.zip
@@ -183,13 +189,13 @@ jobs:
       contents: write
     steps:
       - name: Descargar artefactos
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: dist/
           merge-multiple: true
 
       - name: Crear Release en GitHub
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.version.outputs.ver }}
           name: Audra v${{ needs.version.outputs.ver }}
