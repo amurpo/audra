@@ -240,7 +240,7 @@ fn make_artist_detail_page(
                 .flat_map(|a| a.tracks.iter().cloned())
                 .collect();
             if let Some(cb) = on_play_c.borrow().as_ref() {
-                cb(all_tracks, 0);
+                cb(all_tracks, usize::MAX);
             }
         });
     }

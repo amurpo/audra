@@ -26,7 +26,10 @@ fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
 
     compile_po("es", &out_dir);
-    println!("cargo:rustc-env=AUDRA_LOCALE_DIR={}/locale", out_dir);
+    println!("cargo:rerun-if-env-changed=LOCALEDIR");
+    let locale_dir = env::var("LOCALEDIR")
+        .unwrap_or_else(|_| format!("{}/locale", out_dir));
+    println!("cargo:rustc-env=AUDRA_LOCALE_DIR={}", locale_dir);
 
     let proxy_url = env::var("LASTFM_PROXY_URL").unwrap_or_default();
     let content = format!("pub const PROXY_URL: &str = \"{}\";\n", proxy_url);

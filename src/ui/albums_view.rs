@@ -246,7 +246,7 @@ pub fn make_album_detail_page(
         let on_play_c = Rc::clone(&on_play);
         btn_play_all.connect_clicked(move |_| {
             if let Some(cb) = on_play_c.borrow().as_ref() {
-                cb((*tracks_c).clone(), 0);
+                cb((*tracks_c).clone(), usize::MAX);
             }
         });
     }

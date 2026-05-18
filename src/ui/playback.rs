@@ -30,7 +30,22 @@ pub fn make_play_callback(
             return;
         }
         let mut p = player.borrow_mut();
-        p.load_queue(tracks, start_idx);
+        // usize::MAX signals "play all" — if shuffle is on, start from a random position
+        let actual_start = if start_idx == usize::MAX {
+            if p.shuffle && tracks.len() > 1 {
+                use rand::Rng;
+                rand::thread_rng().gen_range(0..tracks.len())
+            } else {
+                0
+            }
+        } else {
+            start_idx
+        };
+        p.load_queue(tracks, actual_start);
+        // Rebuild shuffle order immediately so the universal shuffle state takes effect
+        if p.shuffle {
+            p.reshuffle();
+        }
         if let Ok(Some(track)) = p.play_current() {
             notify_now_playing(track);
             highlight_track(Some(track));
