@@ -80,8 +80,12 @@ impl Track {
 
     pub fn duration_str(&self) -> String {
         match self.duration_secs {
-            Some(s) => format!("{}:{:02}", s / 60, s % 60),
+            Some(s) => fmt_duration(s.max(0) as u64),
             None => "--:--".to_string(),
         }
     }
+}
+
+pub fn fmt_duration(secs: u64) -> String {
+    format!("{}:{:02}", secs / 60, secs % 60)
 }

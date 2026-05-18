@@ -39,6 +39,10 @@ impl LastFmClient {
         !PROXY_URL.is_empty()
     }
 
+    pub fn session_key(&self) -> Option<&str> {
+        self.session_key.as_deref()
+    }
+
     pub fn get_auth_token() -> Result<AuthTokenResponse> {
         let proxy = PROXY_URL.trim_end_matches('/');
         let resp = Client::new().get(format!("{proxy}/auth/token")).send()?;
@@ -105,8 +109,13 @@ impl LastFmClient {
         let _ = self.client.post(format!("{proxy}/nowplaying")).json(&body).send();
     }
 
-    pub fn flush_queue(&self, db: &crate::library::db::Database) {
-        let pending = match db.pending_scrobbles() {
+    // Takes the shared DB handle and locks it only briefly per operation, so
+    // the connection mutex is never held across a blocking network request.
+    pub fn flush_queue(
+        &self,
+        db: &std::sync::Arc<std::sync::Mutex<crate::library::db::Database>>,
+    ) {
+        let pending = match db.lock().unwrap().pending_scrobbles() {
             Ok(p) if !p.is_empty() => p,
             _ => return,
         };
@@ -121,7 +130,7 @@ impl LastFmClient {
 
             match self.scrobble(&artist, &title, &album, ts) {
                 Ok(()) => {
-                    let _ = db.remove_scrobble(queue_id);
+                    let _ = db.lock().unwrap().remove_scrobble(queue_id);
                     log::debug!("scrobbler: flush OK '{}' - '{}'", artist, title);
                 }
                 Err(e) => {

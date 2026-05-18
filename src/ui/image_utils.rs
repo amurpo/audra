@@ -9,6 +9,9 @@ pub fn scale_to_pixels(data: &[u8], size: i32) -> Option<(Vec<u8>, i32, bool)> {
     let src = loader.pixbuf()?;
     let w = src.width();
     let h = src.height();
+    if w <= 0 || h <= 0 {
+        return None;
+    }
     let (sw, sh) = if w <= h {
         (size, size * h / w)
     } else {

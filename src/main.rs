@@ -23,7 +23,7 @@ fn main() {
     let db_path = data_dir.join("library.db");
 
     let db = Arc::new(Mutex::new(
-        Database::open(db_path.to_str().unwrap()).expect("No se pudo abrir la base de datos"),
+        Database::open(&db_path).expect("No se pudo abrir la base de datos"),
     ));
 
     // Read language preference before i18n so setlocale uses the correct value

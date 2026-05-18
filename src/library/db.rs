@@ -16,7 +16,7 @@ pub struct Database {
 }
 
 impl Database {
-    pub fn open(path: &str) -> Result<Self> {
+    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let conn = Connection::open(path)?;
         let db = Self { conn };
         db.init_schema()?;

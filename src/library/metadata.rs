@@ -55,7 +55,13 @@ fn musicbrainz_album_cover(
     artist: &str,
     album: &str,
 ) -> Option<Vec<u8>> {
-    let query = format!("release:\"{}\" AND artist:\"{}\"", album, artist);
+    // Escape Lucene special chars so quotes in titles don't break the query.
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let query = format!(
+        "release:\"{}\" AND artist:\"{}\"",
+        esc(album),
+        esc(artist)
+    );
 
     let resp: serde_json::Value = client
         .get("https://musicbrainz.org/ws/2/release")

@@ -1,4 +1,5 @@
 use gtk4::prelude::*;
+use libadwaita as adw;
 use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -168,8 +169,14 @@ pub fn start_player_timer(
     db: Arc<Mutex<Database>>,
     notify_now_playing: Rc<dyn Fn(&Track)>,
     highlight_track: Rc<dyn Fn(Option<&Track>)>,
+    window: glib::WeakRef<adw::ApplicationWindow>,
 ) {
     glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+        // Stop the timer once its window is gone (e.g. rebuilt on language
+        // change); this drops the captured Player and frees the audio engine.
+        if window.upgrade().is_none() {
+            return glib::ControlFlow::Break;
+        }
         let mut p = player.borrow_mut();
         if !matches!(p.state, PlayerState::Playing) {
             return glib::ControlFlow::Continue;
@@ -214,20 +221,22 @@ pub fn start_player_timer(
                         let lf = Arc::clone(&lastfm);
                         let db_sc = Arc::clone(&db);
                         std::thread::spawn(move || {
-                            let guard = lf.lock().unwrap();
-                            if let Some(client) = guard.as_ref() {
-                                if client.scrobble(&artist, &title, &album, ts).is_err() {
-                                    if let Some(id) = track_id {
-                                        let _ = db_sc
-                                            .lock()
-                                            .unwrap()
-                                            .queue_scrobble(id, &ts.to_string());
-                                        log::warn!(
-                                            "scrobbler: encolado '{}' - '{}'",
-                                            artist,
-                                            title
-                                        );
-                                    }
+                            let sk = lf.lock().unwrap()
+                                .as_ref()
+                                .and_then(|c| c.session_key().map(str::to_string));
+                            let Some(sk) = sk else { return };
+                            let client = LastFmClient::new().with_session(&sk);
+                            if client.scrobble(&artist, &title, &album, ts).is_err() {
+                                if let Some(id) = track_id {
+                                    let _ = db_sc
+                                        .lock()
+                                        .unwrap()
+                                        .queue_scrobble(id, &ts.to_string());
+                                    log::warn!(
+                                        "scrobbler: encolado '{}' - '{}'",
+                                        artist,
+                                        title
+                                    );
                                 }
                             }
                         });

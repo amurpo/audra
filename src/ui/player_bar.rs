@@ -4,7 +4,7 @@ use gtk4::{
     ProgressBar, Scale, Align, Stack, StackTransitionType,
 };
 use crate::i18n::gettext;
-use crate::library::Track;
+use crate::library::{fmt_duration, Track};
 
 const COVER_SIZE: i32 = 72;
 
@@ -266,8 +266,4 @@ impl PlayerBar {
         };
         self.btn_play_pause.set_icon_name(icon);
     }
-}
-
-fn fmt_duration(secs: u64) -> String {
-    format!("{}:{:02}", secs / 60, secs % 60)
 }
