@@ -31,6 +31,7 @@ jobs:
             mingw-w64-x86_64-rust
             mingw-w64-x86_64-python
             mingw-w64-x86_64-python-pip
+            mingw-w64-x86_64-librsvg
 
       - uses: Swatinem/rust-cache@v2
 
@@ -61,6 +62,7 @@ jobs:
           mkdir -p dist/audra/share/icons/hicolor/scalable/apps
           cp data/icons/hicolor/scalable/apps/com.audra.player.svg \
              dist/audra/share/icons/hicolor/scalable/apps/
+          cp data/icons/audra.ico dist/audra/
 
           # GDK Pixbuf loaders
           if [ -d /mingw64/lib/gdk-pixbuf-2.0 ]; then
