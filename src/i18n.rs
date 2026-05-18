@@ -12,9 +12,7 @@ pub fn init(lang_override: Option<&str>) {
     let desired = lang_override.filter(|s| !s.is_empty());
     let current = std::env::var("LANGUAGE").ok();
     match desired {
-        Some(lang) if current.as_deref() != Some(lang) => {
-            std::env::set_var("LANGUAGE", lang)
-        }
+        Some(lang) if current.as_deref() != Some(lang) => std::env::set_var("LANGUAGE", lang),
         None if current.is_some() => std::env::remove_var("LANGUAGE"),
         _ => {}
     }

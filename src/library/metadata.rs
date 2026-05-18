@@ -27,7 +27,11 @@ fn write_cache(path: &PathBuf, data: &[u8]) {
 
 fn download(client: &reqwest::blocking::Client, url: &str) -> Option<Vec<u8>> {
     let bytes = client.get(url).send().ok()?.bytes().ok()?;
-    if bytes.is_empty() { None } else { Some(bytes.to_vec()) }
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(bytes.to_vec())
+    }
 }
 
 /// Busca carátula de álbum: MusicBrainz → TheAudioDB.
@@ -57,11 +61,7 @@ fn musicbrainz_album_cover(
 ) -> Option<Vec<u8>> {
     // Escape Lucene special chars so quotes in titles don't break the query.
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    let query = format!(
-        "release:\"{}\" AND artist:\"{}\"",
-        esc(album),
-        esc(artist)
-    );
+    let query = format!("release:\"{}\" AND artist:\"{}\"", esc(album), esc(artist));
 
     let resp: serde_json::Value = client
         .get("https://musicbrainz.org/ws/2/release")
@@ -103,14 +103,28 @@ fn audiodb_album_cover(
         .json()
         .ok()?;
 
-    let albums = resp["album"].as_array().filter(|a| !a.is_empty()).or_else(|| {
-        log::debug!("metadata: TheAudioDB no encontró álbum '{}' - '{}'", artist, album);
-        None
-    })?;
-    let url = albums[0]["strAlbumThumb"].as_str().or_else(|| {
-        log::debug!("metadata: TheAudioDB sin imagen para '{}' - '{}'", artist, album);
-        None
-    })?.to_string();
+    let albums = resp["album"]
+        .as_array()
+        .filter(|a| !a.is_empty())
+        .or_else(|| {
+            log::debug!(
+                "metadata: TheAudioDB no encontró álbum '{}' - '{}'",
+                artist,
+                album
+            );
+            None
+        })?;
+    let url = albums[0]["strAlbumThumb"]
+        .as_str()
+        .or_else(|| {
+            log::debug!(
+                "metadata: TheAudioDB sin imagen para '{}' - '{}'",
+                artist,
+                album
+            );
+            None
+        })?
+        .to_string();
     let data = download(client, &url)?;
     log::debug!("metadata: carátula TheAudioDB '{}' - '{}'", artist, album);
     Some(data)
@@ -148,11 +162,15 @@ fn deezer_artist_photo(client: &reqwest::blocking::Client, artist: &str) -> Opti
         .json()
         .ok()?;
 
-    let data = resp["data"].as_array().filter(|a| !a.is_empty()).or_else(|| {
-        log::debug!("metadata: Deezer no encontró artista '{}'", artist);
-        None
-    })?;
-    let url = data[0]["picture_xl"].as_str()
+    let data = resp["data"]
+        .as_array()
+        .filter(|a| !a.is_empty())
+        .or_else(|| {
+            log::debug!("metadata: Deezer no encontró artista '{}'", artist);
+            None
+        })?;
+    let url = data[0]["picture_xl"]
+        .as_str()
         .or_else(|| data[0]["picture_big"].as_str())
         .or_else(|| {
             log::debug!("metadata: Deezer sin foto para '{}'", artist);
@@ -176,7 +194,8 @@ fn audiodb_artist_photo(client: &reqwest::blocking::Client, artist: &str) -> Opt
         .json()
         .ok()?;
 
-    resp["artists"].as_array()
+    resp["artists"]
+        .as_array()
         .filter(|a| !a.is_empty())
         .and_then(|a| a[0]["strArtistThumb"].as_str())
         .map(|s| s.to_string())
@@ -197,7 +216,8 @@ fn itunes_album_art(client: &reqwest::blocking::Client, artist: &str) -> Option<
         .json()
         .ok()?;
 
-    let url = resp["results"].as_array()
+    let url = resp["results"]
+        .as_array()
         .filter(|a| !a.is_empty())
         .and_then(|a| a[0]["artworkUrl100"].as_str())
         .or_else(|| {

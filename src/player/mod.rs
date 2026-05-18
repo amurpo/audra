@@ -1,8 +1,8 @@
 pub mod engine;
 
 use crate::library::Track;
-use engine::AudioEngine;
 use anyhow::Result;
+use engine::AudioEngine;
 use rand::seq::SliceRandom;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -61,8 +61,12 @@ impl Player {
     }
 
     pub fn play_current(&mut self) -> Result<Option<&Track>> {
-        let Some(idx) = self.index else { return Ok(None) };
-        let Some(track) = self.queue.get(idx) else { return Ok(None) };
+        let Some(idx) = self.index else {
+            return Ok(None);
+        };
+        let Some(track) = self.queue.get(idx) else {
+            return Ok(None);
+        };
         self.engine.play(&track.path)?;
         self.engine.set_volume(self.volume);
         self.state = PlayerState::Playing;
@@ -85,7 +89,9 @@ impl Player {
 
     pub fn next(&mut self) -> Result<Option<&Track>> {
         let len = self.queue.len();
-        if len == 0 { return Ok(None); }
+        if len == 0 {
+            return Ok(None);
+        }
 
         let next_idx = if self.shuffle {
             if self.shuffled_order.is_empty() {
@@ -112,7 +118,9 @@ impl Player {
 
     pub fn previous(&mut self) -> Result<Option<&Track>> {
         let len = self.queue.len();
-        if len == 0 { return Ok(None); }
+        if len == 0 {
+            return Ok(None);
+        }
         let prev_idx = self.index.map(|i| i.saturating_sub(1)).unwrap_or(0);
         self.index = Some(prev_idx);
         self.play_current()
@@ -188,7 +196,10 @@ mod tests {
         p.load_queue((0..5).map(mk_track).collect(), 2);
         assert_eq!(p.queue.len(), 5);
         assert_eq!(p.index, Some(2));
-        assert_eq!(p.current_track().map(|t| t.path.clone()), Some("/m/2.mp3".into()));
+        assert_eq!(
+            p.current_track().map(|t| t.path.clone()),
+            Some("/m/2.mp3".into())
+        );
 
         // A stale shuffled order must be cleared by load_queue.
         p.shuffle = true;

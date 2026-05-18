@@ -75,7 +75,9 @@ impl LastFmClient {
     }
 
     pub fn scrobble(&self, artist: &str, track: &str, album: &str, timestamp: i64) -> Result<()> {
-        let sk = self.session_key.as_deref()
+        let sk = self
+            .session_key
+            .as_deref()
             .ok_or_else(|| anyhow::anyhow!("sin sesión Last.fm"))?;
 
         let proxy = PROXY_URL.trim_end_matches('/');
@@ -86,7 +88,11 @@ impl LastFmClient {
             "album": album,
             "timestamp": timestamp,
         });
-        let resp = self.client.post(format!("{proxy}/scrobble")).json(&body).send()?;
+        let resp = self
+            .client
+            .post(format!("{proxy}/scrobble"))
+            .json(&body)
+            .send()?;
         if !resp.status().is_success() {
             anyhow::bail!("Last.fm scrobble error: {}", resp.status());
         }
@@ -106,26 +112,30 @@ impl LastFmClient {
             "track": track,
             "album": album,
         });
-        let _ = self.client.post(format!("{proxy}/nowplaying")).json(&body).send();
+        let _ = self
+            .client
+            .post(format!("{proxy}/nowplaying"))
+            .json(&body)
+            .send();
     }
 
     // Takes the shared DB handle and locks it only briefly per operation, so
     // the connection mutex is never held across a blocking network request.
-    pub fn flush_queue(
-        &self,
-        db: &std::sync::Arc<std::sync::Mutex<crate::library::db::Database>>,
-    ) {
+    pub fn flush_queue(&self, db: &std::sync::Arc<std::sync::Mutex<crate::library::db::Database>>) {
         let pending = match db.lock().unwrap().pending_scrobbles() {
             Ok(p) if !p.is_empty() => p,
             _ => return,
         };
 
-        log::info!("scrobbler: {} scrobble(s) pendiente(s), enviando…", pending.len());
+        log::info!(
+            "scrobbler: {} scrobble(s) pendiente(s), enviando…",
+            pending.len()
+        );
 
         for (queue_id, track, played_at) in pending {
             let artist = track.artist.clone().unwrap_or_default();
-            let title  = track.title.clone().unwrap_or_default();
-            let album  = track.album.clone().unwrap_or_default();
+            let title = track.title.clone().unwrap_or_default();
+            let album = track.album.clone().unwrap_or_default();
             let ts: i64 = played_at.parse().unwrap_or(0);
 
             match self.scrobble(&artist, &title, &album, ts) {
