@@ -7,6 +7,11 @@ fn cache_dir() -> PathBuf {
         .join("covers")
 }
 
+/// Remove the on-disk downloaded cover cache directory entirely.
+pub fn clear_cover_cache() {
+    let _ = std::fs::remove_dir_all(cache_dir());
+}
+
 fn album_cache_path(artist: &str, album: &str) -> PathBuf {
     let key = format!("{}|{}", artist.to_lowercase(), album.to_lowercase());
     let hash = format!("{:x}", md5::compute(key.as_bytes()));

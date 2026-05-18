@@ -6,4 +6,5 @@ pub mod library_view;
 pub mod main_window;
 pub mod playback;
 pub mod player_bar;
+pub mod reset;
 pub mod theme;

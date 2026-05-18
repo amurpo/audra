@@ -37,6 +37,9 @@ flowboxchild.mosaic-child:hover {
 .lastfm-err {
     color: #e01b24;
 }
+.menu-destructive {
+    color: #e01b24;
+}
 .cover-thumb {
     border-radius: 6px;
     background-color: alpha(currentColor, 0.05);
