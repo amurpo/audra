@@ -22,9 +22,33 @@ Native music player for Linux, built with GTK4 and libadwaita.
 
 ## Requirements
 
-- GTK4
-- libadwaita
-- ALSA
+Runtime: GTK4, libadwaita, ALSA.
+
+Build from source additionally needs a Rust toolchain and **gettext**
+(`msgfmt`, used to compile the translation catalog — the build fails
+loudly if it is missing).
+
+### Build dependencies
+
+Fedora / RHEL:
+
+```bash
+sudo dnf install \
+  gcc pkg-config \
+  gtk4-devel libadwaita-devel \
+  alsa-lib-devel fontconfig-devel \
+  gettext
+```
+
+Debian / Ubuntu:
+
+```bash
+sudo apt install \
+  build-essential pkg-config \
+  libgtk-4-dev libadwaita-1-dev \
+  libgdk-pixbuf-2.0-dev libasound2-dev \
+  gettext
+```
 
 ## Installation
 
