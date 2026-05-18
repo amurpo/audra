@@ -1,15 +1,21 @@
-use std::path::Path;
+use lofty::picture::PictureType;
 use lofty::prelude::*;
 use lofty::probe::Probe;
-use lofty::picture::PictureType;
+use std::path::Path;
 
 /// Nombres de archivo candidatos para arte de carpeta, en orden de preferencia.
 const FOLDER_CANDIDATES: &[&str] = &[
-    "cover.jpg", "cover.png", "cover.jpeg",
-    "folder.jpg", "folder.png",
-    "album.jpg", "album.png",
-    "front.jpg", "front.png",
-    "artwork.jpg", "artwork.png",
+    "cover.jpg",
+    "cover.png",
+    "cover.jpeg",
+    "folder.jpg",
+    "folder.png",
+    "album.jpg",
+    "album.png",
+    "front.jpg",
+    "front.png",
+    "artwork.jpg",
+    "artwork.png",
 ];
 
 pub fn read_cover_art(path: &str) -> Option<Vec<u8>> {
@@ -30,11 +36,17 @@ pub fn read_cover_art(path: &str) -> Option<Vec<u8>> {
 }
 
 fn read_embedded(path: &str) -> Option<Vec<u8>> {
-    let tagged = Probe::open(path).ok()?.guess_file_type().ok()?.read().ok()?;
+    let tagged = Probe::open(path)
+        .ok()?
+        .guess_file_type()
+        .ok()?
+        .read()
+        .ok()?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
     let pictures = tag.pictures();
 
-    pictures.iter()
+    pictures
+        .iter()
         .find(|p| p.pic_type() == PictureType::CoverFront)
         .or_else(|| pictures.first())
         .map(|p| p.data().to_vec())
@@ -77,8 +89,7 @@ mod tests {
     impl TmpDir {
         fn new() -> Self {
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let p = std::env::temp_dir()
-                .join(format!("audra_art_{}_{}", std::process::id(), n));
+            let p = std::env::temp_dir().join(format!("audra_art_{}_{}", std::process::id(), n));
             std::fs::create_dir_all(&p).unwrap();
             TmpDir(p)
         }

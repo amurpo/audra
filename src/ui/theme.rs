@@ -101,7 +101,7 @@ fn extract_font() -> Option<std::path::PathBuf> {
 }
 
 fn register_font(path: &std::path::Path) {
-    use std::ffi::{CString, c_char, c_void};
+    use std::ffi::{c_char, c_void, CString};
     extern "C" {
         fn FcConfigGetCurrent() -> *mut c_void;
         fn FcConfigAppFontAddFile(config: *mut c_void, file: *const c_char) -> bool;

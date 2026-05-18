@@ -1,7 +1,7 @@
-use std::fs::File;
-use std::io::BufReader;
 use anyhow::Result;
 use rodio::{Decoder, OutputStream, Sink};
+use std::fs::File;
+use std::io::BufReader;
 
 pub struct AudioEngine {
     _stream: OutputStream,

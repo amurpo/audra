@@ -32,7 +32,12 @@ pub fn group_into_albums(tracks: &[Track]) -> Vec<Album> {
         .map(|((artist, name), mut tracks)| {
             tracks.sort_by_key(|t| t.track_num.unwrap_or(999));
             let cover = None; // cargado de forma asíncrona por la UI
-            Album { name, artist, tracks, cover }
+            Album {
+                name,
+                artist,
+                tracks,
+                cover,
+            }
         })
         .collect();
     albums.sort_by(|a, b| a.name.cmp(&b.name));
@@ -48,7 +53,11 @@ pub fn group_into_artists(albums: &[Album]) -> Vec<Artist> {
     }
     let mut artists: Vec<Artist> = map
         .into_iter()
-        .map(|(name, (album_count, track_count))| Artist { name, album_count, track_count })
+        .map(|(name, (album_count, track_count))| Artist {
+            name,
+            album_count,
+            track_count,
+        })
         .collect();
     artists.sort_by(|a, b| a.name.cmp(&b.name));
     artists
@@ -67,15 +76,21 @@ pub struct Track {
 
 impl Track {
     pub fn display_title(&self) -> String {
-        self.title.clone().unwrap_or_else(|| gettext("Unknown title"))
+        self.title
+            .clone()
+            .unwrap_or_else(|| gettext("Unknown title"))
     }
 
     pub fn display_artist(&self) -> String {
-        self.artist.clone().unwrap_or_else(|| gettext("Unknown artist"))
+        self.artist
+            .clone()
+            .unwrap_or_else(|| gettext("Unknown artist"))
     }
 
     pub fn display_album(&self) -> String {
-        self.album.clone().unwrap_or_else(|| "Álbum desconocido".to_string())
+        self.album
+            .clone()
+            .unwrap_or_else(|| "Álbum desconocido".to_string())
     }
 
     pub fn duration_str(&self) -> String {
@@ -170,7 +185,11 @@ mod tests {
             track(Some("B"), Some("Greatest Hits"), Some(1)),
         ];
         let albums = group_into_albums(&tracks);
-        assert_eq!(albums.len(), 2, "same title, different artist => two albums");
+        assert_eq!(
+            albums.len(),
+            2,
+            "same title, different artist => two albums"
+        );
     }
 
     #[test]

@@ -4,6 +4,6 @@ pub mod image_utils;
 pub mod lastfm_dialog;
 pub mod library_view;
 pub mod main_window;
-pub mod player_bar;
 pub mod playback;
+pub mod player_bar;
 pub mod theme;

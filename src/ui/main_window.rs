@@ -1,11 +1,11 @@
-use gtk4::prelude::*;
-use gtk4::{Button, FileDialog, MenuButton, Popover, SearchBar, SearchEntry, ToggleButton, gio};
-use libadwaita as adw;
 use adw::prelude::*;
 use glib::clone;
-use std::sync::{Arc, Mutex};
+use gtk4::prelude::*;
+use gtk4::{gio, Button, FileDialog, MenuButton, Popover, SearchBar, SearchEntry, ToggleButton};
+use libadwaita as adw;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use crate::i18n::gettext;
 use crate::library::{self, db::Database, scanner};
@@ -15,8 +15,10 @@ use crate::ui::albums_view::AlbumsView;
 use crate::ui::artists_view::ArtistsView;
 use crate::ui::lastfm_dialog::show_lastfm_dialog;
 use crate::ui::library_view::LibraryView;
+use crate::ui::playback::{
+    make_play_callback, start_player_timer, wire_transport_controls, ScrobbleTracker,
+};
 use crate::ui::player_bar::PlayerBar;
-use crate::ui::playback::{ScrobbleTracker, make_play_callback, start_player_timer, wire_transport_controls};
 use crate::ui::theme::{setup_css, update_font};
 
 fn reload_all_views(
@@ -87,13 +89,15 @@ fn start_scan(
 }
 
 pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
-    let use_system_font = db.lock().unwrap()
-        .get_setting("use_system_font")
-        .as_deref() == Some("1");
-    let lang_setting = db.lock().unwrap()
+    let use_system_font = db.lock().unwrap().get_setting("use_system_font").as_deref() == Some("1");
+    let lang_setting = db
+        .lock()
+        .unwrap()
         .get_setting("language")
         .unwrap_or_default();
-    let saved_vol: f64 = db.lock().unwrap()
+    let saved_vol: f64 = db
+        .lock()
+        .unwrap()
         .get_setting("volume")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.5);
@@ -115,7 +119,10 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     {
         if LastFmClient::is_configured() {
             let db_g = db.lock().unwrap();
-            if let Some(sk) = db_g.get_setting("lastfm_session_key").filter(|s| !s.is_empty()) {
+            if let Some(sk) = db_g
+                .get_setting("lastfm_session_key")
+                .filter(|s| !s.is_empty())
+            {
                 *lastfm.lock().unwrap() = Some(LastFmClient::new().with_session(&sk));
             }
         }
@@ -124,7 +131,9 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         let lf = Arc::clone(&lastfm);
         let db_flush = Arc::clone(&db);
         std::thread::spawn(move || {
-            let sk = lf.lock().unwrap()
+            let sk = lf
+                .lock()
+                .unwrap()
                 .as_ref()
                 .and_then(|c| c.session_key().map(str::to_string));
             if let Some(sk) = sk {
@@ -265,7 +274,9 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             let album = track.album.clone().unwrap_or_default();
             let lf = Arc::clone(&lastfm);
             std::thread::spawn(move || {
-                let sk = lf.lock().unwrap()
+                let sk = lf
+                    .lock()
+                    .unwrap()
                     .as_ref()
                     .and_then(|c| c.session_key().map(str::to_string));
                 if let Some(sk) = sk {
@@ -300,7 +311,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         page.set_icon_name(Some("system-users-symbolic"));
     }
     {
-        let page = view_stack.add_titled(&lib_view.borrow().root, Some("tracks"), &gettext("Songs"));
+        let page =
+            view_stack.add_titled(&lib_view.borrow().root, Some("tracks"), &gettext("Songs"));
         page.set_icon_name(Some("view-list-symbolic"));
     }
     view_stack.set_visible_child_name("albums");
@@ -370,14 +382,22 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     }
 
     item_scan.connect_clicked(clone!(
-        #[strong] window,
-        #[strong] db,
-        #[strong] lib_view,
-        #[strong] albums_view,
-        #[strong] artists_view,
-        #[weak] popover,
-        #[weak] scan_loading_box,
-        #[weak] scan_spinner,
+        #[strong]
+        window,
+        #[strong]
+        db,
+        #[strong]
+        lib_view,
+        #[strong]
+        albums_view,
+        #[strong]
+        artists_view,
+        #[weak]
+        popover,
+        #[weak]
+        scan_loading_box,
+        #[weak]
+        scan_spinner,
         move |_| {
             popover.popdown();
             let dialog = FileDialog::new();
@@ -385,12 +405,18 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                 Some(&window),
                 gio::Cancellable::NONE,
                 clone!(
-                    #[strong] db,
-                    #[strong] lib_view,
-                    #[strong] albums_view,
-                    #[strong] artists_view,
-                    #[weak] scan_loading_box,
-                    #[weak] scan_spinner,
+                    #[strong]
+                    db,
+                    #[strong]
+                    lib_view,
+                    #[strong]
+                    albums_view,
+                    #[strong]
+                    artists_view,
+                    #[weak]
+                    scan_loading_box,
+                    #[weak]
+                    scan_spinner,
                     move |result| {
                         if let Ok(file) = result {
                             if let Some(path) = file.path() {
@@ -412,13 +438,20 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     ));
 
     item_refresh.connect_clicked(clone!(
-        #[strong] db,
-        #[strong] lib_view,
-        #[strong] albums_view,
-        #[strong] artists_view,
-        #[weak] popover,
-        #[weak] scan_loading_box,
-        #[weak] scan_spinner,
+        #[strong]
+        db,
+        #[strong]
+        lib_view,
+        #[strong]
+        albums_view,
+        #[strong]
+        artists_view,
+        #[weak]
+        popover,
+        #[weak]
+        scan_loading_box,
+        #[weak]
+        scan_spinner,
         move |_| {
             popover.popdown();
             if let Some(folder) = db.lock().unwrap().get_setting("music_folder") {
@@ -436,18 +469,29 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     ));
 
     font_switch.connect_state_set(clone!(
-        #[strong] db,
+        #[strong]
+        db,
         move |_, state| {
-            let _ = db.lock().unwrap().set_setting("use_system_font", if state { "1" } else { "0" });
+            let _ = db
+                .lock()
+                .unwrap()
+                .set_setting("use_system_font", if state { "1" } else { "0" });
             update_font(!state);
             glib::Propagation::Proceed
         }
     ));
 
     btn_lang_auto.connect_toggled(clone!(
-        #[strong] db, #[strong] app, #[weak] window,
+        #[strong]
+        db,
+        #[strong]
+        app,
+        #[weak]
+        window,
         move |btn| {
-            if !btn.is_active() { return; }
+            if !btn.is_active() {
+                return;
+            }
             let _ = db.lock().unwrap().set_setting("language", "");
             crate::i18n::init(None);
             window.close();
@@ -455,9 +499,16 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
     btn_lang_en.connect_toggled(clone!(
-        #[strong] db, #[strong] app, #[weak] window,
+        #[strong]
+        db,
+        #[strong]
+        app,
+        #[weak]
+        window,
         move |btn| {
-            if !btn.is_active() { return; }
+            if !btn.is_active() {
+                return;
+            }
             let _ = db.lock().unwrap().set_setting("language", "en");
             crate::i18n::init(Some("en"));
             window.close();
@@ -465,9 +516,16 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
     btn_lang_es.connect_toggled(clone!(
-        #[strong] db, #[strong] app, #[weak] window,
+        #[strong]
+        db,
+        #[strong]
+        app,
+        #[weak]
+        window,
         move |btn| {
-            if !btn.is_active() { return; }
+            if !btn.is_active() {
+                return;
+            }
             let _ = db.lock().unwrap().set_setting("language", "es");
             crate::i18n::init(Some("es"));
             window.close();
@@ -476,10 +534,14 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     ));
 
     item_lastfm.connect_clicked(clone!(
-        #[strong] window,
-        #[strong] db,
-        #[strong] lastfm,
-        #[weak] popover,
+        #[strong]
+        window,
+        #[strong]
+        db,
+        #[strong]
+        lastfm,
+        #[weak]
+        popover,
         move |_| {
             popover.popdown();
             show_lastfm_dialog(&window, Arc::clone(&db), Arc::clone(&lastfm));
@@ -527,14 +589,19 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     // Apply saved volume (explicitly set player + label before triggering the scale signal)
     player.borrow_mut().set_volume(saved_vol as f32);
-    bar.lbl_volume.set_text(&format!("{:.0}%", saved_vol * 100.0));
+    bar.lbl_volume
+        .set_text(&format!("{:.0}%", saved_vol * 100.0));
     bar.vol_scale.set_value(saved_vol);
 
     // Persist volume changes to DB
     bar.vol_scale.connect_value_changed(clone!(
-        #[strong] db,
+        #[strong]
+        db,
         move |scale| {
-            let _ = db.lock().unwrap().set_setting("volume", &scale.value().to_string());
+            let _ = db
+                .lock()
+                .unwrap()
+                .set_setting("volume", &scale.value().to_string());
         }
     ));
 

@@ -1,11 +1,11 @@
 use gtk4::prelude::*;
 use libadwaita as adw;
-use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
-use crate::library::{art, Track};
 use crate::library::db::Database;
+use crate::library::{art, Track};
 use crate::player::{Player, PlayerState};
 use crate::scrobbler::LastFmClient;
 use crate::ui::player_bar::PlayerBar;
@@ -181,7 +181,11 @@ pub fn start_player_timer(
         }
 
         if p.is_finished() {
-            let result = if p.repeat_one { p.play_current() } else { p.next() };
+            let result = if p.repeat_one {
+                p.play_current()
+            } else {
+                p.next()
+            };
             if let Ok(Some(track)) = result {
                 notify_now_playing(track);
                 highlight_track(Some(track));
@@ -219,22 +223,18 @@ pub fn start_player_timer(
                         let lf = Arc::clone(&lastfm);
                         let db_sc = Arc::clone(&db);
                         std::thread::spawn(move || {
-                            let sk = lf.lock().unwrap()
+                            let sk = lf
+                                .lock()
+                                .unwrap()
                                 .as_ref()
                                 .and_then(|c| c.session_key().map(str::to_string));
                             let Some(sk) = sk else { return };
                             let client = LastFmClient::new().with_session(&sk);
                             if client.scrobble(&artist, &title, &album, ts).is_err() {
                                 if let Some(id) = track_id {
-                                    let _ = db_sc
-                                        .lock()
-                                        .unwrap()
-                                        .queue_scrobble(id, &ts.to_string());
-                                    log::warn!(
-                                        "scrobbler: encolado '{}' - '{}'",
-                                        artist,
-                                        title
-                                    );
+                                    let _ =
+                                        db_sc.lock().unwrap().queue_scrobble(id, &ts.to_string());
+                                    log::warn!("scrobbler: encolado '{}' - '{}'", artist, title);
                                 }
                             }
                         });

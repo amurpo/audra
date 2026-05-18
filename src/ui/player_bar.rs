@@ -1,10 +1,10 @@
-use gtk4::prelude::*;
-use gtk4::{
-    Box, Button, CenterBox, GestureClick, Image, Label, Orientation,
-    ProgressBar, Scale, Align, Stack, StackTransitionType,
-};
 use crate::i18n::gettext;
 use crate::library::{fmt_duration, Track};
+use gtk4::prelude::*;
+use gtk4::{
+    Align, Box, Button, CenterBox, GestureClick, Image, Label, Orientation, ProgressBar, Scale,
+    Stack, StackTransitionType,
+};
 
 const COVER_SIZE: i32 = 72;
 
@@ -252,9 +252,11 @@ impl PlayerBar {
     }
 
     pub fn update_progress(&self, elapsed_secs: f64, total_secs: f64) {
-        self.lbl_elapsed.set_text(&fmt_duration(elapsed_secs as u64));
+        self.lbl_elapsed
+            .set_text(&fmt_duration(elapsed_secs as u64));
         if total_secs > 0.0 {
-            self.prog_bar.set_fraction((elapsed_secs / total_secs).clamp(0.0, 1.0));
+            self.prog_bar
+                .set_fraction((elapsed_secs / total_secs).clamp(0.0, 1.0));
         }
     }
 

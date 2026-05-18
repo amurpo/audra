@@ -1,20 +1,20 @@
-use gtk4::prelude::*;
-use gtk4::{
-    Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, Orientation,
-    ScrolledWindow, Align, SelectionMode,
-};
-use libadwaita as adw;
+use crate::i18n::{gettext, ngettext};
+use crate::library::db::Database;
+use crate::library::{Album, Artist, Track};
+use crate::ui::albums_view::{make_album_card, make_album_detail_page};
+use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels};
 use adw::prelude::*;
 use glib;
-use crate::ui::image_utils::{scale_to_pixels, pixels_to_texture};
-use std::rc::Rc;
+use gtk4::prelude::*;
+use gtk4::{
+    Align, Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, Orientation, ScrolledWindow,
+    SelectionMode,
+};
+use libadwaita as adw;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use crate::i18n::{gettext, ngettext};
-use crate::library::{Artist, Album, Track};
-use crate::library::db::Database;
-use crate::ui::albums_view::{make_album_card, make_album_detail_page};
 
 const CARD_SIZE: i32 = 200;
 const AVATAR_SIZE: i32 = 120;
@@ -103,7 +103,15 @@ impl ArtistsView {
             });
         }
 
-        Self { root: nav, flow, artists_list, all_albums, on_play, avatars, current_filter: Rc::new(RefCell::new(String::new())) }
+        Self {
+            root: nav,
+            flow,
+            artists_list,
+            all_albums,
+            on_play,
+            avatars,
+            current_filter: Rc::new(RefCell::new(String::new())),
+        }
     }
 
     pub fn set_on_play(&self, callback: impl Fn(Vec<Track>, usize) + 'static) {
@@ -138,7 +146,9 @@ impl ArtistsView {
 
         for artist in &artists {
             let (card, avatar) = make_artist_card(artist);
-            self.avatars.borrow_mut().insert(artist.name.clone(), avatar);
+            self.avatars
+                .borrow_mut()
+                .insert(artist.name.clone(), avatar);
             self.flow.append(&card);
             names_to_fetch.push(artist.name.clone());
         }
@@ -169,7 +179,12 @@ impl ArtistsView {
             for artist in &artists {
                 if let Some(bytes) = crate::library::metadata::fetch_artist_photo(artist) {
                     if let Some(scaled) = scale_to_pixels(&bytes, AVATAR_SIZE) {
-                        queue_tx.lock().unwrap().push((artist.clone(), scaled.0, scaled.1, scaled.2));
+                        queue_tx.lock().unwrap().push((
+                            artist.clone(),
+                            scaled.0,
+                            scaled.1,
+                            scaled.2,
+                        ));
                     }
                 }
             }
@@ -277,9 +292,7 @@ fn make_artist_detail_page(
 fn make_artist_album_card(album: &Album) -> FlowBoxChild {
     let (child, stack, picture) = make_album_card(album, false);
     if let Some(ref data) = album.cover {
-        if let Some((pixels, rowstride, has_alpha)) =
-            scale_to_pixels(data.as_slice(), CARD_SIZE)
-        {
+        if let Some((pixels, rowstride, has_alpha)) = scale_to_pixels(data.as_slice(), CARD_SIZE) {
             let texture = pixels_to_texture(pixels, rowstride, has_alpha, CARD_SIZE);
             picture.set_paintable(Some(&texture));
             stack.set_visible_child_name("art");

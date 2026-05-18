@@ -1,12 +1,11 @@
-use std::path::Path;
+use crate::library::Track;
 use anyhow::Result;
 use lofty::prelude::*;
 use lofty::probe::Probe;
+use std::path::Path;
 use walkdir::WalkDir;
-use crate::library::Track;
 
 const AUDIO_EXTS: &[&str] = &["mp3", "flac", "ogg", "opus", "m4a", "wav", "aac"];
-
 
 pub fn scan_folder(folder: &str) -> Vec<Track> {
     WalkDir::new(folder)
@@ -42,10 +41,7 @@ fn read_track(path: &Path) -> Result<Track> {
     let album = tag.and_then(|t| t.album().map(|s| s.to_string()));
     let track_num = tag.and_then(|t| t.track()).map(|n| n as i64);
 
-    let duration_secs = tagged
-        .properties()
-        .duration()
-        .as_secs() as i64;
+    let duration_secs = tagged.properties().duration().as_secs() as i64;
 
     Ok(Track {
         id: None,
@@ -71,11 +67,7 @@ mod tests {
     impl TmpDir {
         fn new() -> Self {
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let p = std::env::temp_dir().join(format!(
-                "audra_scan_{}_{}",
-                std::process::id(),
-                n
-            ));
+            let p = std::env::temp_dir().join(format!("audra_scan_{}_{}", std::process::id(), n));
             std::fs::create_dir_all(&p).unwrap();
             TmpDir(p)
         }

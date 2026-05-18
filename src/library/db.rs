@@ -1,6 +1,6 @@
-use anyhow::Result;
-use rusqlite::{Connection, params};
 use crate::library::Track;
+use anyhow::Result;
+use rusqlite::{params, Connection};
 
 fn normalize_path(path: &str) -> String {
     let buf: std::path::PathBuf = std::path::Path::new(path).components().collect();
@@ -24,7 +24,8 @@ impl Database {
     }
 
     fn init_schema(&self) -> Result<()> {
-        self.conn.execute_batch("
+        self.conn.execute_batch(
+            "
             CREATE TABLE IF NOT EXISTS tracks (
                 id        INTEGER PRIMARY KEY,
                 path      TEXT NOT NULL UNIQUE,
@@ -60,7 +61,8 @@ impl Database {
                 data   BLOB NOT NULL,
                 PRIMARY KEY (artist, album)
             );
-        ")?;
+        ",
+        )?;
         Ok(())
     }
 
@@ -73,8 +75,12 @@ impl Database {
                album=excluded.album, track_num=excluded.track_num,
                duration=excluded.duration",
             params![
-                track.path, track.title, track.artist,
-                track.album, track.track_num, track.duration_secs
+                track.path,
+                track.title,
+                track.artist,
+                track.album,
+                track.track_num,
+                track.duration_secs
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -84,17 +90,19 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, path, title, artist, album, track_num, duration FROM tracks ORDER BY artist, album, track_num"
         )?;
-        let tracks = stmt.query_map([], |row| {
-            Ok(Track {
-                id: Some(row.get(0)?),
-                path: row.get(1)?,
-                title: row.get(2)?,
-                artist: row.get(3)?,
-                album: row.get(4)?,
-                track_num: row.get(5)?,
-                duration_secs: row.get(6)?,
-            })
-        })?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let tracks = stmt
+            .query_map([], |row| {
+                Ok(Track {
+                    id: Some(row.get(0)?),
+                    path: row.get(1)?,
+                    title: row.get(2)?,
+                    artist: row.get(3)?,
+                    album: row.get(4)?,
+                    track_num: row.get(5)?,
+                    duration_secs: row.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(tracks)
     }
 
@@ -111,26 +119,31 @@ impl Database {
             "SELECT q.id, t.id, t.path, t.title, t.artist, t.album, t.track_num, t.duration, q.played_at
              FROM scrobble_queue q JOIN tracks t ON t.id = q.track_id"
         )?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                Track {
-                    id: Some(row.get(1)?),
-                    path: row.get(2)?,
-                    title: row.get(3)?,
-                    artist: row.get(4)?,
-                    album: row.get(5)?,
-                    track_num: row.get(6)?,
-                    duration_secs: row.get(7)?,
-                },
-                row.get::<_, String>(8)?,
-            ))
-        })?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    Track {
+                        id: Some(row.get(1)?),
+                        path: row.get(2)?,
+                        title: row.get(3)?,
+                        artist: row.get(4)?,
+                        album: row.get(5)?,
+                        track_num: row.get(6)?,
+                        duration_secs: row.get(7)?,
+                    },
+                    row.get::<_, String>(8)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
     pub fn remove_scrobble(&self, queue_id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM scrobble_queue WHERE id = ?1", params![queue_id])?;
+        self.conn.execute(
+            "DELETE FROM scrobble_queue WHERE id = ?1",
+            params![queue_id],
+        )?;
         Ok(())
     }
 
@@ -154,16 +167,15 @@ impl Database {
     }
 
     pub fn delete_setting(&self, key: &str) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM settings WHERE key = ?1",
-            params![key],
-        )?;
+        self.conn
+            .execute("DELETE FROM settings WHERE key = ?1", params![key])?;
         Ok(())
     }
 
     #[allow(dead_code)]
     pub fn remove_track_by_path(&self, path: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM tracks WHERE path = ?1", params![path])?;
+        self.conn
+            .execute("DELETE FROM tracks WHERE path = ?1", params![path])?;
         Ok(())
     }
 
@@ -181,8 +193,13 @@ impl Database {
         Ok(count)
     }
 
-    pub fn remove_missing_from_folder(&self, folder: &str, existing_paths: &[String]) -> Result<usize> {
-        let norm_folder: std::path::PathBuf = std::path::Path::new(&normalize_path(folder)).to_path_buf();
+    pub fn remove_missing_from_folder(
+        &self,
+        folder: &str,
+        existing_paths: &[String],
+    ) -> Result<usize> {
+        let norm_folder: std::path::PathBuf =
+            std::path::Path::new(&normalize_path(folder)).to_path_buf();
         let existing_set: std::collections::HashSet<String> =
             existing_paths.iter().map(|s| normalize_path(s)).collect();
 
@@ -202,14 +219,14 @@ impl Database {
                 // a single library folder, so out-of-folder rows whose files
                 // are gone are stale ghosts. This only deletes DB rows; the
                 // filesystem is never touched.
-                norm_p.starts_with(&norm_folder)
-                    || !std::path::Path::new(p).exists()
+                norm_p.starts_with(&norm_folder) || !std::path::Path::new(p).exists()
             })
             .collect();
         drop(stmt);
 
         for path in &to_delete {
-            self.conn.execute("DELETE FROM tracks WHERE path = ?1", params![path])?;
+            self.conn
+                .execute("DELETE FROM tracks WHERE path = ?1", params![path])?;
         }
         Ok(to_delete.len())
     }
@@ -279,7 +296,8 @@ mod tests {
     #[test]
     fn upsert_track_on_conflicting_path_updates_in_place() {
         let db = db();
-        db.upsert_track(&track("/m/a.mp3", "Old", "Old", 1)).unwrap();
+        db.upsert_track(&track("/m/a.mp3", "Old", "Old", 1))
+            .unwrap();
         let mut updated = track("/m/a.mp3", "New", "New", 2);
         updated.title = Some("New title".into());
         db.upsert_track(&updated).unwrap();
@@ -355,7 +373,8 @@ mod tests {
             .unwrap();
         db.upsert_track(&track("/music/rock/b.mp3", "A", "X", 2))
             .unwrap();
-        db.upsert_track(&track("/other/c.mp3", "C", "Y", 1)).unwrap();
+        db.upsert_track(&track("/other/c.mp3", "C", "Y", 1))
+            .unwrap();
 
         let removed = db.remove_tracks_under_folder("/music/rock").unwrap();
         assert_eq!(removed, 2);
@@ -370,8 +389,8 @@ mod tests {
 
         // A real file outside the library folder: still on disk, so a
         // single-folder rescan must NOT purge it (conservative, no data loss).
-        let outside_real = std::env::temp_dir()
-            .join(format!("audra_db_outside_{}.mp3", std::process::id()));
+        let outside_real =
+            std::env::temp_dir().join(format!("audra_db_outside_{}.mp3", std::process::id()));
         std::fs::write(&outside_real, b"x").unwrap();
         let outside_real = outside_real.to_string_lossy().to_string();
 

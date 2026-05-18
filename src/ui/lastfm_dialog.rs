@@ -1,11 +1,11 @@
+use adw::prelude::*;
+use glib::clone;
 use gtk4::prelude::*;
 use gtk4::Button;
 use libadwaita as adw;
-use adw::prelude::*;
-use glib::clone;
-use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use crate::i18n::gettext;
 use crate::library::db::Database;
@@ -13,11 +13,19 @@ use crate::scrobbler::LastFmClient;
 
 fn open_url(url: &str) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
-    { std::process::Command::new("cmd").args(["/c", "start", url]).spawn()?; }
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", url])
+            .spawn()?;
+    }
     #[cfg(target_os = "macos")]
-    { std::process::Command::new("open").arg(url).spawn()?; }
+    {
+        std::process::Command::new("open").arg(url).spawn()?;
+    }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    { std::process::Command::new("xdg-open").arg(url).spawn()?; }
+    {
+        std::process::Command::new("xdg-open").arg(url).spawn()?;
+    }
     Ok(())
 }
 
@@ -158,25 +166,29 @@ pub fn show_lastfm_dialog(
     let pending_token: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
 
     btn_authorize.connect_clicked(clone!(
-        #[weak] auth_error_label,
-        #[weak] stack,
-        #[weak] btn_authorize,
-        #[strong] pending_token,
+        #[weak]
+        auth_error_label,
+        #[weak]
+        stack,
+        #[weak]
+        btn_authorize,
+        #[strong]
+        pending_token,
         move |_| {
             if !LastFmClient::is_configured() {
-                auth_error_label.set_text(
-                    "La URL del proxy no está configurada.",
-                );
+                auth_error_label.set_text("La URL del proxy no está configurada.");
                 return;
             }
             btn_authorize.set_sensitive(false);
             auth_error_label.set_text("");
 
             let (tx, rx) = std::sync::mpsc::channel::<Result<(String, String), String>>();
-            std::thread::spawn(move || {
-                match LastFmClient::get_auth_token() {
-                    Ok(r) => { let _ = tx.send(Ok((r.token, r.auth_url))); }
-                    Err(e) => { let _ = tx.send(Err(e.to_string())); }
+            std::thread::spawn(move || match LastFmClient::get_auth_token() {
+                Ok(r) => {
+                    let _ = tx.send(Ok((r.token, r.auth_url)));
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e.to_string()));
                 }
             });
 
@@ -207,20 +219,25 @@ pub fn show_lastfm_dialog(
     ));
 
     btn_confirmed.connect_clicked(clone!(
-        #[weak] wait_error_label,
-        #[weak] stack,
-        #[weak] ok_status,
-        #[weak] btn_confirmed,
-        #[strong] pending_token,
-        #[strong] db,
-        #[strong] lastfm,
+        #[weak]
+        wait_error_label,
+        #[weak]
+        stack,
+        #[weak]
+        ok_status,
+        #[weak]
+        btn_confirmed,
+        #[strong]
+        pending_token,
+        #[strong]
+        db,
+        #[strong]
+        lastfm,
         move |_| {
             let token = match pending_token.borrow().clone() {
                 Some(t) => t,
                 None => {
-                    wait_error_label.set_text(
-                        "No hay token pendiente. Vuelve a autorizar.",
-                    );
+                    wait_error_label.set_text("No hay token pendiente. Vuelve a autorizar.");
                     return;
                 }
             };
@@ -230,19 +247,19 @@ pub fn show_lastfm_dialog(
             let (tx, rx) = std::sync::mpsc::channel::<Result<(String, String), String>>();
             let db2 = Arc::clone(&db);
             let lastfm2 = Arc::clone(&lastfm);
-            std::thread::spawn(move || {
-                match LastFmClient::get_session(&token) {
-                    Ok(r) => {
-                        {
-                            let db_g = db2.lock().unwrap();
-                            let _ = db_g.set_setting("lastfm_session_key", &r.session_key);
-                            let _ = db_g.set_setting("lastfm_username", &r.username);
-                        }
-                        let new_client = LastFmClient::new().with_session(&r.session_key);
-                        *lastfm2.lock().unwrap() = Some(new_client);
-                        let _ = tx.send(Ok((r.session_key, r.username)));
+            std::thread::spawn(move || match LastFmClient::get_session(&token) {
+                Ok(r) => {
+                    {
+                        let db_g = db2.lock().unwrap();
+                        let _ = db_g.set_setting("lastfm_session_key", &r.session_key);
+                        let _ = db_g.set_setting("lastfm_username", &r.username);
                     }
-                    Err(e) => { let _ = tx.send(Err(e.to_string())); }
+                    let new_client = LastFmClient::new().with_session(&r.session_key);
+                    *lastfm2.lock().unwrap() = Some(new_client);
+                    let _ = tx.send(Ok((r.session_key, r.username)));
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e.to_string()));
                 }
             });
 
@@ -271,8 +288,10 @@ pub fn show_lastfm_dialog(
     ));
 
     btn_cancel_wait.connect_clicked(clone!(
-        #[weak] stack,
-        #[strong] pending_token,
+        #[weak]
+        stack,
+        #[strong]
+        pending_token,
         move |_| {
             *pending_token.borrow_mut() = None;
             stack.set_visible_child_name("authorize");
@@ -280,14 +299,20 @@ pub fn show_lastfm_dialog(
     ));
 
     btn_change.connect_clicked(clone!(
-        #[weak] stack,
-        move |_| { stack.set_visible_child_name("authorize"); }
+        #[weak]
+        stack,
+        move |_| {
+            stack.set_visible_child_name("authorize");
+        }
     ));
 
     btn_forget.connect_clicked(clone!(
-        #[weak] stack,
-        #[strong] db,
-        #[strong] lastfm,
+        #[weak]
+        stack,
+        #[strong]
+        db,
+        #[strong]
+        lastfm,
         move |_| {
             {
                 let db_g = db.lock().unwrap();

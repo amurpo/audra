@@ -1,20 +1,19 @@
-use gtk4::prelude::*;
-use gtk4::{
-    Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, ListBox, ListBoxRow,
-    Orientation, Overlay, Picture, ScrolledWindow, Stack, Align, ContentFit, SelectionMode,
-    StackTransitionType,
-};
-use libadwaita as adw;
+use crate::i18n::gettext;
+use crate::library::db::Database;
+use crate::library::{Album, Track};
+use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels};
 use adw::prelude::*;
 use glib;
-use std::rc::Rc;
-use crate::ui::image_utils::{scale_to_pixels, pixels_to_texture};
+use gtk4::prelude::*;
+use gtk4::{
+    Align, Box as GtkBox, Button, ContentFit, FlowBox, FlowBoxChild, Label, ListBox, ListBoxRow,
+    Orientation, Overlay, Picture, ScrolledWindow, SelectionMode, Stack, StackTransitionType,
+};
+use libadwaita as adw;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use crate::i18n::gettext;
-use crate::library::{Album, Track};
-use crate::library::db::Database;
 
 const CARD_SIZE: i32 = 200;
 
@@ -103,10 +102,14 @@ impl AlbumsView {
         for album in &albums {
             let key = format!("{}|{}", album.artist, album.name);
             let (card, stack, picture) = make_album_card(album, true);
-            self.covers.borrow_mut().insert(key.clone(), (stack, picture));
+            self.covers
+                .borrow_mut()
+                .insert(key.clone(), (stack, picture));
             self.flow.append(&card);
 
-            let track_path = album.tracks.first()
+            let track_path = album
+                .tracks
+                .first()
                 .map(|t| t.path.clone())
                 .unwrap_or_default();
             need_fetch.push((album.artist.clone(), album.name.clone(), track_path));
@@ -160,7 +163,10 @@ impl AlbumsView {
 
                 if let Some(bytes) = db.lock().unwrap().get_cover(artist, album_name) {
                     if let Some(scaled) = scale_to_pixels(&bytes, CARD_SIZE) {
-                        queue_tx.lock().unwrap().push((key, scaled.0, scaled.1, scaled.2));
+                        queue_tx
+                            .lock()
+                            .unwrap()
+                            .push((key, scaled.0, scaled.1, scaled.2));
                         continue;
                     }
                 }
@@ -168,7 +174,10 @@ impl AlbumsView {
                 if let Some(bytes) = crate::library::art::read_cover_art(track_path) {
                     let _ = db.lock().unwrap().set_cover(artist, album_name, &bytes);
                     if let Some(scaled) = scale_to_pixels(&bytes, CARD_SIZE) {
-                        queue_tx.lock().unwrap().push((key, scaled.0, scaled.1, scaled.2));
+                        queue_tx
+                            .lock()
+                            .unwrap()
+                            .push((key, scaled.0, scaled.1, scaled.2));
                         continue;
                     }
                 }
@@ -184,7 +193,10 @@ impl AlbumsView {
                     let _ = db.lock().unwrap().set_cover(&artist, &album_name, &bytes);
                     if let Some(scaled) = scale_to_pixels(&bytes, CARD_SIZE) {
                         let key = format!("{}|{}", artist, album_name);
-                        queue_tx.lock().unwrap().push((key, scaled.0, scaled.1, scaled.2));
+                        queue_tx
+                            .lock()
+                            .unwrap()
+                            .push((key, scaled.0, scaled.1, scaled.2));
                     }
                 }
             }
@@ -300,11 +312,13 @@ pub fn make_album_detail_page(
 }
 
 fn update_track_row_highlight(row: &ListBoxRow, idx: usize, is_playing: bool) {
-    let Some(hbox) = row.child().and_downcast::<GtkBox>() else { return };
-    let Some(num_lbl) = hbox.first_child().and_downcast::<Label>() else { return };
-    let title_lbl = num_lbl
-        .next_sibling()
-        .and_downcast::<Label>();
+    let Some(hbox) = row.child().and_downcast::<GtkBox>() else {
+        return;
+    };
+    let Some(num_lbl) = hbox.first_child().and_downcast::<Label>() else {
+        return;
+    };
+    let title_lbl = num_lbl.next_sibling().and_downcast::<Label>();
 
     if is_playing {
         num_lbl.set_text("▶");

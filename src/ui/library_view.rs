@@ -1,13 +1,12 @@
-use gtk4::prelude::*;
-use gtk4::{
-    Box, Button, Label, ListView, Orientation, ScrolledWindow,
-    SingleSelection, SignalListItemFactory, ListItem,
-    StringList, Align,
-};
-use std::rc::Rc;
-use std::cell::RefCell;
 use crate::i18n::gettext;
 use crate::library::Track;
+use gtk4::prelude::*;
+use gtk4::{
+    Align, Box, Button, Label, ListItem, ListView, Orientation, ScrolledWindow,
+    SignalListItemFactory, SingleSelection, StringList,
+};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 type PlayAllCb = Rc<RefCell<Option<Rc<dyn Fn(Vec<Track>, usize)>>>>;
 
@@ -79,11 +78,21 @@ impl LibraryView {
                 let disp = displayed_ref.borrow();
                 let Some(track) = disp.get(pos) else { return };
 
-                let Some(row) = item.child().and_downcast::<Box>() else { return };
-                let Some(info) = row.first_child().and_downcast::<Box>() else { return };
-                let Some(lbl_title) = info.first_child().and_downcast::<Label>() else { return };
-                let Some(lbl_artist) = lbl_title.next_sibling().and_downcast::<Label>() else { return };
-                let Some(lbl_dur) = row.last_child().and_downcast::<Label>() else { return };
+                let Some(row) = item.child().and_downcast::<Box>() else {
+                    return;
+                };
+                let Some(info) = row.first_child().and_downcast::<Box>() else {
+                    return;
+                };
+                let Some(lbl_title) = info.first_child().and_downcast::<Label>() else {
+                    return;
+                };
+                let Some(lbl_artist) = lbl_title.next_sibling().and_downcast::<Label>() else {
+                    return;
+                };
+                let Some(lbl_dur) = row.last_child().and_downcast::<Label>() else {
+                    return;
+                };
 
                 lbl_title.set_text(&track.display_title());
                 lbl_artist.set_text(&track.display_artist());
@@ -168,7 +177,9 @@ impl LibraryView {
             self.apply_displayed(all);
         } else {
             let q = query.to_lowercase();
-            let filtered: Vec<Track> = self.full_tracks.iter()
+            let filtered: Vec<Track> = self
+                .full_tracks
+                .iter()
                 .filter(|t| {
                     t.display_title().to_lowercase().contains(&q)
                         || t.display_artist().to_lowercase().contains(&q)

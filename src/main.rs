@@ -5,10 +5,10 @@ mod player;
 mod scrobbler;
 mod ui;
 
-use std::sync::{Arc, Mutex};
-use libadwaita as adw;
 use adw::prelude::*;
+use libadwaita as adw;
 use library::db::Database;
+use std::sync::{Arc, Mutex};
 
 const APP_ID: &str = "com.audra.player";
 
