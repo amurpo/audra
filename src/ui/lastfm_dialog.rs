@@ -21,13 +21,6 @@ fn open_url(url: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-fn escape_markup(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
 pub fn show_lastfm_dialog(
     parent: &adw::ApplicationWindow,
     db: Arc<Mutex<Database>>,
@@ -66,7 +59,7 @@ pub fn show_lastfm_dialog(
 
     let auth_error_label = gtk4::Label::new(None);
     auth_error_label.set_wrap(true);
-    auth_error_label.set_use_markup(true);
+    auth_error_label.add_css_class("lastfm-err");
     auth_error_label.set_halign(gtk4::Align::Center);
 
     let btn_authorize = Button::with_label(&gettext("Authorize on Last.fm"));
@@ -96,7 +89,7 @@ pub fn show_lastfm_dialog(
 
     let wait_error_label = gtk4::Label::new(None);
     wait_error_label.set_wrap(true);
-    wait_error_label.set_use_markup(true);
+    wait_error_label.add_css_class("lastfm-err");
     wait_error_label.set_halign(gtk4::Align::Center);
 
     let wait_btn_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
@@ -171,8 +164,8 @@ pub fn show_lastfm_dialog(
         #[strong] pending_token,
         move |_| {
             if !LastFmClient::is_configured() {
-                auth_error_label.set_markup(
-                    "<span foreground='#e01b24'>La URL del proxy no está configurada.</span>",
+                auth_error_label.set_text(
+                    "La URL del proxy no está configurada.",
                 );
                 return;
             }
@@ -199,10 +192,7 @@ pub fn show_lastfm_dialog(
                         glib::ControlFlow::Break
                     }
                     Ok(Err(e)) => {
-                        auth_error_label.set_markup(&format!(
-                            "<span foreground='#e01b24'>Error: {}</span>",
-                            escape_markup(&e)
-                        ));
+                        auth_error_label.set_text(&format!("Error: {}", e));
                         btn_authorize.set_sensitive(true);
                         glib::ControlFlow::Break
                     }
@@ -228,8 +218,8 @@ pub fn show_lastfm_dialog(
             let token = match pending_token.borrow().clone() {
                 Some(t) => t,
                 None => {
-                    wait_error_label.set_markup(
-                        "<span foreground='#e01b24'>No hay token pendiente. Vuelve a autorizar.</span>",
+                    wait_error_label.set_text(
+                        "No hay token pendiente. Vuelve a autorizar.",
                     );
                     return;
                 }
@@ -266,10 +256,7 @@ pub fn show_lastfm_dialog(
                         glib::ControlFlow::Break
                     }
                     Ok(Err(e)) => {
-                        wait_error_label.set_markup(&format!(
-                            "<span foreground='#e01b24'>Error: {}</span>",
-                            escape_markup(&e)
-                        ));
+                        wait_error_label.set_text(&format!("Error: {}", e));
                         btn_confirmed.set_sensitive(true);
                         glib::ControlFlow::Break
                     }

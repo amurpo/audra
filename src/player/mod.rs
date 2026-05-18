@@ -139,3 +139,100 @@ impl Player {
         self.engine.get_pos()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_track(i: usize) -> Track {
+        Track {
+            id: Some(i as i64),
+            path: format!("/m/{i}.mp3"),
+            title: Some(format!("t{i}")),
+            artist: Some("A".into()),
+            album: Some("X".into()),
+            track_num: Some(i as i64),
+            duration_secs: Some(100),
+        }
+    }
+
+    /// CI runners have no audio device, so `Player::new()` fails there. These
+    /// tests exercise only queue/shuffle bookkeeping (no playback), and skip
+    /// cleanly when no output device is available.
+    fn player_or_skip() -> Option<Player> {
+        match Player::new() {
+            Ok(p) => Some(p),
+            Err(_) => {
+                eprintln!("skipping: no audio output device available");
+                None
+            }
+        }
+    }
+
+    #[test]
+    fn defaults_are_sane() {
+        let Some(p) = player_or_skip() else { return };
+        assert_eq!(p.state, PlayerState::Stopped);
+        assert!(!p.shuffle);
+        assert!(!p.repeat_one);
+        assert_eq!(p.index, None);
+        assert!(p.queue.is_empty());
+        assert!(p.current_track().is_none());
+    }
+
+    #[test]
+    fn load_queue_sets_index_and_resets_shuffle_state() {
+        let Some(mut p) = player_or_skip() else {
+            return;
+        };
+        p.load_queue((0..5).map(mk_track).collect(), 2);
+        assert_eq!(p.queue.len(), 5);
+        assert_eq!(p.index, Some(2));
+        assert_eq!(p.current_track().map(|t| t.path.clone()), Some("/m/2.mp3".into()));
+
+        // A stale shuffled order must be cleared by load_queue.
+        p.shuffle = true;
+        p.reshuffle();
+        assert!(!p.shuffled_order.is_empty());
+        p.load_queue((0..3).map(mk_track).collect(), 0);
+        assert!(p.shuffled_order.is_empty());
+        assert_eq!(p.shuffle_cursor, 0);
+    }
+
+    #[test]
+    fn reshuffle_is_a_permutation_with_current_first() {
+        let Some(mut p) = player_or_skip() else {
+            return;
+        };
+        p.load_queue((0..10).map(mk_track).collect(), 4);
+        p.reshuffle();
+
+        assert_eq!(p.shuffled_order.len(), 10);
+        assert_eq!(p.shuffle_cursor, 0);
+        // The currently playing index is moved to the front.
+        assert_eq!(p.shuffled_order[0], 4);
+        // Every original index appears exactly once.
+        let mut sorted = p.shuffled_order.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn reshuffle_on_empty_queue_is_safe() {
+        let Some(mut p) = player_or_skip() else {
+            return;
+        };
+        p.load_queue(vec![], 0);
+        p.reshuffle();
+        assert!(p.shuffled_order.is_empty());
+    }
+
+    #[test]
+    fn set_volume_updates_state() {
+        let Some(mut p) = player_or_skip() else {
+            return;
+        };
+        p.set_volume(0.25);
+        assert_eq!(p.volume, 0.25);
+    }
+}

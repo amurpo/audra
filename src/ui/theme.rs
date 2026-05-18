@@ -34,9 +34,6 @@ flowboxchild.mosaic-child:hover {
     font-size: 0.78em;
     color: rgba(255,255,255,0.72);
 }
-.lastfm-ok {
-    color: #33d17a;
-}
 .lastfm-err {
     color: #e01b24;
 }

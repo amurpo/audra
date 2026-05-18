@@ -1,7 +1,7 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box as GtkBox, Button, FlowBox, FlowBoxChild, Image, Label, Orientation, Overlay, Picture,
-    ScrolledWindow, Align, ContentFit, SelectionMode,
+    Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, Orientation,
+    ScrolledWindow, Align, SelectionMode,
 };
 use libadwaita as adw;
 use adw::prelude::*;
@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use crate::i18n::{gettext, ngettext};
 use crate::library::{Artist, Album, Track};
 use crate::library::db::Database;
-use crate::ui::albums_view::make_album_detail_page;
+use crate::ui::albums_view::{make_album_card, make_album_detail_page};
 
 const CARD_SIZE: i32 = 200;
 const AVATAR_SIZE: i32 = 120;
@@ -226,7 +226,7 @@ fn make_artist_detail_page(
     flow.set_activate_on_single_click(true);
 
     for album in &albums {
-        flow.append(&make_album_card(album));
+        flow.append(&make_artist_album_card(album));
     }
 
     let albums_rc = Rc::new(albums);
@@ -274,53 +274,17 @@ fn make_artist_detail_page(
     adw::NavigationPage::new(&toolbar, artist_name)
 }
 
-fn make_album_card(album: &Album) -> FlowBoxChild {
-    let overlay = Overlay::new();
-    overlay.set_size_request(CARD_SIZE, CARD_SIZE);
-    overlay.set_overflow(gtk4::Overflow::Hidden);
-    overlay.set_hexpand(false);
-    overlay.set_vexpand(false);
-
+fn make_artist_album_card(album: &Album) -> FlowBoxChild {
+    let (child, stack, picture) = make_album_card(album, false);
     if let Some(ref data) = album.cover {
-        if let Some((pixels, rowstride, has_alpha)) = scale_to_pixels(data.as_slice(), CARD_SIZE) {
+        if let Some((pixels, rowstride, has_alpha)) =
+            scale_to_pixels(data.as_slice(), CARD_SIZE)
+        {
             let texture = pixels_to_texture(pixels, rowstride, has_alpha, CARD_SIZE);
-            let picture = Picture::new();
-            picture.set_content_fit(ContentFit::Fill);
-            picture.set_halign(Align::Fill);
-            picture.set_valign(Align::Fill);
             picture.set_paintable(Some(&texture));
-            overlay.set_child(Some(&picture));
-        } else {
-            let ph = Image::from_icon_name("media-optical-symbolic");
-            ph.set_pixel_size(64);
-            ph.add_css_class("dim-label");
-            overlay.set_child(Some(&ph));
+            stack.set_visible_child_name("art");
         }
-    } else {
-        let ph = Image::from_icon_name("media-optical-symbolic");
-        ph.set_pixel_size(64);
-        ph.add_css_class("dim-label");
-        overlay.set_child(Some(&ph));
     }
-
-    let info = GtkBox::new(Orientation::Vertical, 1);
-    info.set_valign(Align::End);
-    info.set_halign(Align::Fill);
-    info.add_css_class("album-overlay-box");
-
-    let lbl_name = Label::new(Some(&album.name));
-    lbl_name.add_css_class("album-overlay-title");
-    lbl_name.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-    lbl_name.set_xalign(0.0);
-
-    info.append(&lbl_name);
-    overlay.add_overlay(&info);
-
-    let child = FlowBoxChild::new();
-    child.add_css_class("mosaic-child");
-    child.set_child(Some(&overlay));
-    child.set_halign(Align::Center);
-    child.set_valign(Align::Center);
     child
 }
 

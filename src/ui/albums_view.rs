@@ -102,7 +102,7 @@ impl AlbumsView {
 
         for album in &albums {
             let key = format!("{}|{}", album.artist, album.name);
-            let (card, stack, picture) = make_album_card(album);
+            let (card, stack, picture) = make_album_card(album, true);
             self.covers.borrow_mut().insert(key.clone(), (stack, picture));
             self.flow.append(&card);
 
@@ -350,7 +350,7 @@ fn make_track_row(idx: usize, track: &Track) -> ListBoxRow {
     row
 }
 
-fn make_album_card(album: &Album) -> (FlowBoxChild, Stack, Picture) {
+pub fn make_album_card(album: &Album, show_artist: bool) -> (FlowBoxChild, Stack, Picture) {
     let overlay = Overlay::new();
     overlay.set_size_request(CARD_SIZE, CARD_SIZE);
     overlay.set_overflow(gtk4::Overflow::Hidden);
@@ -399,13 +399,14 @@ fn make_album_card(album: &Album) -> (FlowBoxChild, Stack, Picture) {
     lbl_name.set_ellipsize(gtk4::pango::EllipsizeMode::End);
     lbl_name.set_xalign(0.0);
 
-    let lbl_artist = Label::new(Some(&album.artist));
-    lbl_artist.add_css_class("album-overlay-artist");
-    lbl_artist.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-    lbl_artist.set_xalign(0.0);
-
     info.append(&lbl_name);
-    info.append(&lbl_artist);
+    if show_artist {
+        let lbl_artist = Label::new(Some(&album.artist));
+        lbl_artist.add_css_class("album-overlay-artist");
+        lbl_artist.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        lbl_artist.set_xalign(0.0);
+        info.append(&lbl_artist);
+    }
     overlay.add_overlay(&info);
 
     let child = FlowBoxChild::new();

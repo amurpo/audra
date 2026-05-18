@@ -23,22 +23,26 @@ jobs:
           VER=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "ver=$VER" >> $GITHUB_OUTPUT
 
+  test:
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+
   build-linux:
-    needs: version
+    needs: [version, test]
     uses: ./.github/workflows/build-linux.yml
     with:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
 
   build-windows:
-    needs: version
+    needs: [version, test]
     uses: ./.github/workflows/build-windows.yml
     with:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
 
   build-macos:
-    needs: version
+    needs: [version, test]
     uses: ./.github/workflows/build-macos.yml
     with:
       ver: ${{ needs.version.outputs.ver }}

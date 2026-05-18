@@ -26,9 +26,9 @@ fn reload_all_views(
     artists_view: &Rc<ArtistsView>,
 ) {
     let all = db.lock().unwrap().all_tracks().unwrap_or_default();
-    lib_view.borrow_mut().load_tracks(all.clone());
     let albums = library::group_into_albums(&all);
     let artists = library::group_into_artists(&albums);
+    lib_view.borrow_mut().load_tracks(all);
     albums_view.load_albums(albums.clone(), Arc::clone(db));
     artists_view.load_artists(artists, albums);
 }
@@ -124,9 +124,11 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         let lf = Arc::clone(&lastfm);
         let db_flush = Arc::clone(&db);
         std::thread::spawn(move || {
-            let guard = lf.lock().unwrap();
-            if let Some(client) = guard.as_ref() {
-                client.flush_queue(&db_flush.lock().unwrap());
+            let sk = lf.lock().unwrap()
+                .as_ref()
+                .and_then(|c| c.session_key().map(str::to_string));
+            if let Some(sk) = sk {
+                LastFmClient::new().with_session(&sk).flush_queue(&db_flush);
             }
         });
     }
@@ -263,9 +265,13 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             let album = track.album.clone().unwrap_or_default();
             let lf = Arc::clone(&lastfm);
             std::thread::spawn(move || {
-                let guard = lf.lock().unwrap();
-                if let Some(client) = guard.as_ref() {
-                    client.update_now_playing(&artist, &title, &album);
+                let sk = lf.lock().unwrap()
+                    .as_ref()
+                    .and_then(|c| c.session_key().map(str::to_string));
+                if let Some(sk) = sk {
+                    LastFmClient::new()
+                        .with_session(&sk)
+                        .update_now_playing(&artist, &title, &album);
                 }
             });
         })
@@ -540,6 +546,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
+        window.downgrade(),
     );
 
     window.present();
