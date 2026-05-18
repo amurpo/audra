@@ -152,9 +152,24 @@ impl Database {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn remove_track_by_path(&self, path: &str) -> Result<()> {
         self.conn.execute("DELETE FROM tracks WHERE path = ?1", params![path])?;
         Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub fn remove_tracks_under_folder(&self, folder: &str) -> Result<usize> {
+        let prefix = if folder.ends_with('/') {
+            folder.to_string()
+        } else {
+            format!("{}/", folder)
+        };
+        let count = self.conn.execute(
+            "DELETE FROM tracks WHERE path LIKE ?1 || '%'",
+            params![prefix],
+        )?;
+        Ok(count)
     }
 
     pub fn remove_missing_from_folder(&self, folder: &str, existing_paths: &[String]) -> Result<usize> {

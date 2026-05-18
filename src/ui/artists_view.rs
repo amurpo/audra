@@ -29,6 +29,7 @@ pub struct ArtistsView {
     all_albums: Rc<RefCell<Vec<Album>>>,
     on_play: Rc<RefCell<Option<PlayCallback>>>,
     avatars: AvatarMap,
+    current_filter: Rc<RefCell<String>>,
 }
 
 impl ArtistsView {
@@ -101,7 +102,7 @@ impl ArtistsView {
             });
         }
 
-        Self { root: nav, flow, artists_list, all_albums, on_play, avatars }
+        Self { root: nav, flow, artists_list, all_albums, on_play, avatars, current_filter: Rc::new(RefCell::new(String::new())) }
     }
 
     pub fn set_on_play(&self, callback: impl Fn(Vec<Track>, usize) + 'static) {
@@ -109,6 +110,7 @@ impl ArtistsView {
     }
 
     pub fn filter(&self, query: &str) {
+        *self.current_filter.borrow_mut() = query.to_string();
         if query.is_empty() {
             self.flow.set_filter_func(|_| true);
         } else {
@@ -142,6 +144,11 @@ impl ArtistsView {
 
         *self.artists_list.borrow_mut() = artists;
         *self.all_albums.borrow_mut() = albums;
+
+        let active = self.current_filter.borrow().clone();
+        if !active.is_empty() {
+            self.filter(&active);
+        }
 
         if !names_to_fetch.is_empty() {
             self.start_photo_fetch(names_to_fetch);
