@@ -41,3 +41,23 @@ pub fn init(lang_override: Option<&str>) {
     let _ = gettextrs::bind_textdomain_codeset("audra", "UTF-8");
     let _ = gettextrs::textdomain("audra");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `init` mutates global process locale state entangled with the gettext C
+    // library, so its real effect (catalog selection) can't be asserted
+    // deterministically in a unit test without a compiled .mo and a controlled
+    // OS locale. We only pin down that every input path is panic-free and that
+    // repeated calls are idempotent — the contract callers actually rely on.
+    #[test]
+    fn init_is_panic_free_and_idempotent_for_every_input_path() {
+        init(Some("es")); // explicit override
+        init(Some("xx")); // unknown lang -> gettext falls back, must not panic
+        init(Some("")); // empty string is treated as "no override"
+        init(None); // system default
+        init(None); // idempotent: a second clear must not panic
+        init(Some("en")); // back to an explicit value after a clear
+    }
+}

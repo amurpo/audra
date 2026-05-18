@@ -64,3 +64,74 @@ fn read_folder_art(audio_path: &str) -> Option<Vec<u8>> {
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    struct TmpDir(std::path::PathBuf);
+
+    impl TmpDir {
+        fn new() -> Self {
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let p = std::env::temp_dir()
+                .join(format!("audra_art_{}_{}", std::process::id(), n));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpDir(p)
+        }
+        /// Path of an audio file inside the dir (the file itself need not exist
+        /// for folder-art lookup, which only inspects the parent directory).
+        fn audio(&self) -> String {
+            self.0.join("track.mp3").to_string_lossy().to_string()
+        }
+        fn put(&self, name: &str, bytes: &[u8]) {
+            std::fs::write(self.0.join(name), bytes).unwrap();
+        }
+    }
+
+    impl Drop for TmpDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn no_art_anywhere_returns_none() {
+        let dir = TmpDir::new();
+        assert_eq!(read_cover_art(&dir.audio()), None);
+    }
+
+    #[test]
+    fn picks_up_a_canonical_folder_image() {
+        let dir = TmpDir::new();
+        dir.put("cover.png", b"PNGDATA");
+        assert_eq!(read_cover_art(&dir.audio()), Some(b"PNGDATA".to_vec()));
+    }
+
+    #[test]
+    fn canonical_candidates_win_over_arbitrary_images() {
+        let dir = TmpDir::new();
+        dir.put("zzz_random.jpg", b"RANDOM");
+        dir.put("cover.jpg", b"CANONICAL");
+        assert_eq!(read_cover_art(&dir.audio()), Some(b"CANONICAL".to_vec()));
+    }
+
+    #[test]
+    fn cover_jpg_is_preferred_over_folder_jpg() {
+        let dir = TmpDir::new();
+        dir.put("folder.jpg", b"FOLDER");
+        dir.put("cover.jpg", b"COVER");
+        // cover.jpg comes before folder.jpg in FOLDER_CANDIDATES.
+        assert_eq!(read_cover_art(&dir.audio()), Some(b"COVER".to_vec()));
+    }
+
+    #[test]
+    fn falls_back_to_any_image_extension() {
+        let dir = TmpDir::new();
+        dir.put("art_scan.jpeg", b"JPEGDATA");
+        assert_eq!(read_cover_art(&dir.audio()), Some(b"JPEGDATA".to_vec()));
+    }
+}

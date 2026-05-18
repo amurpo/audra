@@ -222,3 +222,171 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn db() -> Database {
+        // ":memory:" gives every test an isolated, disk-free SQLite instance.
+        Database::open(":memory:").expect("open in-memory db")
+    }
+
+    fn track(path: &str, artist: &str, album: &str, num: i64) -> Track {
+        Track {
+            id: None,
+            path: path.to_string(),
+            title: Some(format!("{path} title")),
+            artist: Some(artist.to_string()),
+            album: Some(album.to_string()),
+            track_num: Some(num),
+            duration_secs: Some(180),
+        }
+    }
+
+    #[test]
+    fn schema_is_created_on_open() {
+        let db = db();
+        // If init_schema didn't run these inserts would fail with "no such table".
+        assert!(db.all_tracks().unwrap().is_empty());
+        assert!(db.pending_scrobbles().unwrap().is_empty());
+        assert_eq!(db.get_setting("missing"), None);
+        assert_eq!(db.get_cover("a", "b"), None);
+    }
+
+    #[test]
+    fn upsert_track_inserts_and_returns_rowid() {
+        let db = db();
+        let id = db.upsert_track(&track("/m/a.mp3", "A", "X", 1)).unwrap();
+        assert!(id > 0);
+        let all = db.all_tracks().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].path, "/m/a.mp3");
+        assert_eq!(all[0].artist.as_deref(), Some("A"));
+        assert_eq!(all[0].id, Some(id));
+    }
+
+    #[test]
+    fn upsert_track_on_conflicting_path_updates_in_place() {
+        let db = db();
+        db.upsert_track(&track("/m/a.mp3", "Old", "Old", 1)).unwrap();
+        let mut updated = track("/m/a.mp3", "New", "New", 2);
+        updated.title = Some("New title".into());
+        db.upsert_track(&updated).unwrap();
+
+        let all = db.all_tracks().unwrap();
+        assert_eq!(all.len(), 1, "same path must not duplicate");
+        assert_eq!(all[0].artist.as_deref(), Some("New"));
+        assert_eq!(all[0].title.as_deref(), Some("New title"));
+        assert_eq!(all[0].track_num, Some(2));
+    }
+
+    #[test]
+    fn all_tracks_is_ordered_by_artist_album_track_num() {
+        let db = db();
+        db.upsert_track(&track("/m/3.mp3", "B", "Z", 1)).unwrap();
+        db.upsert_track(&track("/m/2.mp3", "A", "Y", 2)).unwrap();
+        db.upsert_track(&track("/m/1.mp3", "A", "Y", 1)).unwrap();
+
+        let paths: Vec<_> = db
+            .all_tracks()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.path)
+            .collect();
+        assert_eq!(paths, vec!["/m/1.mp3", "/m/2.mp3", "/m/3.mp3"]);
+    }
+
+    #[test]
+    fn scrobble_queue_roundtrip() {
+        let db = db();
+        let tid = db.upsert_track(&track("/m/a.mp3", "A", "X", 1)).unwrap();
+        db.queue_scrobble(tid, "1700000000").unwrap();
+        db.queue_scrobble(tid, "1700000100").unwrap();
+
+        let pending = db.pending_scrobbles().unwrap();
+        assert_eq!(pending.len(), 2);
+        let (queue_id, joined_track, played_at) = &pending[0];
+        assert_eq!(joined_track.path, "/m/a.mp3");
+        assert!(["1700000000", "1700000100"].contains(&played_at.as_str()));
+
+        db.remove_scrobble(*queue_id).unwrap();
+        assert_eq!(db.pending_scrobbles().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn settings_get_set_delete() {
+        let db = db();
+        assert_eq!(db.get_setting("language"), None);
+        db.set_setting("language", "es").unwrap();
+        assert_eq!(db.get_setting("language").as_deref(), Some("es"));
+        // Upsert overwrites.
+        db.set_setting("language", "en").unwrap();
+        assert_eq!(db.get_setting("language").as_deref(), Some("en"));
+        db.delete_setting("language").unwrap();
+        assert_eq!(db.get_setting("language"), None);
+    }
+
+    #[test]
+    fn remove_track_by_path_deletes_single_row() {
+        let db = db();
+        db.upsert_track(&track("/m/a.mp3", "A", "X", 1)).unwrap();
+        db.upsert_track(&track("/m/b.mp3", "A", "X", 2)).unwrap();
+        db.remove_track_by_path("/m/a.mp3").unwrap();
+        let all = db.all_tracks().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].path, "/m/b.mp3");
+    }
+
+    #[test]
+    fn remove_tracks_under_folder_counts_and_deletes_prefix() {
+        let db = db();
+        db.upsert_track(&track("/music/rock/a.mp3", "A", "X", 1))
+            .unwrap();
+        db.upsert_track(&track("/music/rock/b.mp3", "A", "X", 2))
+            .unwrap();
+        db.upsert_track(&track("/other/c.mp3", "C", "Y", 1)).unwrap();
+
+        let removed = db.remove_tracks_under_folder("/music/rock").unwrap();
+        assert_eq!(removed, 2);
+        let all = db.all_tracks().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].path, "/other/c.mp3");
+    }
+
+    #[test]
+    fn remove_missing_from_folder_keeps_existing_and_outside_paths() {
+        let db = db();
+        db.upsert_track(&track("/music/a/1.mp3", "A", "X", 1))
+            .unwrap();
+        db.upsert_track(&track("/music/b/2.mp3", "B", "Y", 1))
+            .unwrap();
+        db.upsert_track(&track("/other/3.mp3", "C", "Z", 1)).unwrap();
+
+        // Only /music/a/1.mp3 still exists on disk under /music.
+        let removed = db
+            .remove_missing_from_folder("/music", &["/music/a/1.mp3".to_string()])
+            .unwrap();
+        assert_eq!(removed, 1, "only the missing in-folder track is purged");
+
+        let mut paths: Vec<_> = db
+            .all_tracks()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.path)
+            .collect();
+        paths.sort();
+        assert_eq!(paths, vec!["/music/a/1.mp3", "/other/3.mp3"]);
+    }
+
+    #[test]
+    fn cover_blob_roundtrip_and_replace() {
+        let db = db();
+        assert_eq!(db.get_cover("Artist", "Album"), None);
+        db.set_cover("Artist", "Album", &[1, 2, 3]).unwrap();
+        assert_eq!(db.get_cover("Artist", "Album"), Some(vec![1, 2, 3]));
+        // INSERT OR REPLACE on the (artist, album) primary key.
+        db.set_cover("Artist", "Album", &[9, 9]).unwrap();
+        assert_eq!(db.get_cover("Artist", "Album"), Some(vec![9, 9]));
+    }
+}

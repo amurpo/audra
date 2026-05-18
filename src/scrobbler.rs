@@ -141,3 +141,66 @@ impl LastFmClient {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn new_client_has_no_session() {
+        let c = LastFmClient::new();
+        assert_eq!(c.session_key(), None);
+    }
+
+    #[test]
+    fn with_session_sets_the_key() {
+        let c = LastFmClient::new().with_session("abc123");
+        assert_eq!(c.session_key(), Some("abc123"));
+    }
+
+    #[test]
+    fn is_configured_reflects_proxy_url_constant() {
+        // Mirrors the build-time credential: empty when LASTFM_PROXY_URL is unset.
+        assert_eq!(LastFmClient::is_configured(), !PROXY_URL.is_empty());
+    }
+
+    #[test]
+    fn scrobble_without_session_errors_before_any_network_call() {
+        let c = LastFmClient::new();
+        let err = c.scrobble("A", "T", "Al", 0).unwrap_err();
+        assert!(err.to_string().contains("sin sesión"));
+    }
+
+    #[test]
+    fn update_now_playing_without_session_is_a_silent_noop() {
+        // No session => returns early, never touches the network.
+        LastFmClient::new().update_now_playing("A", "T", "Al");
+    }
+
+    #[test]
+    fn flush_queue_with_empty_db_does_nothing() {
+        let db = Arc::new(Mutex::new(
+            crate::library::db::Database::open(":memory:").unwrap(),
+        ));
+        // Empty queue => early return, so the missing session never matters.
+        LastFmClient::new().flush_queue(&db);
+        assert!(db.lock().unwrap().pending_scrobbles().unwrap().is_empty());
+    }
+
+    #[test]
+    fn auth_token_response_deserializes() {
+        let r: AuthTokenResponse =
+            serde_json::from_str(r#"{"token":"tok","auth_url":"https://x/y"}"#).unwrap();
+        assert_eq!(r.token, "tok");
+        assert_eq!(r.auth_url, "https://x/y");
+    }
+
+    #[test]
+    fn auth_session_response_deserializes() {
+        let r: AuthSessionResponse =
+            serde_json::from_str(r#"{"session_key":"sk","username":"bob"}"#).unwrap();
+        assert_eq!(r.session_key, "sk");
+        assert_eq!(r.username, "bob");
+    }
+}
