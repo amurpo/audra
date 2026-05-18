@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Deps (Homebrew)
-        run: brew install gtk4 libadwaita pkg-config sqlite librsvg
+        run: brew install gtk4 libadwaita pkg-config sqlite librsvg gettext
 
       - uses: Swatinem/rust-cache@v2
 
@@ -102,6 +102,10 @@ jobs:
           gtk-icon-theme-name=Adwaita
           gtk-theme-name=Adwaita
           EOF
+          # Catálogo de traducción (gettext)
+          mkdir -p dist/audra/share/locale/es/LC_MESSAGES
+          "$(brew --prefix gettext)/bin/msgfmt" po/es.po \
+            -o dist/audra/share/locale/es/LC_MESSAGES/audra.mo
           # Script launcher
           cat > dist/audra/audra-launch.sh << 'EOF'
           #!/bin/bash

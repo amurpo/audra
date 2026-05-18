@@ -25,6 +25,7 @@ jobs:
             gtk4-devel libadwaita-devel \
             sqlite-devel pkg-config \
             alsa-lib-devel \
+            gettext \
             rpm-build
 
       - name: Instalar Rust (rustup)
@@ -45,6 +46,7 @@ jobs:
           cp target/release/audra \
              data/com.audra.player.desktop \
              data/icons/hicolor/scalable/apps/com.audra.player.svg \
+             po/es.po \
              ~/rpmbuild/BUILD/
           rpmbuild -bb \
             --define "ver $VER" \
