@@ -33,7 +33,7 @@ impl Player {
             shuffle: false,
             repeat_one: false,
             state: PlayerState::Stopped,
-            volume: 1.0,
+            volume: 0.5,
             shuffled_order: Vec::new(),
             shuffle_cursor: 0,
         })

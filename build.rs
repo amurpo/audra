@@ -3,6 +3,7 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
+    println!("cargo:rustc-link-lib=fontconfig");
     println!("cargo:rerun-if-env-changed=LASTFM_PROXY_URL");
 
     let out_dir = env::var("OUT_DIR").unwrap();

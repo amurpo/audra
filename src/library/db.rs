@@ -2,6 +2,15 @@ use anyhow::Result;
 use rusqlite::{Connection, params};
 use crate::library::Track;
 
+fn normalize_path(path: &str) -> String {
+    let buf: std::path::PathBuf = std::path::Path::new(path).components().collect();
+    let s = buf.to_string_lossy().to_string();
+    #[cfg(target_os = "windows")]
+    return s.to_lowercase();
+    #[cfg(not(target_os = "windows"))]
+    return s;
+}
+
 pub struct Database {
     conn: Connection,
 }
@@ -173,17 +182,18 @@ impl Database {
     }
 
     pub fn remove_missing_from_folder(&self, folder: &str, existing_paths: &[String]) -> Result<usize> {
-        let folder_path = std::path::Path::new(folder);
-        let existing_set: std::collections::HashSet<&str> =
-            existing_paths.iter().map(|s| s.as_str()).collect();
+        let norm_folder: std::path::PathBuf = std::path::Path::new(&normalize_path(folder)).to_path_buf();
+        let existing_set: std::collections::HashSet<String> =
+            existing_paths.iter().map(|s| normalize_path(s)).collect();
 
         let mut stmt = self.conn.prepare("SELECT path FROM tracks")?;
         let to_delete: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(0))?
             .filter_map(|r| r.ok())
             .filter(|p| {
-                std::path::Path::new(p).starts_with(folder_path)
-                    && !existing_set.contains(p.as_str())
+                let norm_p: std::path::PathBuf = std::path::Path::new(&normalize_path(p)).to_path_buf();
+                norm_p.starts_with(&norm_folder)
+                    && !existing_set.contains(&normalize_path(p))
             })
             .collect();
         drop(stmt);

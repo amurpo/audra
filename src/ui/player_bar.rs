@@ -139,12 +139,12 @@ impl PlayerBar {
         vol_icon.add_css_class("dim-label");
 
         let vol_scale = Scale::with_range(Orientation::Horizontal, 0.0, 1.0, 0.05);
-        vol_scale.set_value(1.0);
+        vol_scale.set_value(0.5);
         vol_scale.set_size_request(90, -1);
         vol_scale.set_draw_value(false);
         vol_scale.set_tooltip_text(Some("Volumen"));
 
-        let lbl_volume = Label::new(Some("100%"));
+        let lbl_volume = Label::new(Some("50%"));
         lbl_volume.add_css_class("dim-label");
         lbl_volume.add_css_class("caption");
         lbl_volume.set_width_chars(4);
