@@ -12,6 +12,7 @@ use crate::ui::image_utils::{scale_to_pixels, pixels_to_texture};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use crate::i18n::gettext;
 use crate::library::{Album, Track};
 use crate::library::db::Database;
 
@@ -49,7 +50,7 @@ impl AlbumsView {
         scroll.set_child(Some(&flow));
 
         let nav = adw::NavigationView::new();
-        let root_page = adw::NavigationPage::new(&scroll, "Álbumes");
+        let root_page = adw::NavigationPage::new(&scroll, &gettext("Albums"));
         root_page.set_tag(Some("albums-root"));
         nav.add(&root_page);
 
@@ -221,7 +222,7 @@ pub fn make_album_detail_page(
     header.set_show_start_title_buttons(false);
 
     let btn_play_all = Button::builder()
-        .label("Reproducir todo")
+        .label(gettext("Play all"))
         .css_classes(["suggested-action", "pill"])
         .build();
     header.pack_end(&btn_play_all);

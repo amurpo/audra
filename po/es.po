@@ -1,0 +1,111 @@
+# Spanish translations for Audra
+# SPDX-License-Identifier: GPL-3.0-or-later
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: es\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Unknown title"
+msgstr "Sin título"
+
+msgid "Unknown artist"
+msgstr "Artista desconocido"
+
+msgid "Artists"
+msgstr "Artistas"
+
+msgid "Albums"
+msgstr "Álbumes"
+
+msgid "Songs"
+msgstr "Canciones"
+
+msgid "Play all"
+msgstr "Reproducir todo"
+
+msgid "Library"
+msgstr "Biblioteca"
+
+msgid "Scan collection"
+msgstr "Escanear colección"
+
+msgid "Refresh collection"
+msgstr "Refrescar colección"
+
+msgid "Last.fm Account"
+msgstr "Cuenta de Last.fm"
+
+msgid "Search"
+msgstr "Buscar"
+
+msgid "Search by title, artist or album…"
+msgstr "Buscar por título, artista o álbum…"
+
+msgid "Scanning collection…"
+msgstr "Escaneando colección…"
+
+msgid "This may take a moment"
+msgstr "Esto puede tomar un momento"
+
+msgid "Shuffle"
+msgstr "Aleatorio"
+
+msgid "Previous"
+msgstr "Anterior"
+
+msgid "Play / Pause"
+msgstr "Reproducir / Pausar"
+
+msgid "Next"
+msgstr "Siguiente"
+
+msgid "Repeat"
+msgstr "Repetir"
+
+msgid "No playback"
+msgstr "Sin reproducción"
+
+msgid "Volume"
+msgstr "Volumen"
+
+msgid "Connect to Last.fm"
+msgstr "Conectar a Last.fm"
+
+msgid "Authorize Audra on your Last.fm account to track your listens."
+msgstr "Autoriza Audra en tu cuenta de Last.fm para registrar tus escuchas."
+
+msgid "Authorize on Last.fm"
+msgstr "Autorizar en Last.fm"
+
+msgid "Waiting for authorization"
+msgstr "Esperando autorización"
+
+msgid "Complete authorization in the browser and then click «I already authorized»."
+msgstr "Completa la autorización en el navegador y luego haz clic en «Ya autoricé»."
+
+msgid "I already authorized"
+msgstr "Ya autoricé"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Connected to Last.fm"
+msgstr "Conectado a Last.fm"
+
+msgid "Change account"
+msgstr "Cambiar cuenta"
+
+msgid "Disconnect"
+msgstr "Desconectar"
+
+msgid "album"
+msgid_plural "albums"
+msgstr[0] "álbum"
+msgstr[1] "álbumes"
+
+msgid "song"
+msgid_plural "songs"
+msgstr[0] "canción"
+msgstr[1] "canciones"

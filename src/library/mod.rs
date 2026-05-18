@@ -3,6 +3,7 @@ pub mod db;
 pub mod metadata;
 pub mod scanner;
 
+use crate::i18n::gettext;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -66,11 +67,11 @@ pub struct Track {
 
 impl Track {
     pub fn display_title(&self) -> String {
-        self.title.clone().unwrap_or_else(|| "Sin título".to_string())
+        self.title.clone().unwrap_or_else(|| gettext("Unknown title"))
     }
 
     pub fn display_artist(&self) -> String {
-        self.artist.clone().unwrap_or_else(|| "Artista desconocido".to_string())
+        self.artist.clone().unwrap_or_else(|| gettext("Unknown artist"))
     }
 
     pub fn display_album(&self) -> String {

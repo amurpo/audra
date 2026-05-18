@@ -11,6 +11,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use crate::i18n::{gettext, ngettext};
 use crate::library::{Artist, Album, Track};
 use crate::library::db::Database;
 use crate::ui::albums_view::make_album_detail_page;
@@ -53,7 +54,7 @@ impl ArtistsView {
         scroll.set_vexpand(true);
         scroll.set_child(Some(&flow));
 
-        let root_page = adw::NavigationPage::new(&scroll, "Artistas");
+        let root_page = adw::NavigationPage::new(&scroll, &gettext("Artists"));
         root_page.set_tag(Some("artists-root"));
         nav.add(&root_page);
 
@@ -206,7 +207,7 @@ fn make_artist_detail_page(
     header.set_show_start_title_buttons(false);
 
     let btn_play_all = Button::builder()
-        .label("Reproducir todo")
+        .label(gettext("Play all"))
         .css_classes(["suggested-action", "pill"])
         .build();
     header.pack_end(&btn_play_all);
@@ -344,11 +345,11 @@ fn make_artist_card(artist: &Artist) -> (FlowBoxChild, adw::Avatar) {
     lbl_name.set_justify(gtk4::Justification::Center);
 
     let info_str = format!(
-        "{} álbum{} · {} canción{}",
+        "{} {} · {} {}",
         artist.album_count,
-        if artist.album_count == 1 { "" } else { "es" },
+        ngettext("album", "albums", artist.album_count as u32),
         artist.track_count,
-        if artist.track_count == 1 { "" } else { "es" },
+        ngettext("song", "songs", artist.track_count as u32),
     );
     let lbl_info = Label::new(Some(&info_str));
     lbl_info.add_css_class("dim-label");
