@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 pub enum WatcherEvent {
     Created(String),
     Removed(String),
+    RemovedFolder(String),
 }
 
 pub fn start_folder_watcher(
@@ -20,13 +21,19 @@ pub fn start_folder_watcher(
                 .and_then(|e| e.to_str())
                 .map(|e| AUDIO_EXTS.contains(&e.to_lowercase().as_str()))
                 .unwrap_or(false);
-            if !ext_ok {
-                continue;
-            }
             let path_str = path.to_string_lossy().to_string();
             let evt = match &event.kind {
-                notify::EventKind::Create(_) => WatcherEvent::Created(path_str),
-                notify::EventKind::Remove(_) => WatcherEvent::Removed(path_str),
+                notify::EventKind::Create(_) => {
+                    if !ext_ok { continue; }
+                    WatcherEvent::Created(path_str)
+                }
+                notify::EventKind::Remove(_) => {
+                    if ext_ok {
+                        WatcherEvent::Removed(path_str)
+                    } else {
+                        WatcherEvent::RemovedFolder(path_str)
+                    }
+                }
                 _ => continue,
             };
             events.lock().unwrap().push(evt);

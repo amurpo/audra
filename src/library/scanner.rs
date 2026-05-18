@@ -7,9 +7,6 @@ use crate::library::Track;
 
 const AUDIO_EXTS: &[&str] = &["mp3", "flac", "ogg", "opus", "m4a", "wav", "aac"];
 
-pub fn scan_file(path: &str) -> Option<Track> {
-    read_track(std::path::Path::new(path)).ok()
-}
 
 pub fn scan_folder(folder: &str) -> Vec<Track> {
     WalkDir::new(folder)

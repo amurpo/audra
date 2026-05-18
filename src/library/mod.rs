@@ -2,7 +2,6 @@ pub mod art;
 pub mod db;
 pub mod metadata;
 pub mod scanner;
-pub mod watcher;
 
 use std::collections::HashMap;
 

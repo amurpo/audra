@@ -15,6 +15,7 @@ pub struct LibraryView {
     full_tracks: Vec<Track>,
     displayed: Rc<RefCell<Vec<Track>>>,
     current_path: Rc<RefCell<Option<String>>>,
+    active_filter: String,
 }
 
 impl LibraryView {
@@ -109,15 +110,18 @@ impl LibraryView {
             full_tracks: Vec::new(),
             displayed,
             current_path,
+            active_filter: String::new(),
         }
     }
 
     pub fn load_tracks(&mut self, tracks: Vec<Track>) {
-        self.full_tracks = tracks.clone();
-        self.apply_displayed(tracks);
+        self.full_tracks = tracks;
+        let filter = self.active_filter.clone();
+        self.filter(&filter);
     }
 
     pub fn filter(&mut self, query: &str) {
+        self.active_filter = query.to_string();
         if query.is_empty() {
             let all = self.full_tracks.clone();
             self.apply_displayed(all);

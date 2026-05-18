@@ -8,7 +8,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::library::{self, art, db::Database, scanner};
-use crate::library::watcher::{WatcherEvent, start_folder_watcher};
 use crate::player::{Player, PlayerState};
 use crate::scrobbler::LastFmClient;
 use crate::ui::albums_view::AlbumsView;
@@ -161,9 +160,6 @@ fn start_scan(
     lib_view: Rc<RefCell<LibraryView>>,
     albums_view: Rc<AlbumsView>,
     artists_view: Rc<ArtistsView>,
-    watcher_events: Arc<Mutex<Vec<WatcherEvent>>>,
-    watcher_handle: Rc<RefCell<Option<notify::RecommendedWatcher>>>,
-    watcher_active: bool,
     loading_box: gtk4::Box,
     spinner: gtk4::Spinner,
 ) {
@@ -194,10 +190,6 @@ fn start_scan(
                         log::info!("sync: eliminados {} registros obsoletos", removed);
                     }
                 }
-                if watcher_active {
-                    *watcher_handle.borrow_mut() =
-                        start_folder_watcher(&folder_path, Arc::clone(&watcher_events));
-                }
                 reload_all_views(&db, &lib_view, &albums_view, &artists_view);
                 loading_box.set_visible(false);
                 spinner.stop();
@@ -213,45 +205,6 @@ fn start_scan(
     });
 }
 
-fn start_watcher_event_loop(
-    watcher_events: Arc<Mutex<Vec<WatcherEvent>>>,
-    db: Arc<Mutex<Database>>,
-    lib_view: Rc<RefCell<LibraryView>>,
-    albums_view: Rc<AlbumsView>,
-    artists_view: Rc<ArtistsView>,
-) {
-    glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
-        let mut evts = watcher_events.lock().unwrap();
-        if evts.is_empty() {
-            return glib::ControlFlow::Continue;
-        }
-        let batch: Vec<WatcherEvent> = evts.drain(..).collect();
-        drop(evts);
-
-        let db_g = db.lock().unwrap();
-        let mut changed = false;
-        for evt in batch {
-            match evt {
-                WatcherEvent::Created(path) => {
-                    if let Some(track) = scanner::scan_file(&path) {
-                        let _ = db_g.upsert_track(&track);
-                        changed = true;
-                    }
-                }
-                WatcherEvent::Removed(path) => {
-                    let _ = db_g.remove_track_by_path(&path);
-                    changed = true;
-                }
-            }
-        }
-        drop(db_g);
-
-        if changed {
-            reload_all_views(&db, &lib_view, &albums_view, &artists_view);
-        }
-        glib::ControlFlow::Continue
-    });
-}
 
 fn wire_transport_controls(
     bar: &Rc<PlayerBar>,
@@ -776,22 +729,20 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     pop_box.set_margin_start(4);
     pop_box.set_margin_end(4);
 
+    let scan_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+
     let item_scan = Button::with_label("Escanear colección");
     item_scan.add_css_class("flat");
+    item_scan.set_hexpand(true);
     item_scan.set_halign(gtk4::Align::Fill);
 
-    let item_watcher = gtk4::CheckButton::with_label("Sincronizar colección automáticamente");
-    item_watcher.set_halign(gtk4::Align::Start);
-    item_watcher.set_margin_start(8);
-    item_watcher.set_margin_end(8);
-    item_watcher.set_margin_top(2);
-    item_watcher.set_margin_bottom(4);
-    let watcher_was_enabled = db
-        .lock()
-        .unwrap()
-        .get_setting("watcher_enabled")
-        .map_or(false, |v| v == "1");
-    item_watcher.set_active(watcher_was_enabled);
+    let item_refresh = Button::new();
+    item_refresh.set_icon_name("view-refresh-symbolic");
+    item_refresh.add_css_class("flat");
+    item_refresh.set_tooltip_text(Some("Refrescar colección"));
+
+    scan_row.append(&item_scan);
+    scan_row.append(&item_refresh);
 
     let pop_sep = gtk4::Separator::new(gtk4::Orientation::Horizontal);
     pop_sep.set_margin_top(4);
@@ -801,8 +752,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     item_lastfm.add_css_class("flat");
     item_lastfm.set_halign(gtk4::Align::Fill);
 
-    pop_box.append(&item_scan);
-    pop_box.append(&item_watcher);
+    pop_box.append(&scan_row);
     pop_box.append(&pop_sep);
     pop_box.append(&item_lastfm);
     popover.set_child(Some(&pop_box));
@@ -825,17 +775,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let albums_view = Rc::new(AlbumsView::new(Rc::clone(&current_path)));
     let artists_view = Rc::new(ArtistsView::new(Arc::clone(&db), Rc::clone(&current_path)));
     let bar = Rc::new(PlayerBar::new());
-
-    // --- Watcher de archivos ---
-    let watcher_events: Arc<Mutex<Vec<WatcherEvent>>> = Arc::new(Mutex::new(Vec::new()));
-    let watcher_handle: Rc<RefCell<Option<notify::RecommendedWatcher>>> =
-        Rc::new(RefCell::new(None));
-    if watcher_was_enabled {
-        if let Some(folder) = db.lock().unwrap().get_setting("music_folder") {
-            *watcher_handle.borrow_mut() =
-                start_folder_watcher(&folder, Arc::clone(&watcher_events));
-        }
-    }
 
     // --- Helpers de scrobble y highlight ---
     let scrobble_tracker = Rc::new(RefCell::new(ScrobbleTracker::default()));
@@ -957,9 +896,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         #[strong] lib_view,
         #[strong] albums_view,
         #[strong] artists_view,
-        #[strong] watcher_events,
-        #[strong] watcher_handle,
-        #[weak] item_watcher,
         #[weak] popover,
         #[weak] scan_loading_box,
         #[weak] scan_spinner,
@@ -974,9 +910,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                     #[strong] lib_view,
                     #[strong] albums_view,
                     #[strong] artists_view,
-                    #[strong] watcher_events,
-                    #[strong] watcher_handle,
-                    #[weak] item_watcher,
                     #[weak] scan_loading_box,
                     #[weak] scan_spinner,
                     move |result| {
@@ -988,9 +921,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                                     Rc::clone(&lib_view),
                                     Rc::clone(&albums_view),
                                     Rc::clone(&artists_view),
-                                    Arc::clone(&watcher_events),
-                                    Rc::clone(&watcher_handle),
-                                    item_watcher.is_active(),
                                     scan_loading_box,
                                     scan_spinner,
                                 );
@@ -999,6 +929,30 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                     }
                 ),
             );
+        }
+    ));
+
+    item_refresh.connect_clicked(clone!(
+        #[strong] db,
+        #[strong] lib_view,
+        #[strong] albums_view,
+        #[strong] artists_view,
+        #[weak] popover,
+        #[weak] scan_loading_box,
+        #[weak] scan_spinner,
+        move |_| {
+            popover.popdown();
+            if let Some(folder) = db.lock().unwrap().get_setting("music_folder") {
+                start_scan(
+                    folder,
+                    Arc::clone(&db),
+                    Rc::clone(&lib_view),
+                    Rc::clone(&albums_view),
+                    Rc::clone(&artists_view),
+                    scan_loading_box,
+                    scan_spinner,
+                );
+            }
         }
     ));
 
@@ -1012,35 +966,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             show_lastfm_dialog(&window, Arc::clone(&db), Arc::clone(&lastfm));
         }
     ));
-
-    item_watcher.connect_toggled(clone!(
-        #[strong] db,
-        #[strong] watcher_events,
-        #[strong] watcher_handle,
-        move |btn| {
-            let enabled = btn.is_active();
-            let _ = db
-                .lock()
-                .unwrap()
-                .set_setting("watcher_enabled", if enabled { "1" } else { "0" });
-            if enabled {
-                if let Some(folder) = db.lock().unwrap().get_setting("music_folder") {
-                    *watcher_handle.borrow_mut() =
-                        start_folder_watcher(&folder, Arc::clone(&watcher_events));
-                }
-            } else {
-                *watcher_handle.borrow_mut() = None;
-            }
-        }
-    ));
-
-    start_watcher_event_loop(
-        Arc::clone(&watcher_events),
-        Arc::clone(&db),
-        Rc::clone(&lib_view),
-        Rc::clone(&albums_view),
-        Rc::clone(&artists_view),
-    );
 
     albums_view.set_on_play(make_play_callback(
         Rc::clone(&player),

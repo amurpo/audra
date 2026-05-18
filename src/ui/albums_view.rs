@@ -26,6 +26,7 @@ pub struct AlbumsView {
     albums_data: Rc<RefCell<Vec<Album>>>,
     covers: CoverMap,
     on_play: Rc<RefCell<Option<Box<dyn Fn(Vec<Track>, usize)>>>>,
+    current_filter: Rc<RefCell<String>>,
 }
 
 impl AlbumsView {
@@ -82,6 +83,7 @@ impl AlbumsView {
             albums_data,
             covers,
             on_play,
+            current_filter: Rc::new(RefCell::new(String::new())),
         }
     }
 
@@ -111,12 +113,18 @@ impl AlbumsView {
 
         *self.albums_data.borrow_mut() = albums;
 
+        let active = self.current_filter.borrow().clone();
+        if !active.is_empty() {
+            self.filter(&active);
+        }
+
         if !need_fetch.is_empty() {
             self.start_cover_fetch(need_fetch, db);
         }
     }
 
     pub fn filter(&self, query: &str) {
+        *self.current_filter.borrow_mut() = query.to_string();
         if query.is_empty() {
             self.flow.set_filter_func(|_| true);
         } else {
