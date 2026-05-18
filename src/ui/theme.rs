@@ -79,7 +79,7 @@ const JOST_FONT_CSS: &str = "
 ";
 
 thread_local! {
-    static PROVIDER: RefCell<Option<gtk4::CssProvider>> = RefCell::new(None);
+    static PROVIDER: RefCell<Option<gtk4::CssProvider>> = const { RefCell::new(None) };
 }
 
 fn build_css(use_jost: bool) -> String {

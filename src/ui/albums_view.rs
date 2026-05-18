@@ -20,13 +20,14 @@ const CARD_SIZE: i32 = 200;
 
 type CoverMap = Rc<RefCell<HashMap<String, (Stack, Picture)>>>;
 type ScaledCover = (String, Vec<u8>, i32, bool);
+type PlayCb = Rc<RefCell<Option<Box<dyn Fn(Vec<Track>, usize)>>>>;
 
 pub struct AlbumsView {
     pub root: adw::NavigationView,
     flow: FlowBox,
     albums_data: Rc<RefCell<Vec<Album>>>,
     covers: CoverMap,
-    on_play: Rc<RefCell<Option<Box<dyn Fn(Vec<Track>, usize)>>>>,
+    on_play: PlayCb,
     current_filter: Rc<RefCell<String>>,
 }
 
@@ -56,8 +57,7 @@ impl AlbumsView {
 
         let albums_data: Rc<RefCell<Vec<Album>>> = Rc::new(RefCell::new(Vec::new()));
         let covers: CoverMap = Rc::new(RefCell::new(HashMap::new()));
-        let on_play: Rc<RefCell<Option<Box<dyn Fn(Vec<Track>, usize)>>>> =
-            Rc::new(RefCell::new(None));
+        let on_play: PlayCb = Rc::new(RefCell::new(None));
 
         {
             let nav_c = nav.clone();
@@ -214,7 +214,7 @@ impl AlbumsView {
 
 pub fn make_album_detail_page(
     album: &Album,
-    on_play: Rc<RefCell<Option<Box<dyn Fn(Vec<Track>, usize)>>>>,
+    on_play: PlayCb,
     current_path: Rc<RefCell<Option<String>>>,
 ) -> adw::NavigationPage {
     let header = adw::HeaderBar::new();

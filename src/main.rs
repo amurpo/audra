@@ -8,7 +8,6 @@ mod ui;
 use std::sync::{Arc, Mutex};
 use libadwaita as adw;
 use adw::prelude::*;
-use gio;
 use library::db::Database;
 
 const APP_ID: &str = "com.audra.player";
