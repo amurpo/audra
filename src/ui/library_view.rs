@@ -1,26 +1,30 @@
 use gtk4::prelude::*;
 use gtk4::{
-    Box, Label, ListView, Orientation, ScrolledWindow,
+    Box, Button, Label, ListView, Orientation, ScrolledWindow,
     SingleSelection, SignalListItemFactory, ListItem,
     StringList, Align,
 };
 use std::rc::Rc;
 use std::cell::RefCell;
+use crate::i18n::gettext;
 use crate::library::Track;
 
 pub struct LibraryView {
-    pub root: ScrolledWindow,
+    pub root: Box,
     pub list_view: ListView,
     model: StringList,
     full_tracks: Vec<Track>,
     displayed: Rc<RefCell<Vec<Track>>>,
     current_path: Rc<RefCell<Option<String>>>,
     active_filter: String,
+    on_play_all: Rc<RefCell<Option<Rc<dyn Fn(Vec<Track>, usize)>>>>,
 }
 
 impl LibraryView {
     pub fn new(current_path: Rc<RefCell<Option<String>>>) -> Self {
         let displayed: Rc<RefCell<Vec<Track>>> = Rc::new(RefCell::new(Vec::new()));
+        let on_play_all: Rc<RefCell<Option<Rc<dyn Fn(Vec<Track>, usize)>>>> =
+            Rc::new(RefCell::new(None));
         let model = StringList::new(&[]);
         let selection = SingleSelection::new(Some(model.clone()));
 
@@ -103,15 +107,51 @@ impl LibraryView {
         scroll.set_vexpand(true);
         scroll.set_child(Some(&list_view));
 
+        let action_bar = Box::new(Orientation::Horizontal, 0);
+        action_bar.set_margin_top(6);
+        action_bar.set_margin_bottom(6);
+        action_bar.set_margin_start(12);
+        action_bar.set_margin_end(12);
+
+        let btn_play_all = Button::builder()
+            .label(gettext("Play all"))
+            .css_classes(["suggested-action", "pill"])
+            .build();
+
+        let spacer = Box::new(Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        action_bar.append(&spacer);
+        action_bar.append(&btn_play_all);
+
+        {
+            let on_play_c = Rc::clone(&on_play_all);
+            let displayed_c = Rc::clone(&displayed);
+            btn_play_all.connect_clicked(move |_| {
+                let tracks = displayed_c.borrow().clone();
+                if let Some(cb) = on_play_c.borrow().as_ref() {
+                    cb(tracks, usize::MAX);
+                }
+            });
+        }
+
+        let wrapper = Box::new(Orientation::Vertical, 0);
+        wrapper.append(&action_bar);
+        wrapper.append(&scroll);
+
         Self {
-            root: scroll,
+            root: wrapper,
             list_view,
             model,
             full_tracks: Vec::new(),
             displayed,
             current_path,
             active_filter: String::new(),
+            on_play_all,
         }
+    }
+
+    pub fn set_on_play_all(&self, cb: impl Fn(Vec<Track>, usize) + 'static) {
+        *self.on_play_all.borrow_mut() = Some(Rc::new(cb));
     }
 
     pub fn load_tracks(&mut self, tracks: Vec<Track>) {

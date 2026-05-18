@@ -15,7 +15,6 @@ const APP_ID: &str = "com.audra.player";
 
 fn main() {
     env_logger::init();
-    i18n::init();
 
     let data_dir = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -26,6 +25,10 @@ fn main() {
     let db = Arc::new(Mutex::new(
         Database::open(db_path.to_str().unwrap()).expect("No se pudo abrir la base de datos"),
     ));
+
+    // Read language preference before i18n so setlocale uses the correct value
+    let lang = db.lock().unwrap().get_setting("language");
+    i18n::init(lang.as_deref().filter(|s| !s.is_empty()));
 
     let app = adw::Application::builder()
         .application_id(APP_ID)

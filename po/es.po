@@ -37,6 +37,15 @@ msgstr "Refrescar colección"
 msgid "Last.fm Account"
 msgstr "Cuenta de Last.fm"
 
+msgid "System font"
+msgstr "Fuente del sistema"
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "System default"
+msgstr "Predeterminado del sistema"
+
 msgid "Search"
 msgstr "Buscar"
 

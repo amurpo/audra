@@ -1,6 +1,8 @@
+use std::cell::RefCell;
+
 static JOST_FONT: &[u8] = include_bytes!("../../data/fonts/JostVariable.ttf");
 
-const APP_CSS: &str = "
+const APP_CSS_BASE: &str = "
 picture.cover-art {
     border-radius: 8px;
 }
@@ -71,10 +73,25 @@ label.now-playing-title {
     color: @accent_color;
     font-weight: bold;
 }
+";
+
+const JOST_FONT_CSS: &str = "
 * {
     font-family: 'Jost', sans-serif;
 }
 ";
+
+thread_local! {
+    static PROVIDER: RefCell<Option<gtk4::CssProvider>> = RefCell::new(None);
+}
+
+fn build_css(use_jost: bool) -> String {
+    if use_jost {
+        format!("{}{}", APP_CSS_BASE, JOST_FONT_CSS)
+    } else {
+        APP_CSS_BASE.to_string()
+    }
+}
 
 fn extract_font() -> Option<std::path::PathBuf> {
     let font_dir = dirs::config_dir()?.join("audra").join("fonts");
@@ -100,15 +117,33 @@ fn register_font(path: &std::path::Path) {
     }
 }
 
-pub fn setup_css() {
-    if let Some(path) = extract_font() {
-        register_font(&path);
+pub fn setup_css(use_jost: bool) {
+    if use_jost {
+        if let Some(path) = extract_font() {
+            register_font(&path);
+        }
     }
     let provider = gtk4::CssProvider::new();
-    provider.load_from_string(APP_CSS);
+    provider.load_from_string(&build_css(use_jost));
     gtk4::style_context_add_provider_for_display(
         &gtk4::gdk::Display::default().unwrap(),
         &provider,
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+    PROVIDER.with(|cell| {
+        *cell.borrow_mut() = Some(provider);
+    });
+}
+
+pub fn update_font(use_jost: bool) {
+    if use_jost {
+        if let Some(path) = extract_font() {
+            register_font(&path);
+        }
+    }
+    PROVIDER.with(|cell| {
+        if let Some(provider) = cell.borrow().as_ref() {
+            provider.load_from_string(&build_css(use_jost));
+        }
+    });
 }

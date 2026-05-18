@@ -17,7 +17,7 @@ use crate::ui::lastfm_dialog::show_lastfm_dialog;
 use crate::ui::library_view::LibraryView;
 use crate::ui::player_bar::PlayerBar;
 use crate::ui::playback::{ScrobbleTracker, make_play_callback, start_player_timer, wire_transport_controls};
-use crate::ui::theme::setup_css;
+use crate::ui::theme::{setup_css, update_font};
 
 fn reload_all_views(
     db: &Arc<Mutex<Database>>,
@@ -87,7 +87,17 @@ fn start_scan(
 }
 
 pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
-    setup_css();
+    let use_system_font = db.lock().unwrap()
+        .get_setting("use_system_font")
+        .as_deref() == Some("1");
+    let lang_setting = db.lock().unwrap()
+        .get_setting("language")
+        .unwrap_or_default();
+    let saved_vol: f64 = db.lock().unwrap()
+        .get_setting("volume")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.5);
+    setup_css(!use_system_font);
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -159,9 +169,67 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     item_lastfm.add_css_class("flat");
     item_lastfm.set_halign(gtk4::Align::Fill);
 
+    let pop_sep2 = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+    pop_sep2.set_margin_top(4);
+    pop_sep2.set_margin_bottom(4);
+
+    let font_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    font_row.set_margin_top(2);
+    font_row.set_margin_bottom(2);
+    font_row.set_margin_start(8);
+    font_row.set_margin_end(8);
+    let font_label = gtk4::Label::new(Some(&gettext("System font")));
+    font_label.set_hexpand(true);
+    font_label.set_xalign(0.0);
+    let font_switch = gtk4::Switch::new();
+    font_switch.set_active(use_system_font);
+    font_switch.set_valign(gtk4::Align::Center);
+    font_row.append(&font_label);
+    font_row.append(&font_switch);
+
+    let pop_sep3 = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+    pop_sep3.set_margin_top(4);
+    pop_sep3.set_margin_bottom(4);
+
+    let lang_row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    lang_row.set_margin_top(4);
+    lang_row.set_margin_bottom(4);
+    lang_row.set_margin_start(8);
+    lang_row.set_margin_end(8);
+    let lang_label = gtk4::Label::new(Some(&gettext("Language")));
+    lang_label.set_xalign(0.0);
+    lang_label.add_css_class("caption");
+    lang_label.add_css_class("dim-label");
+
+    let lang_btn_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    lang_btn_box.add_css_class("linked");
+
+    let btn_lang_auto = ToggleButton::with_label("Auto");
+    let btn_lang_en = ToggleButton::with_label("English");
+    let btn_lang_es = ToggleButton::with_label("Español");
+    btn_lang_en.set_group(Some(&btn_lang_auto));
+    btn_lang_es.set_group(Some(&btn_lang_auto));
+
+    // Set initial state before connecting signals to avoid spurious rebuilds
+    match lang_setting.as_str() {
+        "en" => btn_lang_en.set_active(true),
+        "es" => btn_lang_es.set_active(true),
+        _ => btn_lang_auto.set_active(true),
+    }
+
+    lang_btn_box.append(&btn_lang_auto);
+    lang_btn_box.append(&btn_lang_en);
+    lang_btn_box.append(&btn_lang_es);
+    lang_row.append(&lang_label);
+    lang_row.append(&lang_btn_box);
+
     pop_box.append(&scan_row);
     pop_box.append(&pop_sep);
     pop_box.append(&item_lastfm);
+    pop_box.append(&pop_sep2);
+    pop_box.append(&font_row);
+    pop_box.append(&pop_sep3);
+    pop_box.append(&lang_row);
     popover.set_child(Some(&pop_box));
     menu_btn.set_popover(Some(&popover));
     header.pack_start(&menu_btn);
@@ -361,6 +429,46 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
+    font_switch.connect_state_set(clone!(
+        #[strong] db,
+        move |_, state| {
+            let _ = db.lock().unwrap().set_setting("use_system_font", if state { "1" } else { "0" });
+            update_font(!state);
+            glib::Propagation::Proceed
+        }
+    ));
+
+    btn_lang_auto.connect_toggled(clone!(
+        #[strong] db, #[strong] app, #[weak] window,
+        move |btn| {
+            if !btn.is_active() { return; }
+            let _ = db.lock().unwrap().set_setting("language", "");
+            crate::i18n::init(None);
+            window.close();
+            build_window(&app, Arc::clone(&db));
+        }
+    ));
+    btn_lang_en.connect_toggled(clone!(
+        #[strong] db, #[strong] app, #[weak] window,
+        move |btn| {
+            if !btn.is_active() { return; }
+            let _ = db.lock().unwrap().set_setting("language", "en");
+            crate::i18n::init(Some("en"));
+            window.close();
+            build_window(&app, Arc::clone(&db));
+        }
+    ));
+    btn_lang_es.connect_toggled(clone!(
+        #[strong] db, #[strong] app, #[weak] window,
+        move |btn| {
+            if !btn.is_active() { return; }
+            let _ = db.lock().unwrap().set_setting("language", "es");
+            crate::i18n::init(Some("es"));
+            window.close();
+            build_window(&app, Arc::clone(&db));
+        }
+    ));
+
     item_lastfm.connect_clicked(clone!(
         #[strong] window,
         #[strong] db,
@@ -379,6 +487,12 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Rc::clone(&highlight_track),
     ));
     artists_view.set_on_play(make_play_callback(
+        Rc::clone(&player),
+        Rc::clone(&bar),
+        Rc::clone(&notify_now_playing),
+        Rc::clone(&highlight_track),
+    ));
+    lib_view.borrow().set_on_play_all(make_play_callback(
         Rc::clone(&player),
         Rc::clone(&bar),
         Rc::clone(&notify_now_playing),
@@ -404,6 +518,19 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
     );
+
+    // Apply saved volume (explicitly set player + label before triggering the scale signal)
+    player.borrow_mut().set_volume(saved_vol as f32);
+    bar.lbl_volume.set_text(&format!("{:.0}%", saved_vol * 100.0));
+    bar.vol_scale.set_value(saved_vol);
+
+    // Persist volume changes to DB
+    bar.vol_scale.connect_value_changed(clone!(
+        #[strong] db,
+        move |scale| {
+            let _ = db.lock().unwrap().set_setting("volume", &scale.value().to_string());
+        }
+    ));
 
     start_player_timer(
         Rc::clone(&player),
