@@ -3,6 +3,7 @@ use gtk4::{
     Box, Button, CenterBox, GestureClick, Image, Label, Orientation,
     ProgressBar, Scale, Align, Stack, StackTransitionType,
 };
+use crate::i18n::gettext;
 use crate::library::Track;
 
 const COVER_SIZE: i32 = 72;
@@ -86,24 +87,24 @@ impl PlayerBar {
 
         let btn_shuffle = Button::from_icon_name("media-playlist-shuffle-symbolic");
         btn_shuffle.add_css_class("flat");
-        btn_shuffle.set_tooltip_text(Some("Aleatorio"));
+        btn_shuffle.set_tooltip_text(Some(&gettext("Shuffle")));
 
         let btn_prev = Button::from_icon_name("media-skip-backward-symbolic");
         btn_prev.add_css_class("flat");
-        btn_prev.set_tooltip_text(Some("Anterior"));
+        btn_prev.set_tooltip_text(Some(&gettext("Previous")));
 
         let btn_play_pause = Button::from_icon_name("media-playback-start-symbolic");
         btn_play_pause.add_css_class("circular");
         btn_play_pause.add_css_class("suggested-action");
-        btn_play_pause.set_tooltip_text(Some("Reproducir / Pausar"));
+        btn_play_pause.set_tooltip_text(Some(&gettext("Play / Pause")));
 
         let btn_next = Button::from_icon_name("media-skip-forward-symbolic");
         btn_next.add_css_class("flat");
-        btn_next.set_tooltip_text(Some("Siguiente"));
+        btn_next.set_tooltip_text(Some(&gettext("Next")));
 
         let btn_loop = Button::from_icon_name("media-playlist-repeat-symbolic");
         btn_loop.add_css_class("flat");
-        btn_loop.set_tooltip_text(Some("Repetir"));
+        btn_loop.set_tooltip_text(Some(&gettext("Repeat")));
 
         controls.append(&btn_shuffle);
         controls.append(&btn_prev);
@@ -114,7 +115,7 @@ impl PlayerBar {
         let info = Box::new(Orientation::Vertical, 2);
         info.set_halign(Align::Center);
 
-        let lbl_title = Label::new(Some("Sin reproducción"));
+        let lbl_title = Label::new(Some(&gettext("No playback")));
         lbl_title.add_css_class("heading");
         lbl_title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         lbl_title.set_max_width_chars(40);
@@ -142,7 +143,7 @@ impl PlayerBar {
         vol_scale.set_value(0.5);
         vol_scale.set_size_request(90, -1);
         vol_scale.set_draw_value(false);
-        vol_scale.set_tooltip_text(Some("Volumen"));
+        vol_scale.set_tooltip_text(Some(&gettext("Volume")));
 
         let lbl_volume = Label::new(Some("50%"));
         lbl_volume.add_css_class("dim-label");
@@ -229,7 +230,7 @@ impl PlayerBar {
             }
             None => {
                 self.cover_stack.set_visible_child_name("placeholder");
-                self.lbl_title.set_text("Sin reproducción");
+                self.lbl_title.set_text(&gettext("No playback"));
                 self.lbl_artist.set_text("");
                 self.lbl_total.set_text("0:00");
                 self.lbl_elapsed.set_text("0:00");

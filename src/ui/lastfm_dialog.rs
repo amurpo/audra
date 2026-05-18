@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::i18n::gettext;
 use crate::library::db::Database;
 use crate::scrobbler::LastFmClient;
 
@@ -33,7 +34,7 @@ pub fn show_lastfm_dialog(
     lastfm: Arc<Mutex<Option<LastFmClient>>>,
 ) {
     let win = adw::Window::builder()
-        .title("Cuenta de Last.fm")
+        .title(gettext("Last.fm Account"))
         .transient_for(parent)
         .modal(true)
         .default_width(460)
@@ -57,10 +58,10 @@ pub fn show_lastfm_dialog(
 
     let auth_status = adw::StatusPage::new();
     auth_status.set_icon_name(Some("avatar-default-symbolic"));
-    auth_status.set_title("Conectar a Last.fm");
-    auth_status.set_description(Some(
-        "Autoriza Audra en tu cuenta de Last.fm para registrar tus escuchas.",
-    ));
+    auth_status.set_title(&gettext("Connect to Last.fm"));
+    auth_status.set_description(Some(&gettext(
+        "Authorize Audra on your Last.fm account to track your listens.",
+    )));
     auth_status.set_vexpand(true);
 
     let auth_error_label = gtk4::Label::new(None);
@@ -68,7 +69,7 @@ pub fn show_lastfm_dialog(
     auth_error_label.set_use_markup(true);
     auth_error_label.set_halign(gtk4::Align::Center);
 
-    let btn_authorize = Button::with_label("Autorizar en Last.fm");
+    let btn_authorize = Button::with_label(&gettext("Authorize on Last.fm"));
     btn_authorize.add_css_class("suggested-action");
     btn_authorize.set_halign(gtk4::Align::Center);
 
@@ -87,10 +88,10 @@ pub fn show_lastfm_dialog(
 
     let wait_status = adw::StatusPage::new();
     wait_status.set_icon_name(Some("network-transmit-receive-symbolic"));
-    wait_status.set_title("Esperando autorización");
-    wait_status.set_description(Some(
-        "Completa la autorización en el navegador y luego haz clic en «Ya autoricé».",
-    ));
+    wait_status.set_title(&gettext("Waiting for authorization"));
+    wait_status.set_description(Some(&gettext(
+        "Complete authorization in the browser and then click «I already authorized».",
+    )));
     wait_status.set_vexpand(true);
 
     let wait_error_label = gtk4::Label::new(None);
@@ -101,9 +102,9 @@ pub fn show_lastfm_dialog(
     let wait_btn_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     wait_btn_row.set_halign(gtk4::Align::Center);
 
-    let btn_confirmed = Button::with_label("Ya autoricé");
+    let btn_confirmed = Button::with_label(&gettext("I already authorized"));
     btn_confirmed.add_css_class("suggested-action");
-    let btn_cancel_wait = Button::with_label("Cancelar");
+    let btn_cancel_wait = Button::with_label(&gettext("Cancel"));
 
     wait_btn_row.append(&btn_confirmed);
     wait_btn_row.append(&btn_cancel_wait);
@@ -122,14 +123,14 @@ pub fn show_lastfm_dialog(
 
     let ok_status = adw::StatusPage::new();
     ok_status.set_icon_name(Some("emblem-ok-symbolic"));
-    ok_status.set_title("Conectado a Last.fm");
+    ok_status.set_title(&gettext("Connected to Last.fm"));
     ok_status.set_vexpand(true);
 
     let ok_btn_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
     ok_btn_row.set_halign(gtk4::Align::Center);
 
-    let btn_change = Button::with_label("Cambiar cuenta");
-    let btn_forget = Button::with_label("Desconectar");
+    let btn_change = Button::with_label(&gettext("Change account"));
+    let btn_forget = Button::with_label(&gettext("Disconnect"));
     btn_forget.add_css_class("destructive-action");
 
     ok_btn_row.append(&btn_change);

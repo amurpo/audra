@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::i18n::gettext;
 use crate::library::{self, db::Database, scanner};
 use crate::player::Player;
 use crate::scrobbler::LastFmClient;
@@ -125,7 +126,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     let menu_btn = MenuButton::new();
     menu_btn.set_icon_name("folder-music-symbolic");
-    menu_btn.set_tooltip_text(Some("Biblioteca"));
+    menu_btn.set_tooltip_text(Some(&gettext("Library")));
     menu_btn.add_css_class("flat");
 
     let popover = Popover::new();
@@ -137,7 +138,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     let scan_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
 
-    let item_scan = Button::with_label("Escanear colección");
+    let item_scan = Button::with_label(&gettext("Scan collection"));
     item_scan.add_css_class("flat");
     item_scan.set_hexpand(true);
     item_scan.set_halign(gtk4::Align::Fill);
@@ -145,7 +146,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let item_refresh = Button::new();
     item_refresh.set_icon_name("view-refresh-symbolic");
     item_refresh.add_css_class("flat");
-    item_refresh.set_tooltip_text(Some("Refrescar colección"));
+    item_refresh.set_tooltip_text(Some(&gettext("Refresh collection")));
 
     scan_row.append(&item_scan);
     scan_row.append(&item_refresh);
@@ -154,7 +155,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     pop_sep.set_margin_top(4);
     pop_sep.set_margin_bottom(4);
 
-    let item_lastfm = Button::with_label("Cuenta de Last.fm");
+    let item_lastfm = Button::with_label(&gettext("Last.fm Account"));
     item_lastfm.add_css_class("flat");
     item_lastfm.set_halign(gtk4::Align::Fill);
 
@@ -167,7 +168,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     let btn_search = ToggleButton::new();
     btn_search.set_icon_name("system-search-symbolic");
-    btn_search.set_tooltip_text(Some("Buscar"));
+    btn_search.set_tooltip_text(Some(&gettext("Search")));
     btn_search.add_css_class("flat");
     header.pack_end(&btn_search);
 
@@ -217,15 +218,15 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // --- ViewStack ---
     let view_stack = adw::ViewStack::new();
     {
-        let page = view_stack.add_titled(&albums_view.root, Some("albums"), "Álbumes");
+        let page = view_stack.add_titled(&albums_view.root, Some("albums"), &gettext("Albums"));
         page.set_icon_name(Some("media-optical-symbolic"));
     }
     {
-        let page = view_stack.add_titled(&artists_view.root, Some("artists"), "Artistas");
+        let page = view_stack.add_titled(&artists_view.root, Some("artists"), &gettext("Artists"));
         page.set_icon_name(Some("system-users-symbolic"));
     }
     {
-        let page = view_stack.add_titled(&lib_view.borrow().root, Some("tracks"), "Canciones");
+        let page = view_stack.add_titled(&lib_view.borrow().root, Some("tracks"), &gettext("Songs"));
         page.set_icon_name(Some("view-list-symbolic"));
     }
     view_stack.set_visible_child_name("albums");
@@ -237,7 +238,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     // --- Barra de búsqueda ---
     let search_entry = SearchEntry::new();
-    search_entry.set_placeholder_text(Some("Buscar por título, artista o álbum…"));
+    search_entry.set_placeholder_text(Some(&gettext("Search by title, artist or album…")));
     search_entry.set_hexpand(true);
     let search_bar = SearchBar::new();
     search_bar.set_show_close_button(false);
@@ -269,9 +270,9 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     scan_card.set_valign(gtk4::Align::Center);
     let scan_spinner = gtk4::Spinner::new();
     scan_spinner.set_size_request(48, 48);
-    let scan_title_lbl = gtk4::Label::new(Some("Escaneando colección…"));
+    let scan_title_lbl = gtk4::Label::new(Some(&gettext("Scanning collection…")));
     scan_title_lbl.add_css_class("title-2");
-    let scan_sub_lbl = gtk4::Label::new(Some("Esto puede tomar un momento"));
+    let scan_sub_lbl = gtk4::Label::new(Some(&gettext("This may take a moment")));
     scan_sub_lbl.add_css_class("dim-label");
     scan_card.append(&scan_spinner);
     scan_card.append(&scan_title_lbl);

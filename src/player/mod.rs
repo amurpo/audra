@@ -64,6 +64,7 @@ impl Player {
         let Some(idx) = self.index else { return Ok(None) };
         let Some(track) = self.queue.get(idx) else { return Ok(None) };
         self.engine.play(&track.path)?;
+        self.engine.set_volume(self.volume);
         self.state = PlayerState::Playing;
         Ok(self.queue.get(idx))
     }

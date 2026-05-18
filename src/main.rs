@@ -1,4 +1,5 @@
 mod credentials;
+mod i18n;
 mod library;
 mod player;
 mod scrobbler;
@@ -14,6 +15,7 @@ const APP_ID: &str = "com.audra.player";
 
 fn main() {
     env_logger::init();
+    i18n::init();
 
     let data_dir = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
