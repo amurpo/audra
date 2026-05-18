@@ -32,6 +32,7 @@ jobs:
             mingw-w64-x86_64-python
             mingw-w64-x86_64-python-pip
             mingw-w64-x86_64-librsvg
+            gettext
 
       - uses: Swatinem/rust-cache@v2
 
@@ -71,6 +72,10 @@ jobs:
           fi
 
           cp /mingw64/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.dll dist/audra/lib/gdk-pixbuf-2.0/2.10.0/loaders/ || true
+
+          # Catálogo de traducción (gettext)
+          mkdir -p dist/audra/share/locale/es/LC_MESSAGES
+          msgfmt po/es.po -o dist/audra/share/locale/es/LC_MESSAGES/audra.mo
 
           # GTK settings
           mkdir -p dist/audra/share/gtk-4.0

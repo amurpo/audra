@@ -191,9 +191,19 @@ impl Database {
             .query_map([], |row| row.get::<_, String>(0))?
             .filter_map(|r| r.ok())
             .filter(|p| {
-                let norm_p: std::path::PathBuf = std::path::Path::new(&normalize_path(p)).to_path_buf();
+                let np = normalize_path(p);
+                if existing_set.contains(&np) {
+                    return false;
+                }
+                let norm_p: std::path::PathBuf = std::path::Path::new(&np).to_path_buf();
+                // Purge a DB row when the file is missing under the current
+                // library folder, OR when its file no longer exists anywhere
+                // (orphans left by a previously-scanned folder). The app tracks
+                // a single library folder, so out-of-folder rows whose files
+                // are gone are stale ghosts. This only deletes DB rows; the
+                // filesystem is never touched.
                 norm_p.starts_with(&norm_folder)
-                    && !existing_set.contains(&normalize_path(p))
+                    || !std::path::Path::new(p).exists()
             })
             .collect();
         drop(stmt);
@@ -355,19 +365,32 @@ mod tests {
     }
 
     #[test]
-    fn remove_missing_from_folder_keeps_existing_and_outside_paths() {
+    fn remove_missing_from_folder_purges_in_folder_and_nonexistent_ghosts() {
         let db = db();
+
+        // A real file outside the library folder: still on disk, so a
+        // single-folder rescan must NOT purge it (conservative, no data loss).
+        let outside_real = std::env::temp_dir()
+            .join(format!("audra_db_outside_{}.mp3", std::process::id()));
+        std::fs::write(&outside_real, b"x").unwrap();
+        let outside_real = outside_real.to_string_lossy().to_string();
+
         db.upsert_track(&track("/music/a/1.mp3", "A", "X", 1))
             .unwrap();
         db.upsert_track(&track("/music/b/2.mp3", "B", "Y", 1))
             .unwrap();
-        db.upsert_track(&track("/other/3.mp3", "C", "Z", 1)).unwrap();
+        db.upsert_track(&track(&outside_real, "C", "Z", 1)).unwrap();
+        db.upsert_track(&track("/other/ghost.mp3", "D", "W", 1))
+            .unwrap();
 
-        // Only /music/a/1.mp3 still exists on disk under /music.
+        // Scan of /music finds only a/1.mp3.
         let removed = db
             .remove_missing_from_folder("/music", &["/music/a/1.mp3".to_string()])
             .unwrap();
-        assert_eq!(removed, 1, "only the missing in-folder track is purged");
+        // Purged: /music/b/2.mp3 (missing under folder) and
+        // /other/ghost.mp3 (orphan whose file does not exist). Kept:
+        // a/1.mp3 (found) and the out-of-folder file that still exists.
+        assert_eq!(removed, 2);
 
         let mut paths: Vec<_> = db
             .all_tracks()
@@ -376,7 +399,11 @@ mod tests {
             .map(|t| t.path)
             .collect();
         paths.sort();
-        assert_eq!(paths, vec!["/music/a/1.mp3", "/other/3.mp3"]);
+        let mut expected = vec!["/music/a/1.mp3".to_string(), outside_real.clone()];
+        expected.sort();
+        assert_eq!(paths, expected);
+
+        let _ = std::fs::remove_file(&outside_real);
     }
 
     #[test]

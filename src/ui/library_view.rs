@@ -9,6 +9,8 @@ use std::cell::RefCell;
 use crate::i18n::gettext;
 use crate::library::Track;
 
+type PlayAllCb = Rc<RefCell<Option<Rc<dyn Fn(Vec<Track>, usize)>>>>;
+
 pub struct LibraryView {
     pub root: Box,
     pub list_view: ListView,
@@ -17,14 +19,13 @@ pub struct LibraryView {
     displayed: Rc<RefCell<Vec<Track>>>,
     current_path: Rc<RefCell<Option<String>>>,
     active_filter: String,
-    on_play_all: Rc<RefCell<Option<Rc<dyn Fn(Vec<Track>, usize)>>>>,
+    on_play_all: PlayAllCb,
 }
 
 impl LibraryView {
     pub fn new(current_path: Rc<RefCell<Option<String>>>) -> Self {
         let displayed: Rc<RefCell<Vec<Track>>> = Rc::new(RefCell::new(Vec::new()));
-        let on_play_all: Rc<RefCell<Option<Rc<dyn Fn(Vec<Track>, usize)>>>> =
-            Rc::new(RefCell::new(None));
+        let on_play_all: PlayAllCb = Rc::new(RefCell::new(None));
         let model = StringList::new(&[]);
         let selection = SingleSelection::new(Some(model.clone()));
 
@@ -91,7 +92,7 @@ impl LibraryView {
                 let is_playing = current_path_ref
                     .borrow()
                     .as_deref()
-                    .map_or(false, |p| p == track.path);
+                    .is_some_and(|p| p == track.path);
                 if is_playing {
                     lbl_title.add_css_class("now-playing-title");
                 } else {

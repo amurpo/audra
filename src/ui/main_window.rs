@@ -276,7 +276,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             });
         })
     };
-    let highlight_track: Rc<dyn Fn(Option<&crate::library::Track>)> = {
+    let highlight_track: crate::ui::playback::HighlightCb = {
         let lib = Rc::clone(&lib_view);
         let cp = Rc::clone(&current_path);
         Rc::new(move |track: Option<&crate::library::Track>| {

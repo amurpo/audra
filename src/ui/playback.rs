@@ -10,21 +10,18 @@ use crate::player::{Player, PlayerState};
 use crate::scrobbler::LastFmClient;
 use crate::ui::player_bar::PlayerBar;
 
+pub type HighlightCb = Rc<dyn Fn(Option<&Track>)>;
+
+#[derive(Default)]
 pub struct ScrobbleTracker {
     pub scrobbled: bool,
-}
-
-impl Default for ScrobbleTracker {
-    fn default() -> Self {
-        Self { scrobbled: false }
-    }
 }
 
 pub fn make_play_callback(
     player: Rc<RefCell<Player>>,
     bar: Rc<PlayerBar>,
     notify_now_playing: Rc<dyn Fn(&Track)>,
-    highlight_track: Rc<dyn Fn(Option<&Track>)>,
+    highlight_track: HighlightCb,
 ) -> impl Fn(Vec<Track>, usize) {
     move |tracks, start_idx| {
         if tracks.is_empty() {
@@ -62,7 +59,7 @@ pub fn wire_transport_controls(
     bar: &Rc<PlayerBar>,
     player: &Rc<RefCell<Player>>,
     notify_now_playing: Rc<dyn Fn(&Track)>,
-    highlight_track: Rc<dyn Fn(Option<&Track>)>,
+    highlight_track: HighlightCb,
 ) {
     {
         let player = Rc::clone(player);
@@ -161,6 +158,7 @@ pub fn wire_transport_controls(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn start_player_timer(
     player: Rc<RefCell<Player>>,
     bar: Rc<PlayerBar>,
@@ -168,7 +166,7 @@ pub fn start_player_timer(
     lastfm: Arc<Mutex<Option<LastFmClient>>>,
     db: Arc<Mutex<Database>>,
     notify_now_playing: Rc<dyn Fn(&Track)>,
-    highlight_track: Rc<dyn Fn(Option<&Track>)>,
+    highlight_track: HighlightCb,
     window: glib::WeakRef<adw::ApplicationWindow>,
 ) {
     glib::timeout_add_local(std::time::Duration::from_millis(500), move || {

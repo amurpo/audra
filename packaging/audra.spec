@@ -4,6 +4,8 @@ Release:        1%{?dist}
 Summary:        Native music player for Linux with Last.fm scrobbling
 License:        GPL-3.0-or-later
 
+BuildRequires:  gettext
+
 Requires:       gtk4
 Requires:       libadwaita
 
@@ -17,11 +19,15 @@ install -Dm644 %{_sourcedir}/com.audra.player.desktop \
                %{buildroot}%{_datadir}/applications/com.audra.player.desktop
 install -Dm644 %{_sourcedir}/com.audra.player.svg \
                %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/com.audra.player.svg
+mkdir -p %{buildroot}%{_datadir}/locale/es/LC_MESSAGES
+msgfmt %{_sourcedir}/es.po \
+       -o %{buildroot}%{_datadir}/locale/es/LC_MESSAGES/audra.mo
 
 %files
 %{_bindir}/audra
 %{_datadir}/applications/com.audra.player.desktop
 %{_datadir}/icons/hicolor/scalable/apps/com.audra.player.svg
+%{_datadir}/locale/es/LC_MESSAGES/audra.mo
 
 %post
 /usr/bin/gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || :

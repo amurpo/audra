@@ -22,20 +22,31 @@ pub fn init(lang_override: Option<&str>) {
     // the internal locale-change detection that triggers gettext cache invalidation.
     gettextrs::setlocale(gettextrs::LocaleCategory::LcAll, "");
 
+    // Resolve the catalog directory by probing an ordered list of candidates
+    // for an actual compiled catalog. AUDRA_LOCALE_DIR is baked at build time
+    // and only exists on the build machine (dev tree). Packaged builds on
+    // Windows/macOS ship the catalog next to the executable, so those
+    // exe-relative locations must be checked too — the /usr paths don't exist
+    // there at all.
     let compiled_dir = env!("AUDRA_LOCALE_DIR");
-    let dir = if std::path::Path::new(compiled_dir).exists() {
-        compiled_dir.to_string()
-    } else {
-        ["/usr/local/share/locale", "/usr/share/locale"]
-            .iter()
-            .find(|p| {
-                std::path::Path::new(p)
-                    .join("es/LC_MESSAGES/audra.mo")
-                    .exists()
-            })
-            .map(|p| p.to_string())
-            .unwrap_or_else(|| compiled_dir.to_string())
-    };
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join("share/locale"));
+            candidates.push(exe_dir.join("locale"));
+            if let Some(prefix) = exe_dir.parent() {
+                candidates.push(prefix.join("share/locale"));
+            }
+        }
+    }
+    candidates.push(std::path::PathBuf::from(compiled_dir));
+    candidates.push(std::path::PathBuf::from("/usr/local/share/locale"));
+    candidates.push(std::path::PathBuf::from("/usr/share/locale"));
+    let dir = candidates
+        .iter()
+        .find(|p| p.join("es/LC_MESSAGES/audra.mo").exists())
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| compiled_dir.to_string());
 
     let _ = gettextrs::bindtextdomain("audra", &dir);
     let _ = gettextrs::bind_textdomain_codeset("audra", "UTF-8");
