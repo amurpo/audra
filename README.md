@@ -58,6 +58,12 @@ sudo apt install \
 sudo dnf install audra-*.rpm
 ```
 
+### DEB (Debian / Ubuntu)
+
+```bash
+sudo apt install ./audra_*_amd64.deb
+```
+
 ### From source
 
 ```bash
@@ -82,6 +88,14 @@ server-side — the binary only contains the public proxy URL.
 ```bash
 bash packaging/build-rpm.sh
 ```
+
+## Building the DEB
+
+```bash
+bash packaging/build-deb.sh
+```
+
+The package is written to `target/debpkg/audra_<version>_amd64.deb`.
 
 ## License
 
