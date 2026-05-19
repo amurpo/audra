@@ -32,7 +32,8 @@ msgfmt "$ROOT/po/es.po" -o "$STAGE/usr/share/locale/es/LC_MESSAGES/audra.mo"
 
 # Depends are hardcoded to mirror the RPM spec's `Requires` (gtk4, libadwaita;
 # sqlite is bundled via rusqlite) plus ALSA, which rodio links at runtime.
-# `libasound2t64` is the package name on Ubuntu 24.04 (the CI runner).
+# `libasound2t64` is the package name since the time_t 64-bit transition
+# (Debian trixie / Ubuntu 24.04+); the DEB is built in a debian:trixie container.
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: audra
 Version: $VER

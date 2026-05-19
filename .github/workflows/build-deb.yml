@@ -11,20 +11,25 @@ jobs:
   build-deb:
     name: Build Linux (DEB)
     runs-on: ubuntu-latest
+    # Debian trixie ships libadwaita 1.7.x; the ubuntu-latest runner only has
+    # 1.5.0, which fails the `v1_6` feature gate. Building inside a container
+    # also decouples the DEB from GitHub's runner-image release cadence.
+    container: debian:trixie
     env:
       VER: ${{ inputs.ver }}
       LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
     steps:
-      - uses: actions/checkout@v6
-
       - name: Deps
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt-get update
+          apt-get install -y \
+            curl ca-certificates git \
             build-essential pkg-config \
             libgtk-4-dev libadwaita-1-dev \
             libsqlite3-dev libasound2-dev \
             gettext
+
+      - uses: actions/checkout@v6
 
       - name: Instalar Rust (rustup)
         run: |
