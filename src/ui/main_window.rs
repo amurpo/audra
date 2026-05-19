@@ -16,7 +16,7 @@ use crate::ui::artists_view::ArtistsView;
 use crate::ui::lastfm_dialog::show_lastfm_dialog;
 use crate::ui::library_view::LibraryView;
 use crate::ui::playback::{
-    make_play_callback, start_player_timer, wire_transport_controls, ScrobbleTracker,
+    make_play_callback, start_player_timer, wire_mpris, wire_transport_controls, ScrobbleTracker,
 };
 use crate::ui::player_bar::PlayerBar;
 use crate::ui::reset::show_reset_dialog;
@@ -654,6 +654,22 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
+    window.present();
+
+    // Build the OS media controls after the window is realized (Windows
+    // needs the native HWND). If unavailable, playback keeps working.
+    let (mpris_tx, mpris_rx) = std::sync::mpsc::channel();
+    let mpris = crate::player::mpris::Mpris::new(&window, mpris_tx)
+        .map(|m| Rc::new(RefCell::new(m)));
+    if mpris.is_some() {
+        wire_mpris(
+            mpris_rx,
+            Rc::clone(&player),
+            Rc::clone(&bar),
+            window.downgrade(),
+        );
+    }
+
     start_player_timer(
         Rc::clone(&player),
         Rc::clone(&bar),
@@ -663,7 +679,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
         window.downgrade(),
+        mpris,
     );
-
-    window.present();
 }

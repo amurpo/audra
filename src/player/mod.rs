@@ -1,4 +1,5 @@
 pub mod engine;
+pub mod mpris;
 
 use crate::library::Track;
 use anyhow::Result;

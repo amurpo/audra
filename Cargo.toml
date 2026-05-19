@@ -38,6 +38,11 @@ env_logger = "0.11"
 anyhow = "1"
 rand = "0.8"
 dirs = "5"
+souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
+
+# Windows only: needed to fetch the native HWND for the SMTC media controls.
+[target.'cfg(windows)'.dependencies]
+gdk4-win32 = "0.9"
 
 [build-dependencies]
 winres = "0.1"
