@@ -146,6 +146,11 @@ impl ArtistsView {
 
         for artist in &artists {
             let (card, avatar) = make_artist_card(artist);
+            crate::ui::cover_picker::install_artist_photo_gesture(
+                &card,
+                artist.name.clone(),
+                avatar.clone(),
+            );
             self.avatars
                 .borrow_mut()
                 .insert(artist.name.clone(), avatar);

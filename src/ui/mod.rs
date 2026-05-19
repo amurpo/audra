@@ -1,5 +1,6 @@
 pub mod albums_view;
 pub mod artists_view;
+pub mod cover_picker;
 pub mod image_utils;
 pub mod lastfm_dialog;
 pub mod library_view;
