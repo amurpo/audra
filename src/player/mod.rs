@@ -174,6 +174,8 @@ mod tests {
             album: Some("X".into()),
             track_num: Some(i as i64),
             duration_secs: Some(100),
+            disc_num: None,
+            album_artist: None,
         }
     }
 

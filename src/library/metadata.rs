@@ -259,6 +259,28 @@ pub fn set_artist_photo(artist: &str, data: &[u8]) {
     write_cache(&artist_cache_path(artist), data);
 }
 
+/// Move a cached artist photo from its raw-tag slot to the canonical-artist
+/// slot so user picks survive deduplication. Idempotent; preserves empty
+/// files (the "photo removed on purpose" marker). The canonical slot wins if
+/// it already exists.
+pub fn rekey_artist_photo(old_artist: &str, new_artist: &str) {
+    let from = artist_cache_path(old_artist);
+    let to = artist_cache_path(new_artist);
+    if from == to || !from.exists() {
+        return;
+    }
+    if to.exists() {
+        let _ = std::fs::remove_file(&from);
+        return;
+    }
+    if std::fs::rename(&from, &to).is_err() {
+        if let Ok(data) = std::fs::read(&from) {
+            write_cache(&to, &data);
+            let _ = std::fs::remove_file(&from);
+        }
+    }
+}
+
 /// Collect several artist-photo candidates from every online source for the
 /// picker UI. Network-bound: must run off the UI thread.
 pub fn fetch_artist_photo_candidates(artist: &str) -> Vec<CoverCandidate> {

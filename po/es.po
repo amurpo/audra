@@ -163,3 +163,6 @@ msgstr "No se encontraron imágenes."
 
 msgid "Search…"
 msgstr "Buscar…"
+
+msgid "Various Artists"
+msgstr "Varios artistas"

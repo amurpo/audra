@@ -28,8 +28,14 @@ pub(crate) fn reload_all_views(
     albums_view: &Rc<AlbumsView>,
     artists_view: &Rc<ArtistsView>,
 ) {
-    let all = db.lock().unwrap().all_tracks().unwrap_or_default();
-    let albums = library::group_into_albums(&all);
+    let (all, music_folder) = {
+        let g = db.lock().unwrap();
+        (
+            g.all_tracks().unwrap_or_default(),
+            g.get_setting("music_folder"),
+        )
+    };
+    let albums = library::group_into_albums(&all, music_folder.as_deref());
     let artists = library::group_into_artists(&albums);
     lib_view.borrow_mut().load_tracks(all);
     albums_view.load_albums(albums.clone(), Arc::clone(db));
@@ -48,32 +54,35 @@ pub(crate) fn start_scan(
     loading_box.set_visible(true);
     spinner.start();
 
-    let scan_path = folder_path.clone();
+    // Scan AND all DB writes happen on the worker thread so the UI never
+    // freezes on a large library. The UI thread only refreshes the views
+    // once the worker signals it is done.
+    let scan_path = folder_path;
+    let db_worker = Arc::clone(&db);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(scanner::scan_folder(&scan_path));
+        let tracks = scanner::scan_folder(&scan_path);
+        {
+            let db_g = db_worker.lock().unwrap();
+            let _ = db_g.upsert_tracks(&tracks);
+            let norm_folder: std::path::PathBuf =
+                std::path::Path::new(&scan_path).components().collect();
+            let _ = db_g.set_setting("music_folder", &norm_folder.to_string_lossy());
+            let found: Vec<String> = tracks.iter().map(|t| t.path.clone()).collect();
+            let removed = db_g
+                .remove_missing_from_folder(&scan_path, &found)
+                .unwrap_or(0);
+            if removed > 0 {
+                log::info!("sync: eliminados {} registros obsoletos", removed);
+            }
+        }
+        let _ = tx.send(());
     });
 
     glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
         use std::sync::mpsc::TryRecvError;
         match rx.try_recv() {
-            Ok(tracks) => {
-                {
-                    let db_g = db.lock().unwrap();
-                    for t in &tracks {
-                        let _ = db_g.upsert_track(t);
-                    }
-                    let norm_folder: std::path::PathBuf =
-                        std::path::Path::new(&folder_path).components().collect();
-                    let _ = db_g.set_setting("music_folder", &norm_folder.to_string_lossy());
-                    let found: Vec<String> = tracks.iter().map(|t| t.path.clone()).collect();
-                    let removed = db_g
-                        .remove_missing_from_folder(&folder_path, &found)
-                        .unwrap_or(0);
-                    if removed > 0 {
-                        log::info!("sync: eliminados {} registros obsoletos", removed);
-                    }
-                }
+            Ok(()) => {
                 reload_all_views(&db, &lib_view, &albums_view, &artists_view);
                 loading_box.set_visible(false);
                 spinner.stop();
@@ -659,8 +668,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // Build the OS media controls after the window is realized (Windows
     // needs the native HWND). If unavailable, playback keeps working.
     let (mpris_tx, mpris_rx) = std::sync::mpsc::channel();
-    let mpris = crate::player::mpris::Mpris::new(&window, mpris_tx)
-        .map(|m| Rc::new(RefCell::new(m)));
+    let mpris =
+        crate::player::mpris::Mpris::new(&window, mpris_tx).map(|m| Rc::new(RefCell::new(m)));
     if mpris.is_some() {
         wire_mpris(
             mpris_rx,

@@ -3,6 +3,7 @@ Version:        %{ver}
 Release:        1%{?dist}
 Summary:        Native music player for Linux with Last.fm scrobbling
 License:        GPL-3.0-or-later
+URL:            https://github.com/amurpo/audra
 
 BuildRequires:  gettext
 
@@ -19,6 +20,8 @@ install -Dm644 %{_sourcedir}/com.audra.player.desktop \
                %{buildroot}%{_datadir}/applications/com.audra.player.desktop
 install -Dm644 %{_sourcedir}/com.audra.player.svg \
                %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/com.audra.player.svg
+install -Dm644 %{_sourcedir}/com.audra.player.metainfo.xml \
+               %{buildroot}%{_datadir}/metainfo/com.audra.player.metainfo.xml
 mkdir -p %{buildroot}%{_datadir}/locale/es/LC_MESSAGES
 msgfmt %{_sourcedir}/es.po \
        -o %{buildroot}%{_datadir}/locale/es/LC_MESSAGES/audra.mo
@@ -26,6 +29,7 @@ msgfmt %{_sourcedir}/es.po \
 %files
 %{_bindir}/audra
 %{_datadir}/applications/com.audra.player.desktop
+%{_datadir}/metainfo/com.audra.player.metainfo.xml
 %{_datadir}/icons/hicolor/scalable/apps/com.audra.player.svg
 %{_datadir}/locale/es/LC_MESSAGES/audra.mo
 

@@ -2,6 +2,7 @@ use crate::library::Track;
 use anyhow::Result;
 use lofty::prelude::*;
 use lofty::probe::Probe;
+use lofty::tag::ItemKey;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -40,6 +41,8 @@ fn read_track(path: &Path) -> Result<Track> {
     let artist = tag.and_then(|t| t.artist().map(|s| s.to_string()));
     let album = tag.and_then(|t| t.album().map(|s| s.to_string()));
     let track_num = tag.and_then(|t| t.track()).map(|n| n as i64);
+    let disc_num = tag.and_then(|t| t.disk()).map(|n| n as i64);
+    let album_artist = tag.and_then(|t| t.get_string(&ItemKey::AlbumArtist).map(|s| s.to_string()));
 
     let duration_secs = tagged.properties().duration().as_secs() as i64;
 
@@ -51,6 +54,8 @@ fn read_track(path: &Path) -> Result<Track> {
         album,
         track_num,
         duration_secs: Some(duration_secs),
+        disc_num,
+        album_artist,
     })
 }
 
