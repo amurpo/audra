@@ -121,7 +121,19 @@ impl Player {
         if len == 0 {
             return Ok(None);
         }
-        let prev_idx = self.index.map(|i| i.saturating_sub(1)).unwrap_or(0);
+
+        let prev_idx = if self.shuffle {
+            if self.shuffled_order.is_empty() {
+                self.reshuffle();
+            }
+            // Step the shuffle cursor back so it stays in sync with `index`;
+            // at the start, stay on the first shuffled track.
+            self.shuffle_cursor = self.shuffle_cursor.saturating_sub(1);
+            self.shuffled_order[self.shuffle_cursor]
+        } else {
+            self.index.map(|i| i.saturating_sub(1)).unwrap_or(0)
+        };
+
         self.index = Some(prev_idx);
         self.play_current()
     }
