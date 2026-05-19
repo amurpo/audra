@@ -16,12 +16,13 @@ use crate::ui::artists_view::ArtistsView;
 use crate::ui::lastfm_dialog::show_lastfm_dialog;
 use crate::ui::library_view::LibraryView;
 use crate::ui::playback::{
-    make_play_callback, start_player_timer, wire_transport_controls, ScrobbleTracker,
+    make_play_callback, start_player_timer, wire_mpris, wire_transport_controls, ScrobbleTracker,
 };
 use crate::ui::player_bar::PlayerBar;
+use crate::ui::reset::show_reset_dialog;
 use crate::ui::theme::{setup_css, update_font};
 
-fn reload_all_views(
+pub(crate) fn reload_all_views(
     db: &Arc<Mutex<Database>>,
     lib_view: &Rc<RefCell<LibraryView>>,
     albums_view: &Rc<AlbumsView>,
@@ -35,7 +36,7 @@ fn reload_all_views(
     artists_view.load_artists(artists, albums);
 }
 
-fn start_scan(
+pub(crate) fn start_scan(
     folder_path: String,
     db: Arc<Mutex<Database>>,
     lib_view: Rc<RefCell<LibraryView>>,
@@ -156,6 +157,9 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     pop_box.set_margin_bottom(4);
     pop_box.set_margin_start(4);
     pop_box.set_margin_end(4);
+    // Fixed width so the popover does not resize when labels change length
+    // across languages.
+    pop_box.set_size_request(264, -1);
 
     let scan_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
 
@@ -199,8 +203,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     font_row.append(&font_switch);
 
     let pop_sep3 = gtk4::Separator::new(gtk4::Orientation::Horizontal);
-    pop_sep3.set_margin_top(4);
-    pop_sep3.set_margin_bottom(4);
+    pop_sep3.set_margin_top(14);
+    pop_sep3.set_margin_bottom(3);
 
     let lang_row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
     lang_row.set_margin_top(4);
@@ -234,13 +238,27 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     lang_row.append(&lang_label);
     lang_row.append(&lang_btn_box);
 
+    let item_reset = Button::new();
+    item_reset.add_css_class("flat");
+    item_reset.set_halign(gtk4::Align::Fill);
+    item_reset.set_margin_top(3);
+    let reset_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    let reset_icon = gtk4::Image::from_icon_name("user-trash-symbolic");
+    reset_icon.add_css_class("menu-destructive");
+    let reset_lbl = gtk4::Label::new(Some(&gettext("Reset library…")));
+    reset_lbl.add_css_class("menu-destructive");
+    reset_box.append(&reset_icon);
+    reset_box.append(&reset_lbl);
+    item_reset.set_child(Some(&reset_box));
+
     pop_box.append(&scan_row);
     pop_box.append(&pop_sep);
     pop_box.append(&item_lastfm);
     pop_box.append(&pop_sep2);
     pop_box.append(&font_row);
-    pop_box.append(&pop_sep3);
     pop_box.append(&lang_row);
+    pop_box.append(&pop_sep3);
+    pop_box.append(&item_reset);
     popover.set_child(Some(&pop_box));
     menu_btn.set_popover(Some(&popover));
     header.pack_start(&menu_btn);
@@ -548,6 +566,37 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
+    item_reset.connect_clicked(clone!(
+        #[strong]
+        window,
+        #[strong]
+        db,
+        #[strong]
+        lib_view,
+        #[strong]
+        albums_view,
+        #[strong]
+        artists_view,
+        #[strong]
+        scan_loading_box,
+        #[strong]
+        scan_spinner,
+        #[weak]
+        popover,
+        move |_| {
+            popover.popdown();
+            show_reset_dialog(
+                &window,
+                Arc::clone(&db),
+                Rc::clone(&lib_view),
+                Rc::clone(&albums_view),
+                Rc::clone(&artists_view),
+                scan_loading_box.clone(),
+                scan_spinner.clone(),
+            );
+        }
+    ));
+
     albums_view.set_on_play(make_play_callback(
         Rc::clone(&player),
         Rc::clone(&bar),
@@ -605,6 +654,22 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
+    window.present();
+
+    // Build the OS media controls after the window is realized (Windows
+    // needs the native HWND). If unavailable, playback keeps working.
+    let (mpris_tx, mpris_rx) = std::sync::mpsc::channel();
+    let mpris = crate::player::mpris::Mpris::new(&window, mpris_tx)
+        .map(|m| Rc::new(RefCell::new(m)));
+    if mpris.is_some() {
+        wire_mpris(
+            mpris_rx,
+            Rc::clone(&player),
+            Rc::clone(&bar),
+            window.downgrade(),
+        );
+    }
+
     start_player_timer(
         Rc::clone(&player),
         Rc::clone(&bar),
@@ -614,7 +679,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
         window.downgrade(),
+        mpris,
     );
-
-    window.present();
 }

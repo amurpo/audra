@@ -41,15 +41,15 @@ jobs:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
 
-  build-macos:
+  build-deb:
     needs: [version, test]
-    uses: ./.github/workflows/build-macos.yml
+    uses: ./.github/workflows/build-deb.yml
     with:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
 
   release:
-    needs: [version, build-linux, build-windows, build-macos]
+    needs: [version, build-linux, build-windows, build-deb]
     name: Publicar Release
     runs-on: ubuntu-latest
     permissions:

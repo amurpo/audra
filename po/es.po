@@ -118,3 +118,48 @@ msgid "song"
 msgid_plural "songs"
 msgstr[0] "canción"
 msgstr[1] "canciones"
+
+msgid "Reset library?"
+msgstr "¿Reiniciar biblioteca?"
+
+msgid "Reset library…"
+msgstr "Reiniciar biblioteca…"
+
+msgid "Reset"
+msgstr "Reiniciar"
+
+msgid "This permanently deletes all scanned tracks and cached cover art. Your music files, the selected folder and your Last.fm session are not affected. The library is rescanned afterwards."
+msgstr "Esto elimina de forma permanente todas las pistas escaneadas y las carátulas en caché. Tus archivos de música, la carpeta seleccionada y tu sesión de Last.fm no se ven afectados. La biblioteca se vuelve a escanear al terminar."
+
+msgid "Change image…"
+msgstr "Cambiar imagen…"
+
+msgid "Use custom image…"
+msgstr "Usar imagen personalizada…"
+
+msgid "Remove image"
+msgstr "Quitar imagen"
+
+msgid "Could not load that image."
+msgstr "No se pudo cargar esa imagen."
+
+msgid "OK"
+msgstr "Aceptar"
+
+msgid "Images"
+msgstr "Imágenes"
+
+msgid "Choose cover"
+msgstr "Elegir carátula"
+
+msgid "Choose photo"
+msgstr "Elegir foto"
+
+msgid "Embedded in file"
+msgstr "Incrustada en el archivo"
+
+msgid "No images found."
+msgstr "No se encontraron imágenes."
+
+msgid "Search…"
+msgstr "Buscar…"

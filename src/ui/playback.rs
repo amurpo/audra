@@ -6,9 +6,45 @@ use std::sync::{Arc, Mutex};
 
 use crate::library::db::Database;
 use crate::library::{art, Track};
+use crate::player::mpris::{Mpris, MprisCommand};
 use crate::player::{Player, PlayerState};
 use crate::scrobbler::LastFmClient;
 use crate::ui::player_bar::PlayerBar;
+
+/// Shared, optional handle to the OS media controls. `None` when the platform
+/// service is unavailable.
+pub type MprisHandle = Option<Rc<RefCell<Mpris>>>;
+
+/// Drain OS media-control commands on the GTK thread and apply them by
+/// re-emitting the existing transport buttons — zero duplicated logic, so the
+/// UI handlers stay the single source of truth (DRY/SRP).
+pub fn wire_mpris(
+    rx: std::sync::mpsc::Receiver<MprisCommand>,
+    player: Rc<RefCell<Player>>,
+    bar: Rc<PlayerBar>,
+    window: glib::WeakRef<adw::ApplicationWindow>,
+) {
+    glib::timeout_add_local(std::time::Duration::from_millis(120), move || {
+        let Some(win) = window.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        while let Ok(cmd) = rx.try_recv() {
+            let playing = matches!(player.borrow().state, PlayerState::Playing);
+            match cmd {
+                MprisCommand::PlayPause => bar.btn_play_pause.emit_clicked(),
+                MprisCommand::Play if !playing => bar.btn_play_pause.emit_clicked(),
+                MprisCommand::Pause | MprisCommand::Stop if playing => {
+                    bar.btn_play_pause.emit_clicked()
+                }
+                MprisCommand::Next => bar.btn_next.emit_clicked(),
+                MprisCommand::Previous => bar.btn_prev.emit_clicked(),
+                MprisCommand::Raise => win.present(),
+                _ => {}
+            }
+        }
+        glib::ControlFlow::Continue
+    });
+}
 
 pub type HighlightCb = Rc<dyn Fn(Option<&Track>)>;
 
@@ -168,13 +204,39 @@ pub fn start_player_timer(
     notify_now_playing: Rc<dyn Fn(&Track)>,
     highlight_track: HighlightCb,
     window: glib::WeakRef<adw::ApplicationWindow>,
+    mpris: MprisHandle,
 ) {
+    let mut mpris_last: Option<String> = None;
     glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
         // Stop the timer once its window is gone (e.g. rebuilt on language
         // change); this drops the captured Player and frees the audio engine.
         if window.upgrade().is_none() {
             return glib::ControlFlow::Break;
         }
+
+        // Keep the OS media controls in sync every tick (state/position is
+        // cheap); only hit the DB for the cover when the track changes.
+        if let Some(m) = &mpris {
+            let p = player.borrow();
+            let pos = p.position();
+            let track = p.current_track();
+            let cur_path = track.map(|t| t.path.clone());
+            let mut m = m.borrow_mut();
+            m.set_playback(&p.state, pos);
+            if cur_path != mpris_last {
+                mpris_last = cur_path;
+                let cover = track.and_then(|t| {
+                    let artist = t.artist.clone().unwrap_or_default();
+                    let album = t.album.clone().unwrap_or_default();
+                    db.lock()
+                        .unwrap()
+                        .get_cover(&artist, &album)
+                        .or_else(|| art::read_cover_art(&t.path))
+                });
+                m.update_track(track, cover.as_deref());
+            }
+        }
+
         let mut p = player.borrow_mut();
         if !matches!(p.state, PlayerState::Playing) {
             return glib::ControlFlow::Continue;

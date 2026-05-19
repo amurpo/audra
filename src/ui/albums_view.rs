@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-const CARD_SIZE: i32 = 200;
+pub(crate) const CARD_SIZE: i32 = 200;
 
 type CoverMap = Rc<RefCell<HashMap<String, (Stack, Picture)>>>;
 type ScaledCover = (String, Vec<u8>, i32, bool);
@@ -102,16 +102,28 @@ impl AlbumsView {
         for album in &albums {
             let key = format!("{}|{}", album.artist, album.name);
             let (card, stack, picture) = make_album_card(album, true);
-            self.covers
-                .borrow_mut()
-                .insert(key.clone(), (stack, picture));
-            self.flow.append(&card);
 
             let track_path = album
                 .tracks
                 .first()
                 .map(|t| t.path.clone())
                 .unwrap_or_default();
+
+            crate::ui::cover_picker::install_album_cover_gesture(
+                &card,
+                Arc::clone(&db),
+                album.artist.clone(),
+                album.name.clone(),
+                track_path.clone(),
+                stack.clone(),
+                picture.clone(),
+            );
+
+            self.covers
+                .borrow_mut()
+                .insert(key.clone(), (stack, picture));
+            self.flow.append(&card);
+
             need_fetch.push((album.artist.clone(), album.name.clone(), track_path));
         }
 
@@ -162,6 +174,11 @@ impl AlbumsView {
                 let key = format!("{}|{}", artist, album_name);
 
                 if let Some(bytes) = db.lock().unwrap().get_cover(artist, album_name) {
+                    if bytes.is_empty() {
+                        // User removed this cover on purpose: keep the
+                        // placeholder and do not re-fetch it.
+                        continue;
+                    }
                     if let Some(scaled) = scale_to_pixels(&bytes, CARD_SIZE) {
                         queue_tx
                             .lock()

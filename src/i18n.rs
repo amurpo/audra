@@ -9,11 +9,19 @@ pub fn init(lang_override: Option<&str>) {
     // from the LANGUAGE env var and offers no per-domain alternative, so we
     // mutate the process environment — but only when the value actually
     // changes, to minimise the race window with background worker threads.
+    // Mutate the environment through GLib, not std::env. On Windows
+    // std::env::set_var only calls SetEnvironmentVariableW, which does not
+    // update the C runtime's getenv snapshot that MinGW's libintl reads — so
+    // the LANGUAGE override would be invisible to gettext and it would fall
+    // back to the OS locale. glib::setenv updates the CRT environment too,
+    // keeping selection working identically on every platform.
     let desired = lang_override.filter(|s| !s.is_empty());
     let current = std::env::var("LANGUAGE").ok();
     match desired {
-        Some(lang) if current.as_deref() != Some(lang) => std::env::set_var("LANGUAGE", lang),
-        None if current.is_some() => std::env::remove_var("LANGUAGE"),
+        Some(lang) if current.as_deref() != Some(lang) => {
+            let _ = glib::setenv("LANGUAGE", lang, true);
+        }
+        None if current.is_some() => glib::unsetenv("LANGUAGE"),
         _ => {}
     }
     // setlocale("") re-reads the environment on every platform; it also satisfies

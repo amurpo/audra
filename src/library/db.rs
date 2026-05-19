@@ -179,6 +179,14 @@ impl Database {
         Ok(())
     }
 
+    /// Wipe the scanned library and cached cover BLOBs. Settings (selected
+    /// folder, Last.fm session) and playlists are intentionally preserved.
+    pub fn clear_library(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM tracks", [])?;
+        self.conn.execute("DELETE FROM album_covers", [])?;
+        Ok(())
+    }
+
     #[allow(dead_code)]
     pub fn remove_tracks_under_folder(&self, folder: &str) -> Result<usize> {
         let prefix = if folder.ends_with('/') {

@@ -13,8 +13,13 @@ fn compile_po(lang: &str, out_dir: &str) {
         .status();
     match status {
         Ok(s) if s.success() => {}
-        Ok(s) => eprintln!("msgfmt failed for {lang}: {s}"),
-        Err(e) => eprintln!("msgfmt not found, skipping {lang}: {e}"),
+        Ok(s) => panic!(
+            "msgfmt failed compiling {po_path} ({s}). The 'gettext' package is required to build."
+        ),
+        Err(e) => panic!(
+            "msgfmt not found ({e}). Install the 'gettext' package \
+             (Debian/Ubuntu: apt install gettext, Fedora: dnf install gettext)."
+        ),
     }
     println!("cargo:rerun-if-changed={}", po_path);
 }

@@ -1,0 +1,48 @@
+name: Build Linux DEB
+
+on:
+  workflow_call:
+    inputs:
+      ver:
+        required: true
+        type: string
+
+jobs:
+  build-deb:
+    name: Build Linux (DEB)
+    runs-on: ubuntu-latest
+    env:
+      VER: ${{ inputs.ver }}
+      LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libgtk-4-dev libadwaita-1-dev \
+            libsqlite3-dev libasound2-dev \
+            gettext
+
+      - name: Instalar Rust (rustup)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Compilar
+        run: cargo build --release
+        env:
+          RUST_BACKTRACE: 1
+
+      - name: Empaquetar DEB
+        run: bash packaging/build-deb.sh
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-deb
+          path: target/debpkg/*.deb

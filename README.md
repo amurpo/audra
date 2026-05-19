@@ -22,9 +22,33 @@ Native music player for Linux, built with GTK4 and libadwaita.
 
 ## Requirements
 
-- GTK4
-- libadwaita
-- ALSA
+Runtime: GTK4, libadwaita, ALSA.
+
+Build from source additionally needs a Rust toolchain and **gettext**
+(`msgfmt`, used to compile the translation catalog — the build fails
+loudly if it is missing).
+
+### Build dependencies
+
+Fedora / RHEL:
+
+```bash
+sudo dnf install \
+  gcc pkg-config \
+  gtk4-devel libadwaita-devel \
+  alsa-lib-devel fontconfig-devel \
+  gettext
+```
+
+Debian / Ubuntu:
+
+```bash
+sudo apt install \
+  build-essential pkg-config \
+  libgtk-4-dev libadwaita-1-dev \
+  libgdk-pixbuf-2.0-dev libasound2-dev \
+  gettext
+```
 
 ## Installation
 
@@ -32,6 +56,12 @@ Native music player for Linux, built with GTK4 and libadwaita.
 
 ```bash
 sudo dnf install audra-*.rpm
+```
+
+### DEB (Debian / Ubuntu)
+
+```bash
+sudo apt install ./audra_*_amd64.deb
 ```
 
 ### From source
@@ -58,6 +88,14 @@ server-side — the binary only contains the public proxy URL.
 ```bash
 bash packaging/build-rpm.sh
 ```
+
+## Building the DEB
+
+```bash
+bash packaging/build-deb.sh
+```
+
+The package is written to `target/debpkg/audra_<version>_amd64.deb`.
 
 ## License
 
