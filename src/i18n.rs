@@ -57,6 +57,23 @@ pub fn init(lang_override: Option<&str>) {
     let _ = gettextrs::bindtextdomain("audra", &dir);
     let _ = gettextrs::bind_textdomain_codeset("audra", "UTF-8");
     let _ = gettextrs::textdomain("audra");
+
+    // Re-bind GTK/libadwaita/GLib domains to the same directory when our
+    // bundle actually ships their catalog. On Windows the baked-in MSYS2 path
+    // never resolves on the user's machine, so without this the AboutDialog
+    // and other built-in strings stay in English. Skipping the bind when the
+    // catalog is absent (e.g. dev tree on Linux) preserves the system path
+    // those domains were already bound to at startup.
+    let dir_path = std::path::Path::new(&dir);
+    for domain in ["gtk40", "libadwaita", "glib20"] {
+        if dir_path
+            .join(format!("es/LC_MESSAGES/{domain}.mo"))
+            .exists()
+        {
+            let _ = gettextrs::bindtextdomain(domain, &dir);
+            let _ = gettextrs::bind_textdomain_codeset(domain, "UTF-8");
+        }
+    }
 }
 
 #[cfg(test)]

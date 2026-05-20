@@ -1,4 +1,4 @@
-name: Build Linux
+name: Build Fedora
 
 on:
   workflow_call:
@@ -8,8 +8,8 @@ on:
         type: string
 
 jobs:
-  build-linux:
-    name: Build Linux (RPM)
+  build-fedora:
+    name: Build Fedora (RPM)
     runs-on: ubuntu-latest
     container: fedora:latest
     env:
@@ -57,5 +57,5 @@ jobs:
       - name: Subir artefacto
         uses: actions/upload-artifact@v7
         with:
-          name: linux-rpm
+          name: fedora-rpm
           path: ~/rpmbuild/RPMS/**/*.rpm

@@ -77,6 +77,14 @@ jobs:
           mkdir -p dist/audra/share/locale/es/LC_MESSAGES
           msgfmt po/es.po -o dist/audra/share/locale/es/LC_MESSAGES/audra.mo
 
+          # libadwaita/GTK/GLib translations (for AboutDialog and other built-in strings)
+          for cat in libadwaita gtk40 gtk40-properties glib20; do
+            if [ -f /mingw64/share/locale/es/LC_MESSAGES/${cat}.mo ]; then
+              cp /mingw64/share/locale/es/LC_MESSAGES/${cat}.mo \
+                 dist/audra/share/locale/es/LC_MESSAGES/
+            fi
+          done
+
           # GTK settings
           mkdir -p dist/audra/share/gtk-4.0
           cat > dist/audra/share/gtk-4.0/settings.ini << 'EOF'

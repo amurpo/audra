@@ -176,3 +176,9 @@ msgstr "Buscar…"
 
 msgid "Various Artists"
 msgstr "Varios artistas"
+
+msgid "All your music"
+msgstr "Toda tu música"
+
+msgid "Back"
+msgstr "Atrás"

@@ -43,10 +43,16 @@ Maintainer: Daniel Avila <daigo.tnt@gmail.com>
 Section: sound
 Priority: optional
 Homepage: https://github.com/amurpo/audra
-Depends: libgtk-4-1, libadwaita-1-0, libasound2t64
+Depends: libgtk-4-1, libadwaita-1-0, libasound2t64, adwaita-icon-theme
 Description: Native music player for Linux with Last.fm scrobbling
  Audra is a native music player for Linux (GTK4/libadwaita)
  with Last.fm integration and automatic scrobbling.
+EOF
+
+# Trigger AppStream catalog rebuild so GNOME Software / KDE Discover pick up
+# the metainfo and expose "Details" / "Uninstall" for the app.
+cat > "$STAGE/DEBIAN/triggers" <<'EOF'
+activate-noawait update-app-info
 EOF
 
 cat > "$STAGE/DEBIAN/postinst" <<'EOF'
@@ -54,6 +60,11 @@ cat > "$STAGE/DEBIAN/postinst" <<'EOF'
 set -e
 gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
 update-desktop-database >/dev/null 2>&1 || true
+if command -v appstreamcli >/dev/null 2>&1; then
+    appstreamcli refresh --force >/dev/null 2>&1 \
+        || appstreamcli refresh-cache --force >/dev/null 2>&1 \
+        || true
+fi
 EOF
 
 cat > "$STAGE/DEBIAN/postrm" <<'EOF'
@@ -61,8 +72,14 @@ cat > "$STAGE/DEBIAN/postrm" <<'EOF'
 set -e
 gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
 update-desktop-database >/dev/null 2>&1 || true
+if command -v appstreamcli >/dev/null 2>&1; then
+    appstreamcli refresh --force >/dev/null 2>&1 \
+        || appstreamcli refresh-cache --force >/dev/null 2>&1 \
+        || true
+fi
 EOF
 
+chmod 644 "$STAGE/DEBIAN/triggers"
 chmod 755 "$STAGE/DEBIAN/postinst" "$STAGE/DEBIAN/postrm"
 
 echo "==> Building DEB..."
