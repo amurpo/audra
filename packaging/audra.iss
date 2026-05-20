@@ -68,11 +68,9 @@ begin
   if GetInstalledVersion(Prev) then
   begin
     if Prev = '{#MyAppVersion}' then
-      MsgBox(FmtMessage(CustomMessage('AlreadyInstalledSame'), [Prev]),
-             mbInformation, MB_OK)
+      MsgBox(FmtMessage(CustomMessage('AlreadyInstalledSame'), [Prev]), mbInformation, MB_OK)
     else
-      MsgBox(FmtMessage(CustomMessage('AlreadyInstalledOther'),
-             [Prev, '{#MyAppVersion}']), mbInformation, MB_OK);
+      MsgBox(FmtMessage(CustomMessage('AlreadyInstalledOther'), [Prev, '{#MyAppVersion}']), mbInformation, MB_OK);
   end;
 end;
 

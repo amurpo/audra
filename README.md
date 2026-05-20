@@ -8,8 +8,6 @@ Native music player for Linux, built with GTK4 and libadwaita.
 ![Audra album view](docs/screenshot1.png)
 ![Audra songs view](docs/screenshot2.png)
 
-> Preliminary design — not the final design, subject to change.
-
 ## Features
 
 - Music library with albums, artists and songs views
