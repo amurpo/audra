@@ -482,7 +482,8 @@ mod tests {
             .unwrap();
         db.upsert_tracks(&[track("/music/b/2.mp3", "B", "Y", 1)])
             .unwrap();
-        db.upsert_tracks(&[track(&outside_real, "C", "Z", 1)]).unwrap();
+        db.upsert_tracks(&[track(&outside_real, "C", "Z", 1)])
+            .unwrap();
         db.upsert_tracks(&[track("/other/ghost.mp3", "D", "W", 1)])
             .unwrap();
 

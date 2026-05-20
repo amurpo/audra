@@ -36,29 +36,48 @@ pub struct Mpris {
 impl Mpris {
     /// Build the OS media controls and forward their events into `tx`.
     /// Returns `None` if the platform service is unavailable (e.g. no D-Bus
-    /// session bus), so playback keeps working without it.
+    /// session bus, or the native HWND is not allocated yet on Windows).
     pub fn new(window: &adw::ApplicationWindow, tx: Sender<MprisCommand>) -> Option<Self> {
+        let hwnd = window_handle(window);
+
+        // Windows: souvlaki panics on a None HWND ("Windows media controls
+        // require an HWND...") and SMTC's GetForWindow rejects a zero
+        // handle. Bail out cleanly here so callers can retry once the
+        // surface is realized.
+        #[cfg(windows)]
+        if hwnd.is_none() {
+            log::warn!("mpris/smtc: no HWND yet, deferring controls setup");
+            return None;
+        }
+
         let config = PlatformConfig {
             dbus_name: "audra",
             display_name: "Audra",
-            hwnd: window_handle(window),
+            hwnd,
         };
-        let mut controls = MediaControls::new(config).ok()?;
-        controls
-            .attach(move |event: MediaControlEvent| {
-                let cmd = match event {
-                    MediaControlEvent::Toggle => MprisCommand::PlayPause,
-                    MediaControlEvent::Play => MprisCommand::Play,
-                    MediaControlEvent::Pause => MprisCommand::Pause,
-                    MediaControlEvent::Next => MprisCommand::Next,
-                    MediaControlEvent::Previous => MprisCommand::Previous,
-                    MediaControlEvent::Stop | MediaControlEvent::Quit => MprisCommand::Stop,
-                    MediaControlEvent::Raise => MprisCommand::Raise,
-                    _ => return,
-                };
-                let _ = tx.send(cmd);
-            })
-            .ok()?;
+        let mut controls = match MediaControls::new(config) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("mpris/smtc: MediaControls::new failed: {e}");
+                return None;
+            }
+        };
+        if let Err(e) = controls.attach(move |event: MediaControlEvent| {
+            let cmd = match event {
+                MediaControlEvent::Toggle => MprisCommand::PlayPause,
+                MediaControlEvent::Play => MprisCommand::Play,
+                MediaControlEvent::Pause => MprisCommand::Pause,
+                MediaControlEvent::Next => MprisCommand::Next,
+                MediaControlEvent::Previous => MprisCommand::Previous,
+                MediaControlEvent::Stop | MediaControlEvent::Quit => MprisCommand::Stop,
+                MediaControlEvent::Raise => MprisCommand::Raise,
+                _ => return,
+            };
+            let _ = tx.send(cmd);
+        }) {
+            log::warn!("mpris/smtc: attach failed: {e}");
+            return None;
+        }
         let cover_dir = dirs::data_local_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("audra")
@@ -129,8 +148,14 @@ fn window_handle(window: &adw::ApplicationWindow) -> Option<*mut std::ffi::c_voi
     use gtk4::prelude::*;
     let surface = gtk4::prelude::NativeExt::surface(window)?;
     let win32 = surface.downcast::<gdk4_win32::Win32Surface>().ok()?;
-    // `handle()` is an inherent method on Win32Surface; HWND.0 is public.
-    Some(win32.handle().0 as *mut std::ffi::c_void)
+    // `handle()` returns HWND(0) if the surface is not realized yet —
+    // pass that up as None so the caller can retry instead of feeding
+    // souvlaki a NULL handle that SMTC will reject.
+    let raw = win32.handle().0;
+    if raw == 0 {
+        return None;
+    }
+    Some(raw as *mut std::ffi::c_void)
 }
 
 #[cfg(not(windows))]

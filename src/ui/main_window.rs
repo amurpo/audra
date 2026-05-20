@@ -15,6 +15,7 @@ use crate::ui::albums_view::AlbumsView;
 use crate::ui::artists_view::ArtistsView;
 use crate::ui::lastfm_dialog::show_lastfm_dialog;
 use crate::ui::library_view::LibraryView;
+use crate::ui::now_playing::NowPlaying;
 use crate::ui::playback::{
     make_play_callback, start_player_timer, wire_mpris, wire_transport_controls, ScrobbleTracker,
 };
@@ -154,6 +155,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     // --- Header bar ---
     let header = adw::HeaderBar::new();
+    header.add_css_class("audra-header-bar");
 
     let menu_btn = MenuButton::new();
     menu_btn.set_icon_name("folder-music-symbolic");
@@ -260,6 +262,14 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     reset_box.append(&reset_lbl);
     item_reset.set_child(Some(&reset_box));
 
+    let pop_sep4 = gtk4::Separator::new(gtk4::Orientation::Horizontal);
+    pop_sep4.set_margin_top(4);
+    pop_sep4.set_margin_bottom(4);
+
+    let item_about = Button::with_label(&gettext("About Audra"));
+    item_about.add_css_class("flat");
+    item_about.set_halign(gtk4::Align::Fill);
+
     pop_box.append(&scan_row);
     pop_box.append(&pop_sep);
     pop_box.append(&item_lastfm);
@@ -268,6 +278,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     pop_box.append(&lang_row);
     pop_box.append(&pop_sep3);
     pop_box.append(&item_reset);
+    pop_box.append(&pop_sep4);
+    pop_box.append(&item_about);
     popover.set_child(Some(&pop_box));
     menu_btn.set_popover(Some(&popover));
     header.pack_start(&menu_btn);
@@ -282,11 +294,13 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let player: Rc<RefCell<Player>> = Rc::new(RefCell::new(
         Player::new().expect("Error iniciando el motor de audio"),
     ));
-    let current_path: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    // Single source of truth for "what's currently playing". All track lists
+    // subscribe to this bus and update their `.playing` row indicator in sync.
+    let now_playing = NowPlaying::new();
 
-    let lib_view = Rc::new(RefCell::new(LibraryView::new(Rc::clone(&current_path))));
-    let albums_view = Rc::new(AlbumsView::new(Rc::clone(&current_path)));
-    let artists_view = Rc::new(ArtistsView::new(Arc::clone(&db), Rc::clone(&current_path)));
+    let lib_view = Rc::new(RefCell::new(LibraryView::new(Rc::clone(&now_playing))));
+    let albums_view = Rc::new(AlbumsView::new(Rc::clone(&now_playing)));
+    let artists_view = Rc::new(ArtistsView::new(Arc::clone(&db), Rc::clone(&now_playing)));
     let bar = Rc::new(PlayerBar::new());
 
     // --- Helpers de scrobble y highlight ---
@@ -315,12 +329,9 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         })
     };
     let highlight_track: crate::ui::playback::HighlightCb = {
-        let lib = Rc::clone(&lib_view);
-        let cp = Rc::clone(&current_path);
+        let np = Rc::clone(&now_playing);
         Rc::new(move |track: Option<&crate::library::Track>| {
-            let path = track.map(|t| t.path.clone());
-            *cp.borrow_mut() = path.clone();
-            lib.borrow().set_playing_path(path.as_deref());
+            np.set(track.map(|t| t.path.clone()));
         })
     };
 
@@ -365,6 +376,14 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     search_bar.set_key_capture_widget(Some(&window));
 
     // --- Layout ---
+    // A small outer breathing margin around the main content area so nothing
+    // (Play-all button, artist avatars, grid cards) hugs the window edge. The
+    // header bar and the player bar stay flush with the edges by design.
+    view_stack.set_margin_start(12);
+    view_stack.set_margin_end(12);
+    view_stack.set_margin_top(6);
+    view_stack.set_margin_bottom(6);
+
     let toolbar_view = adw::ToolbarView::new();
     toolbar_view.add_top_bar(&header);
     toolbar_view.add_top_bar(&search_bar);
@@ -606,41 +625,67 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
+    item_about.connect_clicked(clone!(
+        #[strong]
+        window,
+        #[weak]
+        popover,
+        move |_| {
+            popover.popdown();
+            let about = adw::AboutDialog::builder()
+                .application_name("Audra")
+                .application_icon("com.audra.player")
+                .developer_name("Daniel Avila")
+                .version(env!("CARGO_PKG_VERSION"))
+                .comments(&gettext(
+                    "Native music player with Last.fm scrobbling",
+                ))
+                .copyright("© Daniel Avila")
+                .license_type(gtk4::License::Gpl30)
+                .website("https://github.com/amurpo/audra")
+                .issue_url("https://github.com/amurpo/audra/issues")
+                .translator_credits(&gettext("translator-credits"))
+                .build();
+            about.present(Some(&window));
+        }
+    ));
+
     albums_view.set_on_play(make_play_callback(
         Rc::clone(&player),
         Rc::clone(&bar),
+        Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
     ));
     artists_view.set_on_play(make_play_callback(
         Rc::clone(&player),
         Rc::clone(&bar),
+        Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
     ));
     lib_view.borrow().set_on_play_all(make_play_callback(
         Rc::clone(&player),
         Rc::clone(&bar),
+        Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
     ));
     {
-        let lib_view_ref = Rc::clone(&lib_view);
         let play_cb = make_play_callback(
             Rc::clone(&player),
             Rc::clone(&bar),
+            Arc::clone(&db),
             Rc::clone(&notify_now_playing),
             Rc::clone(&highlight_track),
         );
-        lib_view.borrow().list_view.connect_activate(move |_, idx| {
-            let tracks = lib_view_ref.borrow().all_tracks();
-            play_cb(tracks, idx as usize);
-        });
+        lib_view.borrow().set_on_activate(play_cb);
     }
 
     wire_transport_controls(
         &bar,
         &player,
+        Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
     );
@@ -665,18 +710,33 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     window.present();
 
-    // Build the OS media controls after the window is realized (Windows
-    // needs the native HWND). If unavailable, playback keeps working.
+    // Build the OS media controls in a deferred idle tick. `present()`
+    // does not synchronously allocate the native HWND on Windows, so
+    // calling `Mpris::new` right away gives souvlaki an invalid handle
+    // and SMTC silently rejects it. By the time the next idle iteration
+    // runs, the surface is realized and `gdk_win32_surface_get_handle`
+    // returns a usable HWND. Linux's MPRIS backend does not need the
+    // handle, so the deferral is harmless there.
     let (mpris_tx, mpris_rx) = std::sync::mpsc::channel();
-    let mpris =
-        crate::player::mpris::Mpris::new(&window, mpris_tx).map(|m| Rc::new(RefCell::new(m)));
-    if mpris.is_some() {
-        wire_mpris(
-            mpris_rx,
-            Rc::clone(&player),
-            Rc::clone(&bar),
-            window.downgrade(),
-        );
+    let mpris_cell: crate::ui::playback::MprisHandle =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+
+    {
+        let mpris_cell = Rc::clone(&mpris_cell);
+        let bar_c = Rc::clone(&bar);
+        let player_c = Rc::clone(&player);
+        let window_weak = window.downgrade();
+        glib::idle_add_local_once(move || {
+            let Some(window) = window_weak.upgrade() else {
+                return;
+            };
+            if let Some(m) = crate::player::mpris::Mpris::new(&window, mpris_tx) {
+                *mpris_cell.borrow_mut() = Some(m);
+                wire_mpris(mpris_rx, player_c, bar_c, window.downgrade());
+            } else {
+                log::warn!("mpris/smtc: media controls unavailable on this platform");
+            }
+        });
     }
 
     start_player_timer(
@@ -688,6 +748,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
         window.downgrade(),
-        mpris,
+        mpris_cell,
     );
 }

@@ -1,14 +1,15 @@
 use crate::i18n::{gettext, ngettext};
 use crate::library::db::Database;
 use crate::library::{Album, Artist, Track};
-use crate::ui::albums_view::{make_album_card, make_album_detail_page};
+use crate::ui::albums_view::{make_album_card, make_album_detail_page, CARD_SIZE};
+use crate::ui::image_loader::{self, FetchOutcome, ImagePipelineConfig};
 use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels};
+use crate::ui::now_playing::NowPlaying;
+use crate::ui::widgets::{content_clamp, page_title_row, play_all_button};
 use adw::prelude::*;
-use glib;
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, FlowBox, FlowBoxChild, Label, Orientation, ScrolledWindow,
-    SelectionMode,
+    Align, Box as GtkBox, FlowBox, FlowBoxChild, Label, Orientation, ScrolledWindow, SelectionMode,
 };
 use libadwaita as adw;
 use std::cell::RefCell;
@@ -16,12 +17,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-const CARD_SIZE: i32 = 200;
-const AVATAR_SIZE: i32 = 120;
+const AVATAR_SIZE: i32 = 152;
 
 type PlayCallback = Box<dyn Fn(Vec<Track>, usize)>;
 type AvatarMap = Rc<RefCell<HashMap<String, adw::Avatar>>>;
-type ScaledPhoto = (String, Vec<u8>, i32, bool);
 
 pub struct ArtistsView {
     pub root: adw::NavigationView,
@@ -34,25 +33,30 @@ pub struct ArtistsView {
 }
 
 impl ArtistsView {
-    pub fn new(db: Arc<Mutex<Database>>, current_path: Rc<RefCell<Option<String>>>) -> Self {
+    pub fn new(db: Arc<Mutex<Database>>, now_playing: Rc<NowPlaying>) -> Self {
         let nav = adw::NavigationView::new();
 
         let flow = FlowBox::new();
         flow.set_selection_mode(SelectionMode::None);
         flow.set_homogeneous(true);
-        flow.set_column_spacing(12);
-        flow.set_row_spacing(12);
-        flow.set_margin_top(16);
+        flow.set_column_spacing(2);
+        flow.set_row_spacing(8);
+        flow.set_margin_top(8);
         flow.set_margin_bottom(16);
-        flow.set_margin_start(16);
-        flow.set_margin_end(16);
+        flow.set_margin_start(4);
+        flow.set_margin_end(4);
         flow.set_min_children_per_line(2);
         flow.set_max_children_per_line(8);
         flow.set_activate_on_single_click(true);
 
+        // Same Clamp parameters as TrackList and AlbumsView so all surfaces
+        // share the same useful width.
+        let clamp = content_clamp();
+        clamp.set_child(Some(&flow));
+
         let scroll = ScrolledWindow::new();
         scroll.set_vexpand(true);
-        scroll.set_child(Some(&flow));
+        scroll.set_child(Some(&clamp));
 
         let root_page = adw::NavigationPage::new(&scroll, &gettext("Artists"));
         root_page.set_tag(Some("artists-root"));
@@ -69,7 +73,7 @@ impl ArtistsView {
             let albums_c = Rc::clone(&all_albums);
             let on_play_c = Rc::clone(&on_play);
             let db_c = Arc::clone(&db);
-            let current_path_c = Rc::clone(&current_path);
+            let now_playing_c = Rc::clone(&now_playing);
 
             flow.connect_child_activated(move |_, child| {
                 let idx = child.index() as usize;
@@ -96,7 +100,8 @@ impl ArtistsView {
                         &name,
                         artist_albums,
                         Rc::clone(&on_play_c),
-                        Rc::clone(&current_path_c),
+                        Rc::clone(&now_playing_c),
+                        Arc::clone(&db_c),
                     );
                     nav_c.push(&page);
                 }
@@ -171,47 +176,28 @@ impl ArtistsView {
         }
     }
 
+    /// Drive the shared two-pass image pipeline for artist photos.
+    /// No local source for artist photos (yet), so the fast lane always
+    /// misses and everything resolves through Last.fm.
     fn start_photo_fetch(&self, artists: Vec<String>) {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        let queue: Arc<Mutex<Vec<ScaledPhoto>>> = Arc::new(Mutex::new(Vec::new()));
-        let finished = Arc::new(AtomicBool::new(false));
-
-        let queue_tx = Arc::clone(&queue);
-        let finished_tx = Arc::clone(&finished);
-
-        std::thread::spawn(move || {
-            for artist in &artists {
-                if let Some(bytes) = crate::library::metadata::fetch_artist_photo(artist) {
-                    if let Some(scaled) = scale_to_pixels(&bytes, AVATAR_SIZE) {
-                        queue_tx.lock().unwrap().push((
-                            artist.clone(),
-                            scaled.0,
-                            scaled.1,
-                            scaled.2,
-                        ));
-                    }
-                }
-            }
-            finished_tx.store(true, Ordering::Relaxed);
-        });
-
         let avatars = Rc::clone(&self.avatars);
-        glib::timeout_add_local(std::time::Duration::from_millis(400), move || {
-            let mut q = queue.lock().unwrap();
-            for (name, pixels, rowstride, has_alpha) in q.drain(..) {
-                if let Some(avatar) = avatars.borrow().get(&name) {
-                    let texture = pixels_to_texture(pixels, rowstride, has_alpha, AVATAR_SIZE);
+        image_loader::run(
+            artists,
+            ImagePipelineConfig {
+                target_size: AVATAR_SIZE,
+                poll_ms: 400,
+                slow_delay_ms: 0,
+            },
+            |_artist: &String| FetchOutcome::Miss,
+            Some(Box::new(|artist: &String| {
+                crate::library::metadata::fetch_artist_photo(artist)
+            })),
+            move |artist: &String, texture| {
+                if let Some(avatar) = avatars.borrow().get(artist) {
                     avatar.set_custom_image(Some(&texture));
                 }
-            }
-            drop(q);
-            if finished.load(std::sync::atomic::Ordering::Relaxed) {
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
-        });
+            },
+        );
     }
 }
 
@@ -220,36 +206,60 @@ fn make_artist_detail_page(
     artist_name: &str,
     albums: Vec<Album>,
     on_play: Rc<RefCell<Option<PlayCallback>>>,
-    current_path: Rc<RefCell<Option<String>>>,
+    now_playing: Rc<NowPlaying>,
+    db: Arc<Mutex<Database>>,
 ) -> adw::NavigationPage {
-    let header = adw::HeaderBar::new();
-    header.set_show_end_title_buttons(false);
-    header.set_show_start_title_buttons(false);
-
-    let btn_play_all = Button::builder()
-        .label(gettext("Play all"))
-        .css_classes(["suggested-action", "pill"])
-        .build();
-    header.pack_end(&btn_play_all);
-
+    // No HeaderBar — the back arrow sits inline next to the artist name,
+    // matching Songs / album-detail layouts exactly. NavigationPage still
+    // keeps the title for accessibility / breadcrumbs.
     let flow = FlowBox::new();
     flow.set_selection_mode(SelectionMode::None);
     flow.set_homogeneous(true);
-    flow.set_column_spacing(3);
-    flow.set_row_spacing(3);
-    flow.set_margin_top(8);
-    flow.set_margin_bottom(8);
-    flow.set_margin_start(8);
-    flow.set_margin_end(8);
+    // Mirror the main Albums grid: tighter columns, taller rows.
+    flow.set_column_spacing(4);
+    flow.set_row_spacing(14);
+    flow.set_margin_top(4);
+    flow.set_margin_bottom(12);
+    flow.set_margin_start(4);
+    flow.set_margin_end(4);
     flow.set_min_children_per_line(2);
     flow.set_max_children_per_line(12);
     flow.set_activate_on_single_click(true);
 
     for album in &albums {
-        flow.append(&make_artist_album_card(album));
+        flow.append(&make_artist_album_card(album, Arc::clone(&db)));
     }
 
     let albums_rc = Rc::new(albums);
+
+    // Action row: `[N albums]  spacer  [▶ Play all]`. Same visual recipe as
+    // TrackList's action row (heading + dim-label on the left, suggested
+    // action button on the right) so navigating between Songs / Album detail
+    // / Artist detail does not move the button.
+    let action_bar = GtkBox::new(Orientation::Horizontal, 8);
+    action_bar.set_margin_top(8);
+    action_bar.set_margin_bottom(6);
+    action_bar.set_margin_start(4);
+    action_bar.set_margin_end(4);
+
+    let lbl_count = Label::new(Some(&format!(
+        "{} {}",
+        albums_rc.len(),
+        ngettext("album", "albums", albums_rc.len() as u32)
+    )));
+    lbl_count.add_css_class("heading");
+    lbl_count.add_css_class("dim-label");
+    lbl_count.set_xalign(0.0);
+    lbl_count.set_valign(Align::Center);
+
+    let spacer = GtkBox::new(Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+
+    let btn_play_all = play_all_button(&gettext("Play all"));
+
+    action_bar.append(&lbl_count);
+    action_bar.append(&spacer);
+    action_bar.append(&btn_play_all);
 
     {
         let albums_c = Rc::clone(&albums_rc);
@@ -269,32 +279,45 @@ fn make_artist_detail_page(
         let albums_c = Rc::clone(&albums_rc);
         let on_play_c = Rc::clone(&on_play);
         let nav_c = nav.clone();
-        let current_path_c = Rc::clone(&current_path);
+        let now_playing_c = Rc::clone(&now_playing);
         flow.connect_child_activated(move |_, child| {
             let idx = child.index() as usize;
             if let Some(album) = albums_c.get(idx) {
-                let page = make_album_detail_page(
-                    album,
-                    Rc::clone(&on_play_c),
-                    Rc::clone(&current_path_c),
-                );
+                let page =
+                    make_album_detail_page(album, Rc::clone(&on_play_c), Rc::clone(&now_playing_c));
                 nav_c.push(&page);
             }
         });
     }
 
+    // One Clamp for the action row, another for the grid. Both come from the
+    // shared helper so the right edge of the "Play all" button lines up with
+    // the right edge of the grid below.
+    let action_clamp = content_clamp();
+    action_clamp.set_child(Some(&action_bar));
+
+    let grid_clamp = content_clamp();
+    grid_clamp.set_child(Some(&flow));
+
+    // Section header with back arrow inline — same helper, same look as
+    // album-detail.
+    let title_row = page_title_row(artist_name, true);
+    let title_clamp = content_clamp();
+    title_clamp.set_child(Some(&title_row));
+
+    let content = GtkBox::new(Orientation::Vertical, 0);
+    content.append(&title_clamp);
+    content.append(&action_clamp);
+
     let scroll = ScrolledWindow::new();
     scroll.set_vexpand(true);
-    scroll.set_child(Some(&flow));
+    scroll.set_child(Some(&grid_clamp));
+    content.append(&scroll);
 
-    let toolbar = adw::ToolbarView::new();
-    toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&scroll));
-
-    adw::NavigationPage::new(&toolbar, artist_name)
+    adw::NavigationPage::new(&content, artist_name)
 }
 
-fn make_artist_album_card(album: &Album) -> FlowBoxChild {
+fn make_artist_album_card(album: &Album, db: Arc<Mutex<Database>>) -> FlowBoxChild {
     let (child, stack, picture) = make_album_card(album, false);
     if let Some(ref data) = album.cover {
         if let Some((pixels, rowstride, has_alpha)) = scale_to_pixels(data.as_slice(), CARD_SIZE) {
@@ -303,6 +326,25 @@ fn make_artist_album_card(album: &Album) -> FlowBoxChild {
             stack.set_visible_child_name("art");
         }
     }
+
+    // Right-click on the album card opens the cover picker, the same way the
+    // main Albums grid does. Reuses `install_album_cover_gesture` so the menu,
+    // search box and persistence are identical across both entry points.
+    let track_path = album
+        .tracks
+        .first()
+        .map(|t| t.path.clone())
+        .unwrap_or_default();
+    crate::ui::cover_picker::install_album_cover_gesture(
+        &child,
+        db,
+        album.artist.clone(),
+        album.name.clone(),
+        track_path,
+        stack,
+        picture,
+    );
+
     child
 }
 
@@ -312,8 +354,8 @@ fn make_artist_card(artist: &Artist) -> (FlowBoxChild, adw::Avatar) {
     vbox.set_hexpand(false);
     vbox.set_margin_top(8);
     vbox.set_margin_bottom(12);
-    vbox.set_margin_start(12);
-    vbox.set_margin_end(12);
+    vbox.set_margin_start(6);
+    vbox.set_margin_end(6);
 
     let avatar = adw::Avatar::new(AVATAR_SIZE, Some(&artist.name), true);
     avatar.set_halign(Align::Center);

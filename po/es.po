@@ -125,6 +125,16 @@ msgstr "¿Reiniciar biblioteca?"
 msgid "Reset library…"
 msgstr "Reiniciar biblioteca…"
 
+msgid "About Audra"
+msgstr "Acerca de Audra"
+
+msgid "Native music player with Last.fm scrobbling"
+msgstr "Reproductor de música nativo con scrobbling de Last.fm"
+
+#. Replace with your name(s) when you contribute translations.
+msgid "translator-credits"
+msgstr "Daniel Avila"
+
 msgid "Reset"
 msgstr "Reiniciar"
 

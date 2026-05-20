@@ -11,9 +11,12 @@ use crate::player::{Player, PlayerState};
 use crate::scrobbler::LastFmClient;
 use crate::ui::player_bar::PlayerBar;
 
-/// Shared, optional handle to the OS media controls. `None` when the platform
-/// service is unavailable.
-pub type MprisHandle = Option<Rc<RefCell<Mpris>>>;
+/// Shared, mutable slot for the OS media controls. Starts empty and gets
+/// populated by `main_window` once the window is realized — on Windows
+/// `Mpris::new` must wait for a valid HWND. `start_player_timer` reads
+/// this slot on every tick so it picks up the controls as soon as they
+/// become available.
+pub type MprisHandle = Rc<RefCell<Option<Mpris>>>;
 
 /// Drain OS media-control commands on the GTK thread and apply them by
 /// re-emitting the existing transport buttons — zero duplicated logic, so the
@@ -53,9 +56,24 @@ pub struct ScrobbleTracker {
     pub scrobbled: bool,
 }
 
+/// Resolve the cover for a track: user-picked cover in the DB wins, then
+/// the file's embedded art. An explicit empty record means the user
+/// removed the cover on purpose, so we return `None` and let the bar fall
+/// back to the placeholder instead of resurrecting the embedded art.
+fn resolve_cover(db: &Arc<Mutex<Database>>, track: &Track) -> Option<Vec<u8>> {
+    let artist = track.artist.clone().unwrap_or_default();
+    let album = track.album.clone().unwrap_or_default();
+    match db.lock().unwrap().get_cover(&artist, &album) {
+        Some(bytes) if bytes.is_empty() => None,
+        Some(bytes) => Some(bytes),
+        None => art::read_cover_art(&track.path),
+    }
+}
+
 pub fn make_play_callback(
     player: Rc<RefCell<Player>>,
     bar: Rc<PlayerBar>,
+    db: Arc<Mutex<Database>>,
     notify_now_playing: Rc<dyn Fn(&Track)>,
     highlight_track: HighlightCb,
 ) -> impl Fn(Vec<Track>, usize) {
@@ -85,7 +103,7 @@ pub fn make_play_callback(
             highlight_track(Some(track));
             bar.update_track(Some(track));
             bar.set_playing(true);
-            let cover = art::read_cover_art(&track.path);
+            let cover = resolve_cover(&db, track);
             bar.update_cover(cover.as_deref());
         }
     }
@@ -94,6 +112,7 @@ pub fn make_play_callback(
 pub fn wire_transport_controls(
     bar: &Rc<PlayerBar>,
     player: &Rc<RefCell<Player>>,
+    db: Arc<Mutex<Database>>,
     notify_now_playing: Rc<dyn Fn(&Track)>,
     highlight_track: HighlightCb,
 ) {
@@ -111,6 +130,7 @@ pub fn wire_transport_controls(
         let bar_ref = Rc::clone(bar);
         let nnp = Rc::clone(&notify_now_playing);
         let ht = Rc::clone(&highlight_track);
+        let db_c = Arc::clone(&db);
         bar.btn_next.connect_clicked(move |_| {
             let mut p = player.borrow_mut();
             if let Ok(Some(track)) = p.next() {
@@ -118,7 +138,7 @@ pub fn wire_transport_controls(
                 ht(Some(track));
                 bar_ref.update_track(Some(track));
                 bar_ref.set_playing(true);
-                bar_ref.update_cover(art::read_cover_art(&track.path).as_deref());
+                bar_ref.update_cover(resolve_cover(&db_c, track).as_deref());
             }
         });
     }
@@ -127,6 +147,7 @@ pub fn wire_transport_controls(
         let bar_ref = Rc::clone(bar);
         let nnp = Rc::clone(&notify_now_playing);
         let ht = Rc::clone(&highlight_track);
+        let db_c = Arc::clone(&db);
         bar.btn_prev.connect_clicked(move |_| {
             let mut p = player.borrow_mut();
             if let Ok(Some(track)) = p.previous() {
@@ -134,7 +155,7 @@ pub fn wire_transport_controls(
                 ht(Some(track));
                 bar_ref.update_track(Some(track));
                 bar_ref.set_playing(true);
-                bar_ref.update_cover(art::read_cover_art(&track.path).as_deref());
+                bar_ref.update_cover(resolve_cover(&db_c, track).as_deref());
             }
         });
     }
@@ -216,24 +237,21 @@ pub fn start_player_timer(
 
         // Keep the OS media controls in sync every tick (state/position is
         // cheap); only hit the DB for the cover when the track changes.
-        if let Some(m) = &mpris {
-            let p = player.borrow();
-            let pos = p.position();
-            let track = p.current_track();
-            let cur_path = track.map(|t| t.path.clone());
-            let mut m = m.borrow_mut();
-            m.set_playback(&p.state, pos);
-            if cur_path != mpris_last {
-                mpris_last = cur_path;
-                let cover = track.and_then(|t| {
-                    let artist = t.artist.clone().unwrap_or_default();
-                    let album = t.album.clone().unwrap_or_default();
-                    db.lock()
-                        .unwrap()
-                        .get_cover(&artist, &album)
-                        .or_else(|| art::read_cover_art(&t.path))
-                });
-                m.update_track(track, cover.as_deref());
+        // The mpris slot starts empty and is populated by main_window once
+        // the window is realized — on Windows we need the HWND first.
+        {
+            let mut slot = mpris.borrow_mut();
+            if let Some(m) = slot.as_mut() {
+                let p = player.borrow();
+                let pos = p.position();
+                let track = p.current_track();
+                let cur_path = track.map(|t| t.path.clone());
+                m.set_playback(&p.state, pos);
+                if cur_path != mpris_last {
+                    mpris_last = cur_path;
+                    let cover = track.and_then(|t| resolve_cover(&db, t));
+                    m.update_track(track, cover.as_deref());
+                }
             }
         }
 
@@ -251,7 +269,7 @@ pub fn start_player_timer(
             if let Ok(Some(track)) = result {
                 notify_now_playing(track);
                 highlight_track(Some(track));
-                let cover = art::read_cover_art(&track.path);
+                let cover = resolve_cover(&db, track);
                 bar.update_track(Some(track));
                 bar.update_cover(cover.as_deref());
                 bar.set_playing(true);

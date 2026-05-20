@@ -2,78 +2,8 @@ use std::cell::RefCell;
 
 static JOST_FONT: &[u8] = include_bytes!("../../data/fonts/JostVariable.ttf");
 
-const APP_CSS_BASE: &str = "
-picture.cover-art {
-    border-radius: 8px;
-}
-picture.artist-image {
-    border-radius: 9999px;
-}
-.cover-placeholder {
-    border-radius: 8px;
-    background-color: alpha(currentColor, 0.05);
-    padding: 18px;
-}
-flowboxchild.mosaic-child {
-    padding: 0;
-    transition: opacity 120ms;
-}
-flowboxchild.mosaic-child:hover {
-    opacity: 0.82;
-}
-.album-overlay-box {
-    padding: 28px 8px 7px 8px;
-    background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0.72));
-}
-.album-overlay-title {
-    font-weight: bold;
-    font-size: 0.85em;
-    color: white;
-}
-.album-overlay-artist {
-    font-size: 0.78em;
-    color: rgba(255,255,255,0.72);
-}
-.lastfm-err {
-    color: #e01b24;
-}
-.menu-destructive {
-    color: #e01b24;
-}
-.cover-thumb {
-    border-radius: 6px;
-    background-color: alpha(currentColor, 0.05);
-}
-flowboxchild.artist-card {
-    border-radius: 12px;
-    transition: background-color 150ms;
-    padding: 4px;
-}
-flowboxchild.artist-card:hover {
-    background-color: alpha(currentColor, 0.07);
-}
-.scan-loading-overlay {
-    background-color: alpha(@window_bg_color, 0.92);
-}
-.scan-loading-card {
-    border-radius: 18px;
-    padding: 36px 52px;
-}
-.bar-cover-placeholder {
-    border-radius: 6px;
-    background-color: alpha(currentColor, 0.06);
-}
-.bar-cover-note {
-    font-size: 26px;
-}
-.album-cover-note {
-    font-size: 52px;
-}
-label.now-playing-title {
-    color: @accent_color;
-    font-weight: bold;
-}
-";
+/// All visual styling lives in this CSS file. Keep tweaks there, not inline.
+const APP_CSS_BASE: &str = include_str!("../../data/style.css");
 
 const JOST_FONT_CSS: &str = "
 * {

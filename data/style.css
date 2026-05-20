@@ -1,0 +1,247 @@
+/* === Audra — UI styles ===
+ * Loaded once at startup by ui::theme::setup_css via include_str!.
+ * Keep visual tweaks here, not inside Rust source.
+ */
+
+@define-color audra_destructive #e01b24;
+
+/* --- Cover art --- */
+.cover-placeholder {
+    border-radius: 8px;
+    background-color: alpha(currentColor, 0.05);
+    padding: 18px;
+}
+
+/* --- Mosaic / album grid --- */
+flowboxchild.mosaic-child {
+    padding: 0;
+    transition: opacity 120ms;
+}
+flowboxchild.mosaic-child:hover {
+    opacity: 0.82;
+}
+/* The overlay holds the cover + the gradient bar. `overflow: hidden` is set
+ * in code so the rounded corners actually clip the picture. */
+flowboxchild.mosaic-child > overlay {
+    border-radius: 10px;
+}
+.album-overlay-box {
+    padding: 28px 8px 7px 8px;
+    background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0.72));
+}
+.album-overlay-title {
+    font-weight: bold;
+    font-size: 0.85em;
+    color: white;
+}
+.album-overlay-artist {
+    font-size: 0.78em;
+    color: rgba(255,255,255,0.72);
+}
+
+/* --- Misc accents --- */
+.lastfm-err,
+.menu-destructive {
+    color: @audra_destructive;
+}
+
+/* --- Thumbnails --- */
+.cover-thumb {
+    border-radius: 6px;
+    background-color: alpha(currentColor, 0.05);
+}
+
+/* --- Artist card --- */
+flowboxchild.artist-card {
+    border-radius: 12px;
+    transition: background-color 150ms;
+    padding: 4px;
+}
+flowboxchild.artist-card:hover {
+    background-color: alpha(currentColor, 0.07);
+}
+
+/* --- Scan loading overlay --- */
+.scan-loading-overlay {
+    background-color: alpha(@window_bg_color, 0.92);
+}
+.scan-loading-card {
+    border-radius: 18px;
+    padding: 36px 52px;
+}
+
+/* --- Bar cover placeholder --- */
+.bar-cover-placeholder {
+    border-radius: 6px;
+    background-color: alpha(currentColor, 0.06);
+}
+.bar-cover-note { font-size: 26px; }
+.album-cover-note { font-size: 52px; }
+
+/* --- Player bar title / artist ---
+ * Slightly heavier than the default `heading` so the now-playing pair
+ * reads at a glance without crowding the cover.
+ */
+.audra-bar-title {
+    font-size: 1.05em;
+    font-weight: 700;
+}
+.audra-bar-artist {
+    font-size: 0.9em;
+}
+
+/* --- Player bar container ---
+ * Uses `@card_shade_color` (a libadwaita-provided variable) so the tint
+ * darkens in dark mode and lightens in light mode automatically — unlike
+ * `alpha(currentColor, ...)` which inverts wrong in dark themes.
+ */
+.audra-player-bar {
+    background-color: @card_shade_color;
+}
+
+/* --- Header bar tint ---
+ * Mirrors the player bar so the top and bottom of the window share the
+ * same subtle shade. The selector is intentionally more specific than
+ * libadwaita's `toolbarview > .top-bar headerbar { background: none; }`
+ * (which resets the headerbar background in flat ToolbarView mode) so
+ * our tint actually wins by specificity.
+ */
+toolbarview > .top-bar headerbar.audra-header-bar {
+    background-color: @card_shade_color;
+}
+
+/* Kill libadwaita's automatic "raised" shadow above the bottom bar.
+ * `adw::ToolbarView` adds the `.raised` class to its bottom bar; the
+ * default style paints a 1px line + 4px blur on the bar's top edge.
+ * Killed for a flush, seamless player bar.
+ */
+toolbarview > .bottom-bar.raised,
+toolbarview > .bottom-bar.raised.border {
+    box-shadow: none;
+}
+
+/* Kill scrolledwindow undershoot indicators.
+ *
+ * libadwaita has TWO selectors that paint these hints, with different
+ * scopes:
+ *   1) `scrolledwindow.undershoot-bottom > undershoot.bottom` —
+ *      the class lives on the scrolledwindow itself.
+ *   2) `toolbarview.undershoot-bottom scrolledwindow > undershoot.bottom` —
+ *      the class lives on the enclosing ToolbarView and cascades down to
+ *      *every* scrolledwindow inside. This is what was still painting
+ *      the line above the player bar in Artists once the list scrolled
+ *      to the bottom; the toolbarview selector wins on specificity over
+ *      the scrolledwindow-scoped one.
+ *
+ * Both forms (and their `.undershoot-top` mirrors) need to be killed.
+ */
+scrolledwindow.undershoot-bottom > undershoot.bottom,
+scrolledwindow.undershoot-top > undershoot.top,
+toolbarview.undershoot-bottom scrolledwindow > undershoot.bottom,
+toolbarview.undershoot-top scrolledwindow > undershoot.top {
+    background: none;
+    box-shadow: none;
+}
+
+/* Kill NavigationView edge shadows.
+ *
+ * libadwaita paints `navigation-view > shadow.{up,down,left,right}` as
+ * 56x56 gradient blocks using `--shade-color`. The `.down` block sits
+ * flush with the bottom edge of every NavigationView page, so its
+ * darkest pixel reads as a faint horizontal line just above the player
+ * bar — visible only in Albums / Artists (Songs is not a NavigationView)
+ * and only across the view_stack's width, since the NavigationView is
+ * inset by `view_stack.set_margin_start/end(12)`.
+ *
+ * Collapsing min-width/min-height to 0 too — `background-image: none`
+ * alone left the element claiming 56px at the edge, which together with
+ * libadwaita's internal compositing still leaked a 1px seam.
+ */
+navigation-view > shadow,
+navigation-view > shadow.up,
+navigation-view > shadow.down,
+navigation-view > shadow.left,
+navigation-view > shadow.right,
+overlay-split-view > shadow,
+overlay-split-view > shadow.up,
+overlay-split-view > shadow.down,
+overlay-split-view > shadow.left,
+overlay-split-view > shadow.right {
+    background-image: none;
+    background: none;
+    box-shadow: none;
+    min-width: 0;
+    min-height: 0;
+}
+
+navigation-view > dimming,
+overlay-split-view > dimming {
+    background: transparent;
+}
+
+/* --- Tabular numbers ---
+ * Keeps digit width stable so durations, elapsed time and volume
+ * don't "dance" while values change.
+ */
+.audra-mono {
+    font-variant-numeric: tabular-nums;
+}
+
+/* --- Track list (unified row used by library + album detail) --- */
+listview.audra-track-list {
+    background: transparent;
+}
+/* Soft rounded container that hosts the list. Clipped so the scrollbar
+ * stays inside the rounded corners.
+ */
+.audra-list-card {
+    background-color: alpha(currentColor, 0.04);
+    border-radius: 12px;
+    margin: 6px 0 12px 0;
+}
+.audra-track-row {
+    /* Right padding leaves breathing room for the scrollbar so the
+     * duration column doesn't sit flush against it. */
+    padding: 6px 16px 6px 10px;
+    /* Fixed min-height keeps the row identical whether the artist sub-label
+     * is visible (Songs view) or hidden (album detail) — without this the
+     * highlighted "playing" row looks chunkier in Songs than in album
+     * detail. */
+    min-height: 44px;
+}
+.audra-track-row .num {
+    min-width: 2.5ch;
+    opacity: 0.55;
+}
+.audra-track-row .title {
+    font-weight: 500;
+}
+.audra-track-row .artist {
+    font-size: 0.85em;
+    opacity: 0.6;
+}
+.audra-track-row .dur {
+    opacity: 0.55;
+}
+.audra-track-row.playing .title,
+.audra-track-row.playing .num {
+    color: @accent_color;
+    font-weight: bold;
+}
+
+/* Bottom-edge fade for `.audra-list-card`.
+ *
+ * Vertical gradient from transparent (top) to the card's effective tint
+ * color (bottom). The bottom color matches `alpha(currentColor, 0.04)`
+ * composited over `@view_bg_color` — same recipe as `.audra-list-card`
+ * itself — so partial rows scrolling past the edge fade out into the
+ * card seamlessly instead of being clipped by the 12px corner arc.
+ */
+.audra-list-fade {
+    background-image: linear-gradient(
+        to bottom,
+        alpha(@view_bg_color, 0),
+        @view_bg_color
+    );
+}
+
