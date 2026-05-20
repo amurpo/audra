@@ -100,6 +100,19 @@ pub(crate) fn start_scan(
 }
 
 pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
+    // On Windows, register the bundled share/icons directory so GTK can
+    // resolve "com.audra.player" from hicolor. Without this, GTK falls
+    // back to its own default icon and overwrites the embedded .ico.
+    #[cfg(windows)]
+    if let Some(display) = gtk4::gdk::Display::default() {
+        let theme = gtk4::IconTheme::for_display(&display);
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                theme.add_search_path(dir.join("share").join("icons"));
+            }
+        }
+    }
+
     let use_system_font = db.lock().unwrap().get_setting("use_system_font").as_deref() == Some("1");
     let lang_setting = db
         .lock()
@@ -637,9 +650,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                 .application_icon("com.audra.player")
                 .developer_name("Daniel Avila")
                 .version(env!("CARGO_PKG_VERSION"))
-                .comments(&gettext(
-                    "Native music player with Last.fm scrobbling",
-                ))
+                .comments(&gettext("Native music player with Last.fm scrobbling"))
                 .copyright("© Daniel Avila")
                 .license_type(gtk4::License::Gpl30)
                 .website("https://github.com/amurpo/audra")
@@ -708,19 +719,43 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
-    window.present();
-
-    // Build the OS media controls in a deferred idle tick. `present()`
-    // does not synchronously allocate the native HWND on Windows, so
-    // calling `Mpris::new` right away gives souvlaki an invalid handle
-    // and SMTC silently rejects it. By the time the next idle iteration
-    // runs, the surface is realized and `gdk_win32_surface_get_handle`
-    // returns a usable HWND. Linux's MPRIS backend does not need the
-    // handle, so the deferral is harmless there.
     let (mpris_tx, mpris_rx) = std::sync::mpsc::channel();
     let mpris_cell: crate::ui::playback::MprisHandle =
         std::rc::Rc::new(std::cell::RefCell::new(None));
 
+    // Windows: connect_realize fires during present() at the exact moment
+    // GDK calls CreateWindowExW — the HWND is guaranteed valid here.
+    // idle_add_local_once was unreliable because the Win32 message pump
+    // can process WM_CREATE after the idle fires, giving souvlaki null.
+    #[cfg(windows)]
+    {
+        let mpris_cell = Rc::clone(&mpris_cell);
+        let bar_c = Rc::clone(&bar);
+        let player_c = Rc::clone(&player);
+        let init_once = Rc::new(std::cell::RefCell::new(Some((mpris_tx, mpris_rx))));
+        window.connect_realize(move |window| {
+            let Some((tx, rx)) = init_once.borrow_mut().take() else {
+                return;
+            };
+            if let Some(m) = crate::player::mpris::Mpris::new(window, tx) {
+                *mpris_cell.borrow_mut() = Some(m);
+                wire_mpris(
+                    rx,
+                    Rc::clone(&player_c),
+                    Rc::clone(&bar_c),
+                    window.downgrade(),
+                );
+            } else {
+                log::warn!("mpris/smtc: media controls unavailable on this platform");
+            }
+        });
+    }
+
+    window.present();
+
+    // Linux/other: D-Bus MPRIS does not need an HWND; one idle tick is
+    // enough to let the surface map before calling Mpris::new.
+    #[cfg(not(windows))]
     {
         let mpris_cell = Rc::clone(&mpris_cell);
         let bar_c = Rc::clone(&bar);

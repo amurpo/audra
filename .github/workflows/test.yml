@@ -41,14 +41,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # Pre-existing style is not the gate here, so formatting/lint are advisory.
+      # Style checks are informational: emit GitHub warning annotations
+      # instead of failing so they appear as yellow triangles, not red X.
       - name: Formato (advisory)
-        continue-on-error: true
-        run: cargo fmt --all -- --check
+        run: cargo fmt --all -- --check || echo "::warning::Formatting issues — run cargo fmt"
 
       - name: Clippy (advisory)
-        continue-on-error: true
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings || echo "::warning::Clippy warnings found"
 
       - name: Tests
         run: cargo test --verbose

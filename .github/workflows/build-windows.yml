@@ -59,10 +59,17 @@ jobs:
           cp -r /mingw64/share/icons/Adwaita dist/audra/share/icons/
           cp -r /mingw64/share/icons/hicolor dist/audra/share/icons/
 
-          # Icono de la aplicación
+          # App icon: SVG + PNG fallbacks so GTK finds it even if the
+          # pixbuf SVG loader path isn't configured in the bundle.
           mkdir -p dist/audra/share/icons/hicolor/scalable/apps
           cp data/icons/hicolor/scalable/apps/com.audra.player.svg \
              dist/audra/share/icons/hicolor/scalable/apps/
+          for size in 16 24 32 48 64 128 256; do
+            mkdir -p dist/audra/share/icons/hicolor/${size}x${size}/apps
+            rsvg-convert -w $size -h $size \
+              data/icons/hicolor/scalable/apps/com.audra.player.svg \
+              -o dist/audra/share/icons/hicolor/${size}x${size}/apps/com.audra.player.png
+          done
           cp data/icons/audra.ico dist/audra/
 
           # GDK Pixbuf loaders
