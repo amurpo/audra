@@ -91,6 +91,28 @@ pub fn strip_disc_marker(name: &str) -> String {
     }
 }
 
+/// Fold a single path component to a filesystem-equality key.
+///
+/// On Windows the filesystem is case-insensitive and the same location has
+/// several spellings: `C:` vs `c:`, and the verbatim/extended-length form
+/// `\\?\C:\…`. The saved `music_folder` (built from the scan path) and the
+/// scanned track paths can therefore differ only in case or prefix decoration;
+/// comparing `std::path::Component` verbatim would then silently disable the
+/// whole folder-aware pipeline and fall back to raw-tag grouping. So we strip
+/// the `\\?\` decoration and lowercase. Unix filesystems are case-sensitive
+/// (`Beatles` and `beatles` are distinct folders), so there we compare as-is.
+fn fs_fold(s: &str) -> String {
+    if cfg!(windows) {
+        s.strip_prefix(r"\\?\").unwrap_or(s).to_lowercase()
+    } else {
+        s.to_string()
+    }
+}
+
+fn comp_eq(a: &Component, b: &Component) -> bool {
+    fs_fold(&a.as_os_str().to_string_lossy()) == fs_fold(&b.as_os_str().to_string_lossy())
+}
+
 /// Path components of `path`'s parent, relative to `music_folder`. `None` when
 /// no folder is configured or the track lives outside it.
 fn rel_dirs(path: &str, music_folder: Option<&str>) -> Option<Vec<String>> {
@@ -99,7 +121,12 @@ fn rel_dirs(path: &str, music_folder: Option<&str>) -> Option<Vec<String>> {
     let full = Path::new(path);
     let parent = full.parent()?;
     let parts: Vec<Component> = parent.components().collect();
-    if parts.len() < base.len() || parts[..base.len()] != base[..] {
+    if parts.len() < base.len()
+        || !parts[..base.len()]
+            .iter()
+            .zip(base.iter())
+            .all(|(p, b)| comp_eq(p, b))
+    {
         return None;
     }
     Some(
@@ -526,6 +553,44 @@ mod tests {
         let albums = group_albums(&tracks, mf);
         assert_eq!(albums.len(), 1);
         assert_eq!(albums[0].tracks.len(), 2);
+    }
+
+    #[test]
+    fn fs_fold_strips_verbatim_prefix_and_folds_case_on_windows() {
+        // The rule documented in `fs_fold` itself: on Windows fold case and
+        // strip the `\\?\` decoration; on Unix it's a no-op (case-sensitive).
+        if cfg!(windows) {
+            assert_eq!(fs_fold("C:"), fs_fold("c:"));
+            assert_eq!(fs_fold(r"\\?\C:"), fs_fold("c:"));
+            assert_eq!(fs_fold("Music"), fs_fold("music"));
+            assert_eq!(fs_fold(r"\\?\C:\Music"), fs_fold(r"c:\music"));
+            assert_ne!(fs_fold("Beatles"), fs_fold("Stones"));
+        } else {
+            // Unix is case-sensitive; folding must NOT collapse distinct
+            // on-disk names.
+            assert_ne!(fs_fold("Music"), fs_fold("music"));
+            assert_eq!(fs_fold("Music"), "Music");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rel_dirs_matches_across_case_and_verbatim_on_windows() {
+        // Saved music_folder one spelling, scanned path another — must still
+        // resolve to the same artist folder, not fall back to tag grouping.
+        let mf = Some(r"C:\Users\X\Music");
+        let dirs =
+            super::rel_dirs(r"c:\users\x\music\Comes With the Fall\Album\1.mp3", mf).unwrap();
+        assert_eq!(
+            dirs.first().map(String::as_str),
+            Some("Comes With the Fall")
+        );
+        let dirs_v =
+            super::rel_dirs(r"\\?\C:\Users\X\Music\Comes With the Fall\Album\1.mp3", mf).unwrap();
+        assert_eq!(
+            dirs_v.first().map(String::as_str),
+            Some("Comes With the Fall")
+        );
     }
 
     #[test]
