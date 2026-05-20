@@ -25,6 +25,20 @@ fn main() {
         Database::open(&db_path).expect("No se pudo abrir la base de datos"),
     ));
 
+    // One-time, idempotent migration of cover/photo keys to their canonical
+    // (deduplicated) form so user-picked images survive the new grouping.
+    {
+        let g = db.lock().unwrap();
+        if let Ok(tracks) = g.all_tracks() {
+            let mf = g.get_setting("music_folder");
+            let cover_map = library::dedup::canonical_key_map(&tracks, mf.as_deref());
+            let _ = g.migrate_cover_keys(&cover_map);
+            for (old, new) in library::dedup::canonical_artist_map(&tracks, mf.as_deref()) {
+                library::metadata::rekey_artist_photo(&old, &new);
+            }
+        }
+    }
+
     // Read language preference before i18n so setlocale uses the correct value
     let lang = db.lock().unwrap().get_setting("language");
     i18n::init(lang.as_deref().filter(|s| !s.is_empty()));

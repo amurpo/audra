@@ -26,6 +26,7 @@ mkdir -p "$STAGE/DEBIAN"
 
 install -Dm755 "$ROOT/target/release/audra"                                   "$STAGE/usr/bin/audra"
 install -Dm644 "$ROOT/data/com.audra.player.desktop"                          "$STAGE/usr/share/applications/com.audra.player.desktop"
+install -Dm644 "$ROOT/data/com.audra.player.metainfo.xml"                     "$STAGE/usr/share/metainfo/com.audra.player.metainfo.xml"
 install -Dm644 "$ROOT/data/icons/hicolor/scalable/apps/com.audra.player.svg"  "$STAGE/usr/share/icons/hicolor/scalable/apps/com.audra.player.svg"
 mkdir -p "$STAGE/usr/share/locale/es/LC_MESSAGES"
 msgfmt "$ROOT/po/es.po" -o "$STAGE/usr/share/locale/es/LC_MESSAGES/audra.mo"
@@ -41,6 +42,7 @@ Architecture: amd64
 Maintainer: Daniel Avila <daigo.tnt@gmail.com>
 Section: sound
 Priority: optional
+Homepage: https://github.com/amurpo/audra
 Depends: libgtk-4-1, libadwaita-1-0, libasound2t64
 Description: Native music player for Linux with Last.fm scrobbling
  Audra is a native music player for Linux (GTK4/libadwaita)

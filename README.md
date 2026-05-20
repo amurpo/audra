@@ -83,6 +83,24 @@ Last.fm authentication uses the standard OAuth flow: the user authorizes on the 
 site and never enters credentials in the app. The proxy (Cloudflare Workers) signs requests
 server-side — the binary only contains the public proxy URL.
 
+## Uninstalling
+
+Removing the package (`sudo dnf remove audra` / `sudo apt remove audra`) never
+touches your personal data: package managers only delete files the package owns
+under system paths, so your library, settings and cached covers are always kept
+for a future reinstall.
+
+To also wipe all per-user data, delete these directories manually:
+
+```bash
+rm -rf ~/.local/share/audra   # library database and downloaded covers
+rm -rf ~/.config/audra        # bundled fonts and settings
+```
+
+On Windows the uninstaller asks whether to keep or delete this data, and the
+installer reports whether it is repairing the same version or updating an
+existing one.
+
 ## Building the RPM
 
 ```bash

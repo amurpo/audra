@@ -6,7 +6,7 @@ use gtk4::{
     Stack, StackTransitionType,
 };
 
-const COVER_SIZE: i32 = 72;
+const COVER_SIZE: i32 = 88;
 
 pub struct PlayerBar {
     pub root: Box,
@@ -31,6 +31,7 @@ impl PlayerBar {
     pub fn new() -> Self {
         let root = Box::new(Orientation::Vertical, 0);
         root.set_vexpand(false);
+        root.add_css_class("audra-player-bar");
 
         // --- Carátula ---
         // Stack con dos hijos: placeholder (CSS+Unicode) y la imagen real.
@@ -77,8 +78,11 @@ impl PlayerBar {
         cover_wrap.set_overflow(gtk4::Overflow::Hidden);
         cover_wrap.append(&cover_stack);
 
-        // --- Zona central: controles + info ---
-        let center = Box::new(Orientation::Vertical, 4);
+        // --- Centre column: controls stacked on top of title/artist ---
+        // Vertically centered against the cover so the controls drop a few
+        // pixels below the cover's top edge instead of sticking to it; the
+        // title sits naturally beneath the controls.
+        let center = Box::new(Orientation::Vertical, 2);
         center.set_hexpand(true);
         center.set_valign(Align::Center);
 
@@ -112,16 +116,19 @@ impl PlayerBar {
         controls.append(&btn_next);
         controls.append(&btn_loop);
 
-        let info = Box::new(Orientation::Vertical, 2);
+        // Title + artist, packed tight (spacing 0 — they already read as a
+        // pair via the heading / dim-label styles).
+        let info = Box::new(Orientation::Vertical, 0);
         info.set_halign(Align::Center);
 
         let lbl_title = Label::new(Some(&gettext("No playback")));
-        lbl_title.add_css_class("heading");
+        lbl_title.add_css_class("audra-bar-title");
         lbl_title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         lbl_title.set_max_width_chars(40);
 
         let lbl_artist = Label::new(Some(""));
         lbl_artist.add_css_class("dim-label");
+        lbl_artist.add_css_class("audra-bar-artist");
         lbl_artist.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         lbl_artist.set_max_width_chars(40);
 
@@ -132,6 +139,8 @@ impl PlayerBar {
         center.append(&info);
 
         // --- Volumen (derecha) ---
+        // Vertically centered against the cover so the volume row sits near
+        // the cover's mid-line instead of floating up at the top edge.
         let vol_box = Box::new(Orientation::Horizontal, 4);
         vol_box.set_valign(Align::Center);
         vol_box.set_hexpand(false);
@@ -139,15 +148,20 @@ impl PlayerBar {
         let vol_icon = Image::from_icon_name("audio-volume-high-symbolic");
         vol_icon.add_css_class("dim-label");
 
-        let vol_scale = Scale::with_range(Orientation::Horizontal, 0.0, 1.0, 0.05);
+        // Step 0.01 (1%) for keyboard / scroll input; the previous 0.05
+        // jumped 5% per keypress which felt twitchy. Width 140 (was 90)
+        // gives roughly 1% per pixel for click-to-position, so small
+        // mouse movements no longer translate into big level changes.
+        let vol_scale = Scale::with_range(Orientation::Horizontal, 0.0, 1.0, 0.01);
         vol_scale.set_value(0.5);
-        vol_scale.set_size_request(90, -1);
+        vol_scale.set_size_request(140, -1);
         vol_scale.set_draw_value(false);
         vol_scale.set_tooltip_text(Some(&gettext("Volume")));
 
         let lbl_volume = Label::new(Some("50%"));
         lbl_volume.add_css_class("dim-label");
         lbl_volume.add_css_class("caption");
+        lbl_volume.add_css_class("audra-mono");
         lbl_volume.set_width_chars(4);
         lbl_volume.set_xalign(1.0);
 
@@ -155,13 +169,16 @@ impl PlayerBar {
         vol_box.append(&vol_scale);
         vol_box.append(&lbl_volume);
 
-        // CenterBox: centra los controles sin importar el ancho de cover o volumen
+        // Row height is driven by the cover. Controls and volume are both
+        // pinned to the top (`valign: Start`) so they align with the cover's
+        // top edge; the title/artist then drops underneath the controls
+        // inside the same row, instead of pushing the layout taller.
         let top_row = CenterBox::new();
         top_row.set_vexpand(false);
-        top_row.set_margin_top(8);
-        top_row.set_margin_bottom(4);
-        top_row.set_margin_start(16);
-        top_row.set_margin_end(16);
+        top_row.set_margin_top(10);
+        top_row.set_margin_bottom(2);
+        top_row.set_margin_start(24);
+        top_row.set_margin_end(24);
         top_row.set_start_widget(Some(&cover_wrap));
         top_row.set_center_widget(Some(&center));
         top_row.set_end_widget(Some(&vol_box));
@@ -169,14 +186,15 @@ impl PlayerBar {
         // --- Barra de progreso ---
         let bottom_row = Box::new(Orientation::Horizontal, 8);
         bottom_row.set_vexpand(false);
-        bottom_row.set_margin_bottom(8);
-        bottom_row.set_margin_start(20);
-        bottom_row.set_margin_end(20);
+        bottom_row.set_margin_bottom(6);
+        bottom_row.set_margin_start(28);
+        bottom_row.set_margin_end(28);
         bottom_row.set_valign(Align::Center);
 
         let lbl_elapsed = Label::new(Some("0:00"));
         lbl_elapsed.add_css_class("dim-label");
         lbl_elapsed.add_css_class("caption");
+        lbl_elapsed.add_css_class("audra-mono");
         lbl_elapsed.set_width_chars(5);
         lbl_elapsed.set_xalign(1.0);
 
@@ -189,6 +207,7 @@ impl PlayerBar {
         let lbl_total = Label::new(Some("0:00"));
         lbl_total.add_css_class("dim-label");
         lbl_total.add_css_class("caption");
+        lbl_total.add_css_class("audra-mono");
         lbl_total.set_width_chars(5);
         lbl_total.set_xalign(0.0);
 

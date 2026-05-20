@@ -1,5 +1,6 @@
 pub mod art;
 pub mod db;
+pub mod dedup;
 pub mod metadata;
 pub mod scanner;
 
@@ -21,27 +22,10 @@ pub struct Artist {
     pub track_count: usize,
 }
 
-pub fn group_into_albums(tracks: &[Track]) -> Vec<Album> {
-    let mut map: HashMap<(String, String), Vec<Track>> = HashMap::new();
-    for track in tracks {
-        let key = (track.display_artist(), track.display_album());
-        map.entry(key).or_default().push(track.clone());
-    }
-    let mut albums: Vec<Album> = map
-        .into_iter()
-        .map(|((artist, name), mut tracks)| {
-            tracks.sort_by_key(|t| t.track_num.unwrap_or(999));
-            let cover = None; // cargado de forma asíncrona por la UI
-            Album {
-                name,
-                artist,
-                tracks,
-                cover,
-            }
-        })
-        .collect();
-    albums.sort_by(|a, b| a.name.cmp(&b.name));
-    albums
+/// Canonical album grouping. `music_folder` enables the folder-aware
+/// deduplication pipeline; `None` falls back to pure tag grouping.
+pub fn group_into_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> {
+    dedup::group_albums(tracks, music_folder)
 }
 
 pub fn group_into_artists(albums: &[Album]) -> Vec<Artist> {
@@ -72,6 +56,8 @@ pub struct Track {
     pub album: Option<String>,
     pub track_num: Option<i64>,
     pub duration_secs: Option<i64>,
+    pub disc_num: Option<i64>,
+    pub album_artist: Option<String>,
 }
 
 impl Track {
@@ -118,6 +104,8 @@ mod tests {
             album: album.map(str::to_string),
             track_num: num,
             duration_secs: Some(200),
+            disc_num: None,
+            album_artist: None,
         }
     }
 
@@ -163,7 +151,7 @@ mod tests {
             track(Some("A"), Some("Alpha"), Some(1)),
             track(Some("B"), Some("Alpha"), Some(1)),
         ];
-        let albums = group_into_albums(&tracks);
+        let albums = group_into_albums(&tracks, None);
         assert_eq!(albums.len(), 3);
         // Albums are sorted by name.
         assert_eq!(albums[0].name, "Alpha");
@@ -184,7 +172,7 @@ mod tests {
             track(Some("A"), Some("Greatest Hits"), Some(1)),
             track(Some("B"), Some("Greatest Hits"), Some(1)),
         ];
-        let albums = group_into_albums(&tracks);
+        let albums = group_into_albums(&tracks, None);
         assert_eq!(
             albums.len(),
             2,
@@ -200,7 +188,7 @@ mod tests {
             track(Some("A"), Some("Beta"), Some(1)),
             track(Some("B"), Some("Gamma"), Some(1)),
         ];
-        let artists = group_into_artists(&group_into_albums(&tracks));
+        let artists = group_into_artists(&group_into_albums(&tracks, None));
         assert_eq!(artists.len(), 2);
         assert_eq!(artists[0].name, "A"); // sorted by name
         assert_eq!(artists[0].album_count, 2);

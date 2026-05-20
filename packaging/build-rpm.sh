@@ -24,6 +24,7 @@ echo "==> Preparing sources for rpmbuild..."
 mkdir -p "$RPMBUILD/SOURCES"
 cp "$ROOT/target/release/audra"                                      "$RPMBUILD/SOURCES/"
 cp "$ROOT/data/com.audra.player.desktop"                             "$RPMBUILD/SOURCES/"
+cp "$ROOT/data/com.audra.player.metainfo.xml"                        "$RPMBUILD/SOURCES/"
 cp "$ROOT/data/icons/hicolor/scalable/apps/com.audra.player.svg"    "$RPMBUILD/SOURCES/"
 cp "$ROOT/po/es.po"                                                  "$RPMBUILD/SOURCES/"
 

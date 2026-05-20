@@ -1,13 +1,15 @@
 use crate::i18n::gettext;
 use crate::library::db::Database;
 use crate::library::{Album, Track};
-use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels};
+use crate::ui::image_loader::{self, FetchOutcome, ImagePipelineConfig};
+use crate::ui::now_playing::NowPlaying;
+use crate::ui::track_list::{TrackList, TrackListConfig};
+use crate::ui::widgets::{content_clamp, page_title_row};
 use adw::prelude::*;
-use glib;
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, ContentFit, FlowBox, FlowBoxChild, Label, ListBox, ListBoxRow,
-    Orientation, Overlay, Picture, ScrolledWindow, SelectionMode, Stack, StackTransitionType,
+    Align, Box as GtkBox, ContentFit, FlowBox, FlowBoxChild, Label, Orientation, Overlay, Picture,
+    ScrolledWindow, SelectionMode, Stack, StackTransitionType,
 };
 use libadwaita as adw;
 use std::cell::RefCell;
@@ -15,10 +17,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-pub(crate) const CARD_SIZE: i32 = 200;
+pub(crate) const CARD_SIZE: i32 = 176;
 
 type CoverMap = Rc<RefCell<HashMap<String, (Stack, Picture)>>>;
-type ScaledCover = (String, Vec<u8>, i32, bool);
 type PlayCb = Rc<RefCell<Option<Box<dyn Fn(Vec<Track>, usize)>>>>;
 
 pub struct AlbumsView {
@@ -31,23 +32,32 @@ pub struct AlbumsView {
 }
 
 impl AlbumsView {
-    pub fn new(current_path: Rc<RefCell<Option<String>>>) -> Self {
+    pub fn new(now_playing: Rc<NowPlaying>) -> Self {
         let flow = FlowBox::new();
         flow.set_selection_mode(SelectionMode::Single);
         flow.set_homogeneous(true);
-        flow.set_column_spacing(8);
-        flow.set_row_spacing(8);
-        flow.set_margin_top(12);
+        // Tight horizontal packing, more breathing room vertically — covers
+        // are visually tall objects (gradient bar + title), so a bit of
+        // extra row gap reads better than uniform spacing.
+        flow.set_column_spacing(4);
+        flow.set_row_spacing(14);
+        flow.set_margin_top(8);
         flow.set_margin_bottom(12);
-        flow.set_margin_start(12);
-        flow.set_margin_end(12);
+        flow.set_margin_start(4);
+        flow.set_margin_end(4);
         flow.set_min_children_per_line(2);
         flow.set_max_children_per_line(12);
         flow.set_activate_on_single_click(true);
 
+        // Same Clamp parameters as TrackList — keeps grids and lists aligned
+        // to the same useful width so the "Play all" button stays put when
+        // navigating between Songs / Albums / Artists detail pages.
+        let clamp = content_clamp();
+        clamp.set_child(Some(&flow));
+
         let scroll = ScrolledWindow::new();
         scroll.set_vexpand(true);
-        scroll.set_child(Some(&flow));
+        scroll.set_child(Some(&clamp));
 
         let nav = adw::NavigationView::new();
         let root_page = adw::NavigationPage::new(&scroll, &gettext("Albums"));
@@ -62,7 +72,7 @@ impl AlbumsView {
             let nav_c = nav.clone();
             let albums_c = Rc::clone(&albums_data);
             let on_play_c = Rc::clone(&on_play);
-            let current_path_c = Rc::clone(&current_path);
+            let now_playing_c = Rc::clone(&now_playing);
             flow.connect_child_activated(move |_, child| {
                 let idx = child.index() as usize;
                 let album = albums_c.borrow().get(idx).cloned();
@@ -70,7 +80,7 @@ impl AlbumsView {
                     let page = make_album_detail_page(
                         &album,
                         Rc::clone(&on_play_c),
-                        Rc::clone(&current_path_c),
+                        Rc::clone(&now_playing_c),
                     );
                     nav_c.push(&page);
                 }
@@ -158,227 +168,101 @@ impl AlbumsView {
         }
     }
 
+    /// Drive the shared two-pass image pipeline for album covers.
+    /// Fast lane: DB cache + embedded ID3 art. Slow lane: Last.fm.
     fn start_cover_fetch(&self, albums: Vec<(String, String, String)>, db: Arc<Mutex<Database>>) {
-        use std::sync::atomic::{AtomicBool, Ordering};
-
-        let queue: Arc<Mutex<Vec<ScaledCover>>> = Arc::new(Mutex::new(Vec::new()));
-        let finished = Arc::new(AtomicBool::new(false));
-
-        let queue_tx = Arc::clone(&queue);
-        let finished_tx = Arc::clone(&finished);
-
-        std::thread::spawn(move || {
-            let mut need_lastfm: Vec<(String, String)> = Vec::new();
-
-            for (artist, album_name, track_path) in &albums {
-                let key = format!("{}|{}", artist, album_name);
-
-                if let Some(bytes) = db.lock().unwrap().get_cover(artist, album_name) {
-                    if bytes.is_empty() {
-                        // User removed this cover on purpose: keep the
-                        // placeholder and do not re-fetch it.
-                        continue;
-                    }
-                    if let Some(scaled) = scale_to_pixels(&bytes, CARD_SIZE) {
-                        queue_tx
-                            .lock()
-                            .unwrap()
-                            .push((key, scaled.0, scaled.1, scaled.2));
-                        continue;
-                    }
-                }
-
-                if let Some(bytes) = crate::library::art::read_cover_art(track_path) {
-                    let _ = db.lock().unwrap().set_cover(artist, album_name, &bytes);
-                    if let Some(scaled) = scale_to_pixels(&bytes, CARD_SIZE) {
-                        queue_tx
-                            .lock()
-                            .unwrap()
-                            .push((key, scaled.0, scaled.1, scaled.2));
-                        continue;
-                    }
-                }
-
-                need_lastfm.push((artist.clone(), album_name.clone()));
-            }
-
-            for (artist, album_name) in need_lastfm {
-                std::thread::sleep(std::time::Duration::from_millis(1100));
-                if let Some(bytes) =
-                    crate::library::metadata::fetch_album_cover(&artist, &album_name)
-                {
-                    let _ = db.lock().unwrap().set_cover(&artist, &album_name, &bytes);
-                    if let Some(scaled) = scale_to_pixels(&bytes, CARD_SIZE) {
-                        let key = format!("{}|{}", artist, album_name);
-                        queue_tx
-                            .lock()
-                            .unwrap()
-                            .push((key, scaled.0, scaled.1, scaled.2));
-                    }
-                }
-            }
-
-            finished_tx.store(true, Ordering::Relaxed);
-        });
-
         let covers = Rc::clone(&self.covers);
-        glib::timeout_add_local(std::time::Duration::from_millis(300), move || {
-            let mut q = queue.lock().unwrap();
-            for (key, pixels, rowstride, has_alpha) in q.drain(..) {
+        let db_fast = Arc::clone(&db);
+        let db_slow = Arc::clone(&db);
+
+        image_loader::run(
+            albums,
+            ImagePipelineConfig {
+                target_size: CARD_SIZE,
+                poll_ms: 300,
+                slow_delay_ms: 1100,
+            },
+            move |item: &(String, String, String)| {
+                let (artist, album_name, track_path) = item;
+                // Stored cover wins. Empty bytes = user removed it on purpose:
+                // skip outright so the slow lane does not refetch it.
+                if let Some(bytes) = db_fast.lock().unwrap().get_cover(artist, album_name) {
+                    if bytes.is_empty() {
+                        return FetchOutcome::Skip;
+                    }
+                    return FetchOutcome::Got(bytes);
+                }
+                // Embedded ID3/Vorbis art.
+                if let Some(bytes) = crate::library::art::read_cover_art(track_path) {
+                    let _ = db_fast
+                        .lock()
+                        .unwrap()
+                        .set_cover(artist, album_name, &bytes);
+                    return FetchOutcome::Got(bytes);
+                }
+                FetchOutcome::Miss
+            },
+            Some(Box::new(move |item: &(String, String, String)| {
+                let (artist, album_name, _) = item;
+                let res = crate::library::metadata::fetch_album_cover(artist, album_name);
+                if let Some(ref bytes) = res {
+                    let _ = db_slow.lock().unwrap().set_cover(artist, album_name, bytes);
+                }
+                res
+            })),
+            move |item: &(String, String, String), texture| {
+                let key = format!("{}|{}", item.0, item.1);
                 if let Some((stack, picture)) = covers.borrow().get(&key) {
-                    let texture = pixels_to_texture(pixels, rowstride, has_alpha, CARD_SIZE);
                     picture.set_paintable(Some(&texture));
                     stack.set_visible_child_name("art");
                 }
-            }
-            drop(q);
-            if finished.load(std::sync::atomic::Ordering::Relaxed) {
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
-        });
+            },
+        );
     }
 }
 
+/// Build a detail page for one album. Identical chrome to the global "Songs"
+/// view: the `[N songs] + Play all` action row and the surrounding `Clamp`
+/// live inside `TrackList`, so both surfaces share the exact same layout.
+/// This page only adds the navigation header (back button + album title).
 pub fn make_album_detail_page(
     album: &Album,
     on_play: PlayCb,
-    current_path: Rc<RefCell<Option<String>>>,
+    now_playing: Rc<NowPlaying>,
 ) -> adw::NavigationPage {
-    let header = adw::HeaderBar::new();
-    header.set_show_end_title_buttons(false);
-    header.set_show_start_title_buttons(false);
-
-    let btn_play_all = Button::builder()
-        .label(gettext("Play all"))
-        .css_classes(["suggested-action", "pill"])
-        .build();
-    header.pack_end(&btn_play_all);
-
-    let list = ListBox::new();
-    list.set_selection_mode(SelectionMode::None);
-    list.add_css_class("boxed-list");
-    list.set_margin_top(8);
-    list.set_margin_bottom(12);
-    list.set_margin_start(12);
-    list.set_margin_end(12);
-
-    let tracks = Rc::new(album.tracks.clone());
-
-    for (i, track) in tracks.iter().enumerate() {
-        list.append(&make_track_row(i, track));
-    }
+    let track_list = TrackList::new(TrackListConfig::album_detail(), now_playing);
+    track_list.load(album.tracks.clone());
 
     {
-        let tracks_c = Rc::clone(&tracks);
         let on_play_c = Rc::clone(&on_play);
-        btn_play_all.connect_clicked(move |_| {
+        track_list.set_on_activate(move |tracks, idx| {
             if let Some(cb) = on_play_c.borrow().as_ref() {
-                cb((*tracks_c).clone(), usize::MAX);
+                cb(tracks, idx);
             }
         });
     }
 
     {
-        let tracks_c = Rc::clone(&tracks);
-        list.connect_row_activated(move |_, row| {
-            let idx = row.index() as usize;
-            if let Some(cb) = on_play.borrow().as_ref() {
-                cb((*tracks_c).clone(), idx);
+        let on_play_c = Rc::clone(&on_play);
+        track_list.set_on_play_all(move |tracks| {
+            if let Some(cb) = on_play_c.borrow().as_ref() {
+                cb(tracks, usize::MAX);
             }
         });
     }
 
-    // Timer que actualiza el highlight de la pista en reproducción
-    {
-        let list_weak = list.downgrade();
-        let tracks_ref = Rc::clone(&tracks);
-        let mut last_path: Option<String> = None;
-        glib::timeout_add_local(std::time::Duration::from_millis(300), move || {
-            let Some(list) = list_weak.upgrade() else {
-                return glib::ControlFlow::Break;
-            };
-            let current = current_path.borrow().clone();
-            if current == last_path {
-                return glib::ControlFlow::Continue;
-            }
-            last_path = current.clone();
-            let mut i = 0i32;
-            while let Some(row) = list.row_at_index(i) {
-                let is_playing = current
-                    .as_deref()
-                    .and_then(|p| tracks_ref.get(i as usize).map(|t| t.path == p))
-                    .unwrap_or(false);
-                update_track_row_highlight(&row, i as usize, is_playing);
-                i += 1;
-            }
-            glib::ControlFlow::Continue
-        });
-    }
+    // No HeaderBar — the back arrow sits inline next to the title so this
+    // page has the same vertical layout as the Songs view. The
+    // NavigationPage still carries the title for accessibility / breadcrumbs.
+    let title_row = page_title_row(&album.name, true);
+    let title_clamp = content_clamp();
+    title_clamp.set_child(Some(&title_row));
 
-    let scroll = ScrolledWindow::new();
-    scroll.set_vexpand(true);
-    scroll.set_child(Some(&list));
+    let content = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    content.append(&title_clamp);
+    content.append(&track_list.root);
 
-    let toolbar = adw::ToolbarView::new();
-    toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&scroll));
-
-    adw::NavigationPage::new(&toolbar, &album.name)
-}
-
-fn update_track_row_highlight(row: &ListBoxRow, idx: usize, is_playing: bool) {
-    let Some(hbox) = row.child().and_downcast::<GtkBox>() else {
-        return;
-    };
-    let Some(num_lbl) = hbox.first_child().and_downcast::<Label>() else {
-        return;
-    };
-    let title_lbl = num_lbl.next_sibling().and_downcast::<Label>();
-
-    if is_playing {
-        num_lbl.set_text("▶");
-        num_lbl.add_css_class("now-playing-title");
-        if let Some(t) = &title_lbl {
-            t.add_css_class("now-playing-title");
-        }
-    } else {
-        num_lbl.set_text(&(idx + 1).to_string());
-        num_lbl.remove_css_class("now-playing-title");
-        if let Some(t) = &title_lbl {
-            t.remove_css_class("now-playing-title");
-        }
-    }
-}
-
-fn make_track_row(idx: usize, track: &Track) -> ListBoxRow {
-    let hbox = GtkBox::new(Orientation::Horizontal, 12);
-    hbox.set_margin_top(8);
-    hbox.set_margin_bottom(8);
-    hbox.set_margin_start(12);
-    hbox.set_margin_end(12);
-
-    let num_label = Label::new(Some(&(idx + 1).to_string()));
-    num_label.add_css_class("dim-label");
-    num_label.set_width_chars(3);
-    num_label.set_xalign(1.0);
-    hbox.append(&num_label);
-
-    let title_label = Label::new(Some(&track.display_title()));
-    title_label.set_hexpand(true);
-    title_label.set_xalign(0.0);
-    title_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-    hbox.append(&title_label);
-
-    let dur_label = Label::new(Some(&track.duration_str()));
-    dur_label.add_css_class("dim-label");
-    dur_label.add_css_class("caption");
-    hbox.append(&dur_label);
-
-    let row = ListBoxRow::new();
-    row.set_child(Some(&hbox));
-    row
+    adw::NavigationPage::new(&content, &album.name)
 }
 
 pub fn make_album_card(album: &Album, show_artist: bool) -> (FlowBoxChild, Stack, Picture) {

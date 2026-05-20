@@ -18,6 +18,9 @@ pub struct Database {
 impl Database {
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
         let conn = Connection::open(path)?;
+        // WAL + NORMAL turns bulk rescans from thousands of fsyncs into a
+        // handful, with no meaningful durability loss for a music library.
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
         let db = Self { conn };
         db.init_schema()?;
         Ok(db)
@@ -27,14 +30,16 @@ impl Database {
         self.conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS tracks (
-                id        INTEGER PRIMARY KEY,
-                path      TEXT NOT NULL UNIQUE,
-                title     TEXT,
-                artist    TEXT,
-                album     TEXT,
-                track_num INTEGER,
-                duration  INTEGER,
-                added_at  TEXT NOT NULL
+                id           INTEGER PRIMARY KEY,
+                path         TEXT NOT NULL UNIQUE,
+                title        TEXT,
+                artist       TEXT,
+                album        TEXT,
+                track_num    INTEGER,
+                duration     INTEGER,
+                added_at     TEXT NOT NULL,
+                disc_num     INTEGER,
+                album_artist TEXT
             );
             CREATE TABLE IF NOT EXISTS playlists (
                 id   INTEGER PRIMARY KEY,
@@ -63,32 +68,52 @@ impl Database {
             );
         ",
         )?;
+        // Additive, idempotent migration for DBs created before the dedup
+        // pipeline: ADD COLUMN errors with "duplicate column name" when the
+        // column already exists, which we ignore.
+        for stmt in [
+            "ALTER TABLE tracks ADD COLUMN disc_num INTEGER",
+            "ALTER TABLE tracks ADD COLUMN album_artist TEXT",
+        ] {
+            let _ = self.conn.execute(stmt, []);
+        }
         Ok(())
     }
 
-    pub fn upsert_track(&self, track: &Track) -> Result<i64> {
-        self.conn.execute(
-            "INSERT INTO tracks (path, title, artist, album, track_num, duration, added_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
-             ON CONFLICT(path) DO UPDATE SET
-               title=excluded.title, artist=excluded.artist,
-               album=excluded.album, track_num=excluded.track_num,
-               duration=excluded.duration",
-            params![
-                track.path,
-                track.title,
-                track.artist,
-                track.album,
-                track.track_num,
-                track.duration_secs
-            ],
-        )?;
-        Ok(self.conn.last_insert_rowid())
+    /// Bulk upsert in a single transaction with a cached statement. A rescan
+    /// of thousands of tracks must not pay one fsync per row.
+    pub fn upsert_tracks(&self, tracks: &[Track]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO tracks (path, title, artist, album, track_num, duration, added_at, disc_num, album_artist)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), ?7, ?8)
+                 ON CONFLICT(path) DO UPDATE SET
+                   title=excluded.title, artist=excluded.artist,
+                   album=excluded.album, track_num=excluded.track_num,
+                   duration=excluded.duration, disc_num=excluded.disc_num,
+                   album_artist=excluded.album_artist",
+            )?;
+            for t in tracks {
+                stmt.execute(params![
+                    t.path,
+                    t.title,
+                    t.artist,
+                    t.album,
+                    t.track_num,
+                    t.duration_secs,
+                    t.disc_num,
+                    t.album_artist
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn all_tracks(&self) -> Result<Vec<Track>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, path, title, artist, album, track_num, duration FROM tracks ORDER BY artist, album, track_num"
+            "SELECT id, path, title, artist, album, track_num, duration, disc_num, album_artist FROM tracks ORDER BY artist, album, disc_num, track_num"
         )?;
         let tracks = stmt
             .query_map([], |row| {
@@ -100,6 +125,8 @@ impl Database {
                     album: row.get(4)?,
                     track_num: row.get(5)?,
                     duration_secs: row.get(6)?,
+                    disc_num: row.get(7)?,
+                    album_artist: row.get(8)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -131,6 +158,8 @@ impl Database {
                         album: row.get(5)?,
                         track_num: row.get(6)?,
                         duration_secs: row.get(7)?,
+                        disc_num: None,
+                        album_artist: None,
                     },
                     row.get::<_, String>(8)?,
                 ))
@@ -232,10 +261,14 @@ impl Database {
             .collect();
         drop(stmt);
 
-        for path in &to_delete {
-            self.conn
-                .execute("DELETE FROM tracks WHERE path = ?1", params![path])?;
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare_cached("DELETE FROM tracks WHERE path = ?1")?;
+            for path in &to_delete {
+                stmt.execute(params![path])?;
+            }
         }
+        tx.commit()?;
         Ok(to_delete.len())
     }
 
@@ -254,6 +287,47 @@ impl Database {
             "INSERT OR REPLACE INTO album_covers (artist, album, data) VALUES (?1, ?2, ?3)",
             params![artist, album, data],
         )?;
+        Ok(())
+    }
+
+    /// Re-key cover BLOBs from raw `(artist, album)` tags to their canonical
+    /// form so user-picked covers survive deduplication. Idempotent. Empty
+    /// BLOBs (the "cover removed on purpose" marker) are moved like any other
+    /// so the canonical key keeps that intent. When a canonical row already
+    /// exists it wins and the stale raw row is dropped.
+    pub fn migrate_cover_keys(
+        &self,
+        map: &std::collections::HashMap<(String, String), (String, String)>,
+    ) -> Result<()> {
+        for ((old_a, old_al), (new_a, new_al)) in map {
+            let blob: Option<Vec<u8>> = self
+                .conn
+                .query_row(
+                    "SELECT data FROM album_covers WHERE artist = ?1 AND album = ?2",
+                    params![old_a, old_al],
+                    |row| row.get(0),
+                )
+                .ok();
+            let Some(blob) = blob else { continue };
+            let canon_exists: bool = self
+                .conn
+                .query_row(
+                    "SELECT 1 FROM album_covers WHERE artist = ?1 AND album = ?2",
+                    params![new_a, new_al],
+                    |_| Ok(()),
+                )
+                .is_ok();
+            if !canon_exists {
+                self.conn.execute(
+                    "INSERT INTO album_covers (artist, album, data) VALUES (?1, ?2, ?3)",
+                    params![new_a, new_al, blob],
+                )?;
+            }
+            self.conn.execute(
+                "DELETE FROM album_covers WHERE artist = ?1 AND album = ?2",
+                params![old_a, old_al],
+            )?;
+        }
         Ok(())
     }
 }
@@ -276,6 +350,8 @@ mod tests {
             album: Some(album.to_string()),
             track_num: Some(num),
             duration_secs: Some(180),
+            disc_num: None,
+            album_artist: None,
         }
     }
 
@@ -290,25 +366,24 @@ mod tests {
     }
 
     #[test]
-    fn upsert_track_inserts_and_returns_rowid() {
+    fn upsert_tracks_inserts_rows() {
         let db = db();
-        let id = db.upsert_track(&track("/m/a.mp3", "A", "X", 1)).unwrap();
-        assert!(id > 0);
+        db.upsert_tracks(&[track("/m/a.mp3", "A", "X", 1)]).unwrap();
         let all = db.all_tracks().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].path, "/m/a.mp3");
         assert_eq!(all[0].artist.as_deref(), Some("A"));
-        assert_eq!(all[0].id, Some(id));
+        assert!(all[0].id.is_some());
     }
 
     #[test]
-    fn upsert_track_on_conflicting_path_updates_in_place() {
+    fn upsert_tracks_on_conflicting_path_updates_in_place() {
         let db = db();
-        db.upsert_track(&track("/m/a.mp3", "Old", "Old", 1))
+        db.upsert_tracks(&[track("/m/a.mp3", "Old", "Old", 1)])
             .unwrap();
         let mut updated = track("/m/a.mp3", "New", "New", 2);
         updated.title = Some("New title".into());
-        db.upsert_track(&updated).unwrap();
+        db.upsert_tracks(&[updated]).unwrap();
 
         let all = db.all_tracks().unwrap();
         assert_eq!(all.len(), 1, "same path must not duplicate");
@@ -320,9 +395,9 @@ mod tests {
     #[test]
     fn all_tracks_is_ordered_by_artist_album_track_num() {
         let db = db();
-        db.upsert_track(&track("/m/3.mp3", "B", "Z", 1)).unwrap();
-        db.upsert_track(&track("/m/2.mp3", "A", "Y", 2)).unwrap();
-        db.upsert_track(&track("/m/1.mp3", "A", "Y", 1)).unwrap();
+        db.upsert_tracks(&[track("/m/3.mp3", "B", "Z", 1)]).unwrap();
+        db.upsert_tracks(&[track("/m/2.mp3", "A", "Y", 2)]).unwrap();
+        db.upsert_tracks(&[track("/m/1.mp3", "A", "Y", 1)]).unwrap();
 
         let paths: Vec<_> = db
             .all_tracks()
@@ -336,7 +411,8 @@ mod tests {
     #[test]
     fn scrobble_queue_roundtrip() {
         let db = db();
-        let tid = db.upsert_track(&track("/m/a.mp3", "A", "X", 1)).unwrap();
+        db.upsert_tracks(&[track("/m/a.mp3", "A", "X", 1)]).unwrap();
+        let tid = db.all_tracks().unwrap()[0].id.unwrap();
         db.queue_scrobble(tid, "1700000000").unwrap();
         db.queue_scrobble(tid, "1700000100").unwrap();
 
@@ -366,8 +442,8 @@ mod tests {
     #[test]
     fn remove_track_by_path_deletes_single_row() {
         let db = db();
-        db.upsert_track(&track("/m/a.mp3", "A", "X", 1)).unwrap();
-        db.upsert_track(&track("/m/b.mp3", "A", "X", 2)).unwrap();
+        db.upsert_tracks(&[track("/m/a.mp3", "A", "X", 1)]).unwrap();
+        db.upsert_tracks(&[track("/m/b.mp3", "A", "X", 2)]).unwrap();
         db.remove_track_by_path("/m/a.mp3").unwrap();
         let all = db.all_tracks().unwrap();
         assert_eq!(all.len(), 1);
@@ -377,11 +453,11 @@ mod tests {
     #[test]
     fn remove_tracks_under_folder_counts_and_deletes_prefix() {
         let db = db();
-        db.upsert_track(&track("/music/rock/a.mp3", "A", "X", 1))
+        db.upsert_tracks(&[track("/music/rock/a.mp3", "A", "X", 1)])
             .unwrap();
-        db.upsert_track(&track("/music/rock/b.mp3", "A", "X", 2))
+        db.upsert_tracks(&[track("/music/rock/b.mp3", "A", "X", 2)])
             .unwrap();
-        db.upsert_track(&track("/other/c.mp3", "C", "Y", 1))
+        db.upsert_tracks(&[track("/other/c.mp3", "C", "Y", 1)])
             .unwrap();
 
         let removed = db.remove_tracks_under_folder("/music/rock").unwrap();
@@ -402,12 +478,13 @@ mod tests {
         std::fs::write(&outside_real, b"x").unwrap();
         let outside_real = outside_real.to_string_lossy().to_string();
 
-        db.upsert_track(&track("/music/a/1.mp3", "A", "X", 1))
+        db.upsert_tracks(&[track("/music/a/1.mp3", "A", "X", 1)])
             .unwrap();
-        db.upsert_track(&track("/music/b/2.mp3", "B", "Y", 1))
+        db.upsert_tracks(&[track("/music/b/2.mp3", "B", "Y", 1)])
             .unwrap();
-        db.upsert_track(&track(&outside_real, "C", "Z", 1)).unwrap();
-        db.upsert_track(&track("/other/ghost.mp3", "D", "W", 1))
+        db.upsert_tracks(&[track(&outside_real, "C", "Z", 1)])
+            .unwrap();
+        db.upsert_tracks(&[track("/other/ghost.mp3", "D", "W", 1)])
             .unwrap();
 
         // Scan of /music finds only a/1.mp3.
@@ -442,5 +519,46 @@ mod tests {
         // INSERT OR REPLACE on the (artist, album) primary key.
         db.set_cover("Artist", "Album", &[9, 9]).unwrap();
         assert_eq!(db.get_cover("Artist", "Album"), Some(vec![9, 9]));
+    }
+
+    #[test]
+    fn migrate_cover_keys_moves_preserves_empty_and_is_idempotent() {
+        use std::collections::HashMap;
+        let db = db();
+        // A normal user-picked cover under a raw key.
+        db.set_cover("raw a", "raw al", &[1, 2, 3]).unwrap();
+        // A "removed on purpose" empty marker under another raw key.
+        db.set_cover("raw b", "raw bl", &[]).unwrap();
+        // A canonical row that already exists must win over the raw one.
+        db.set_cover("Canon C", "Canon CL", &[7]).unwrap();
+        db.set_cover("raw c", "raw cl", &[1]).unwrap();
+
+        let mut map: HashMap<(String, String), (String, String)> = HashMap::new();
+        map.insert(
+            ("raw a".into(), "raw al".into()),
+            ("Canon A".into(), "Canon AL".into()),
+        );
+        map.insert(
+            ("raw b".into(), "raw bl".into()),
+            ("Canon B".into(), "Canon BL".into()),
+        );
+        map.insert(
+            ("raw c".into(), "raw cl".into()),
+            ("Canon C".into(), "Canon CL".into()),
+        );
+
+        db.migrate_cover_keys(&map).unwrap();
+
+        assert_eq!(db.get_cover("Canon A", "Canon AL"), Some(vec![1, 2, 3]));
+        assert_eq!(db.get_cover("raw a", "raw al"), None, "raw key dropped");
+        // Empty "removed" marker survives the move.
+        assert_eq!(db.get_cover("Canon B", "Canon BL"), Some(vec![]));
+        // Pre-existing canonical row wins; stale raw dropped.
+        assert_eq!(db.get_cover("Canon C", "Canon CL"), Some(vec![7]));
+        assert_eq!(db.get_cover("raw c", "raw cl"), None);
+
+        // Running again is a no-op (raw rows are already gone).
+        db.migrate_cover_keys(&map).unwrap();
+        assert_eq!(db.get_cover("Canon A", "Canon AL"), Some(vec![1, 2, 3]));
     }
 }

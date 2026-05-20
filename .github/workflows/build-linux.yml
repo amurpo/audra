@@ -45,6 +45,7 @@ jobs:
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
           cp target/release/audra \
              data/com.audra.player.desktop \
+             data/com.audra.player.metainfo.xml \
              data/icons/hicolor/scalable/apps/com.audra.player.svg \
              po/es.po \
              ~/rpmbuild/BUILD/

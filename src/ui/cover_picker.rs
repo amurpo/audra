@@ -8,8 +8,8 @@
 
 use adw::prelude::*;
 use glib::clone;
-use gtk4::prelude::*;
 use gtk4::gio;
+use gtk4::prelude::*;
 use gtk4::{Align, Box as GtkBox, Button, ContentFit, FlowBox, Label, Orientation, Picture, Stack};
 use libadwaita as adw;
 use std::cell::Cell;
@@ -398,7 +398,10 @@ fn open_picker(
                 std::thread::spawn(move || {
                     for c in candidates(&query) {
                         if let Some((px, rs, alpha)) = scale_to_pixels(&c.data, THUMB) {
-                            queue.lock().unwrap().push((c.source, px, rs, alpha, c.data));
+                            queue
+                                .lock()
+                                .unwrap()
+                                .push((c.source, px, rs, alpha, c.data));
                         }
                     }
                     finished.store(true, Ordering::Relaxed);
