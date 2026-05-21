@@ -76,7 +76,7 @@ impl Track {
     pub fn display_album(&self) -> String {
         self.album
             .clone()
-            .unwrap_or_else(|| "Álbum desconocido".to_string())
+            .unwrap_or_else(|| gettext("Unknown album"))
     }
 
     pub fn duration_str(&self) -> String {

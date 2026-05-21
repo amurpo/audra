@@ -380,6 +380,31 @@ mod tests {
     }
 
     #[test]
+    fn canonical_artist_map_maps_inconsistent_tags_to_folder_name() {
+        let mf = Some("/Music");
+        let tracks = vec![
+            t("/Music/Tokyo Phil/Gundam/1.mp3", "東京フィル", "Gundam", 1),
+            t("/Music/Tokyo Phil/Gundam/2.mp3", "Tokyo Phil.", "Gundam", 2),
+        ];
+        let map = canonical_artist_map(&tracks, mf);
+        // Both raw artist tags differ from the folder name and must be remapped.
+        assert_eq!(map.len(), 2);
+        assert!(map.values().all(|v| v == "Tokyo Phil"));
+        // The canonical name itself must not appear as a key (no self-mapping).
+        assert!(!map.contains_key("Tokyo Phil"));
+    }
+
+    #[test]
+    fn canonical_artist_map_is_empty_when_tags_match_folder() {
+        let mf = Some("/Music");
+        let tracks = vec![
+            t("/Music/Radiohead/OK Computer/1.mp3", "Radiohead", "OK Computer", 1),
+        ];
+        let map = canonical_artist_map(&tracks, mf);
+        assert!(map.is_empty(), "no remap needed when tag equals folder name");
+    }
+
+    #[test]
     fn canonical_key_map_points_raw_tags_at_folder_canon() {
         let mf = Some("/Music");
         let tracks = vec![

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rodio::{Decoder, OutputStream, Sink};
+use rodio::{Decoder, OutputStream, Sink, Source};
 use std::fs::File;
 use std::io::BufReader;
 
@@ -15,11 +15,13 @@ impl AudioEngine {
         Ok(Self { _stream, sink })
     }
 
-    pub fn play(&self, path: &str) -> Result<()> {
+    /// Play with a linear gain factor applied to the decoded audio.
+    /// `gain` = 1.0 means no change; use `10_f32.powf(db / 20.0)` to convert dB.
+    pub fn play_with_gain(&self, path: &str, gain: f32) -> Result<()> {
         let file = BufReader::new(File::open(path)?);
         let source = Decoder::new(file)?;
         self.sink.clear();
-        self.sink.append(source);
+        self.sink.append(source.amplify(gain.max(0.0)));
         self.sink.play();
         Ok(())
     }

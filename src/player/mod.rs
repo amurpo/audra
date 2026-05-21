@@ -1,10 +1,12 @@
 pub mod engine;
 pub mod mpris;
+pub mod replaygain;
 
 use crate::library::Track;
 use anyhow::Result;
 use engine::AudioEngine;
 use rand::seq::SliceRandom;
+use replaygain::{read_gain, ReplayGainMode};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlayerState {
@@ -19,6 +21,7 @@ pub struct Player {
     pub index: Option<usize>,
     pub shuffle: bool,
     pub repeat_one: bool,
+    pub replaygain_mode: Option<ReplayGainMode>,
     pub state: PlayerState,
     pub volume: f32,
     shuffled_order: Vec<usize>,
@@ -33,6 +36,7 @@ impl Player {
             index: None,
             shuffle: false,
             repeat_one: false,
+            replaygain_mode: None,
             state: PlayerState::Stopped,
             volume: 0.5,
             shuffled_order: Vec::new(),
@@ -47,7 +51,7 @@ impl Player {
         self.shuffle_cursor = 0;
     }
 
-    // Genera un orden aleatorio poniendo la pista actual en la posición 0.
+    // Builds a random playback order with the current track pinned at position 0.
     pub fn reshuffle(&mut self) {
         let len = self.queue.len();
         let mut order: Vec<usize> = (0..len).collect();
@@ -68,7 +72,11 @@ impl Player {
         let Some(track) = self.queue.get(idx) else {
             return Ok(None);
         };
-        self.engine.play(&track.path)?;
+        let gain = match self.replaygain_mode {
+            Some(mode) => read_gain(&track.path, mode),
+            None => 1.0,
+        };
+        self.engine.play_with_gain(&track.path, gain)?;
         self.engine.set_volume(self.volume);
         self.state = PlayerState::Playing;
         Ok(self.queue.get(idx))
@@ -260,5 +268,37 @@ mod tests {
         };
         p.set_volume(0.25);
         assert_eq!(p.volume, 0.25);
+    }
+
+    #[test]
+    fn next_at_end_of_queue_stops_and_returns_none() {
+        let Some(mut p) = player_or_skip() else {
+            return;
+        };
+        p.load_queue((0..3).map(mk_track).collect(), 2);
+        // next() from the last track must stop playback, not advance.
+        let result = p.next().unwrap();
+        assert!(result.is_none());
+        assert_eq!(p.state, PlayerState::Stopped);
+        assert_eq!(p.index, Some(2), "index must remain unchanged at boundary");
+    }
+
+    #[test]
+    fn previous_at_start_clamps_to_index_zero() {
+        let Some(mut p) = player_or_skip() else {
+            return;
+        };
+        p.load_queue((0..3).map(mk_track).collect(), 0);
+        // previous() from index 0 saturates — index stays at 0.
+        let _ = p.previous(); // may Err (file doesn't exist), ignore result
+        assert_eq!(p.index, Some(0));
+    }
+
+    #[test]
+    fn next_on_empty_queue_returns_none() {
+        let Some(mut p) = player_or_skip() else {
+            return;
+        };
+        assert!(p.next().unwrap().is_none());
     }
 }
