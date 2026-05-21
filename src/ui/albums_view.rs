@@ -178,7 +178,7 @@ impl AlbumsView {
         image_loader::run(
             albums,
             ImagePipelineConfig {
-                target_size: CARD_SIZE,
+                target_size: CARD_SIZE * 2,
                 poll_ms: 300,
                 slow_delay_ms: 1100,
             },

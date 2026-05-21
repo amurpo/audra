@@ -184,7 +184,7 @@ impl ArtistsView {
         image_loader::run(
             artists,
             ImagePipelineConfig {
-                target_size: AVATAR_SIZE,
+                target_size: AVATAR_SIZE * 2,
                 poll_ms: 400,
                 slow_delay_ms: 0,
             },
@@ -320,8 +320,8 @@ fn make_artist_detail_page(
 fn make_artist_album_card(album: &Album, db: Arc<Mutex<Database>>) -> FlowBoxChild {
     let (child, stack, picture) = make_album_card(album, false);
     if let Some(ref data) = album.cover {
-        if let Some((pixels, rowstride, has_alpha)) = scale_to_pixels(data.as_slice(), CARD_SIZE) {
-            let texture = pixels_to_texture(pixels, rowstride, has_alpha, CARD_SIZE);
+        if let Some((pixels, rowstride, has_alpha)) = scale_to_pixels(data.as_slice(), CARD_SIZE * 2) {
+            let texture = pixels_to_texture(pixels, rowstride, has_alpha, CARD_SIZE * 2);
             picture.set_paintable(Some(&texture));
             stack.set_visible_child_name("art");
         }
