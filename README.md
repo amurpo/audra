@@ -13,10 +13,12 @@ Native music player for Linux, built with GTK4 and libadwaita.
 - Music library with albums, artists and songs views
 - Hierarchical navigation: artist → album → songs
 - MP3, FLAC, OGG and WAV support
-- Automatic scrobbling to [Last.fm](https://www.last.fm) with OAuth authentication
-- Shuffle with fixed random order (each song plays once)
-- Track repeat
-- Artist art and album covers downloaded automatically
+- Shuffle with fixed random order (each song plays once) and track repeat
+- ReplayGain volume normalization (track and album modes)
+- MPRIS2 media controls on Linux (play/pause/skip from the desktop shell, lock screen, etc.)
+- Automatic scrobbling and now-playing updates to [Last.fm](https://www.last.fm) with OAuth authentication
+- Artist art and album covers downloaded automatically; right-click any album or artist to pick a custom image or search for one
+- Automatic album and artist grouping that handles inconsistent tags — accent normalization is still partial
 - Native interface following GNOME design guidelines
 
 ## Requirements
@@ -78,9 +80,21 @@ export LASTFM_PROXY_URL=https://your-proxy.example.com/lastfm
 cargo build --release
 ```
 
-Last.fm authentication uses the standard OAuth flow: the user authorizes on the official Last.fm
-site and never enters credentials in the app. The proxy (Cloudflare Workers) signs requests
-server-side — the binary only contains the public proxy URL.
+### Why a proxy instead of embedding the API key?
+
+Last.fm's API requires every request to be **signed** with an API secret — not just the login,
+but also every scrobble and now-playing update. The signature is an MD5 hash over the request
+parameters plus that secret. Embedding the secret in an open-source binary is equivalent to
+publishing it: anyone can extract it with `strings audra` and use your app's quota.
+
+The solution is a small BFF (Backend-for-Frontend) proxy that holds the secret server-side and
+signs requests on behalf of the client. The binary only needs to know the proxy's public URL.
+The user's **session key** (obtained after OAuth) is stored locally, which is safe: it
+authenticates the user to Last.fm but cannot be used to sign arbitrary API calls without the
+secret.
+
+Authentication uses the standard Last.fm OAuth flow: the user approves the app on the official
+Last.fm site and never types credentials into Audra.
 
 ## Uninstalling
 
