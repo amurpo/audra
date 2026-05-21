@@ -17,7 +17,7 @@ pub fn scale_to_pixels(data: &[u8], size: i32) -> Option<(Vec<u8>, i32, bool)> {
     } else {
         (size * w / h, size)
     };
-    let scaled = src.scale_simple(sw, sh, gdk_pixbuf::InterpType::Bilinear)?;
+    let scaled = src.scale_simple(sw, sh, gdk_pixbuf::InterpType::Hyper)?;
     let x = (sw - size) / 2;
     let y = (sh - size) / 2;
     let dest = gdk_pixbuf::Pixbuf::new(
