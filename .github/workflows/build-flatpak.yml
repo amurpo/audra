@@ -1,0 +1,94 @@
+name: Build Flatpak
+
+on:
+  workflow_call:
+    inputs:
+      ver:
+        required: true
+        type: string
+
+jobs:
+  build-flatpak:
+    name: Build Flatpak (bundle)
+    runs-on: ubuntu-latest
+    # Fedora image with flatpak-builder installed directly, instead of the
+    # flathub-maintained GitHub Action. --privileged is needed so bubblewrap
+    # can set up the build sandbox inside the container.
+    container:
+      image: fedora:latest
+      options: --privileged
+    env:
+      VER: ${{ inputs.ver }}
+      LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verificar secret del proxy
+        # No proxy URL means scrobbling is dead in the bundle, so refuse to
+        # build rather than ship a broken .flatpak.
+        run: |
+          if [ -z "$LASTFM_PROXY_URL" ]; then
+            echo "::error::LASTFM_PROXY_URL no esta configurado; se aborta el build de Flatpak."
+            exit 1
+          fi
+
+      - name: Deps
+        run: |
+          dnf install -y \
+            flatpak flatpak-builder \
+            git python3-pyyaml
+
+      - name: Add Flathub remote (runtime source only)
+        run: |
+          flatpak remote-add --user --if-not-exists \
+            flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Generar manifest para CI
+        # The committed manifest pins a git commit (for Flathub) and does not
+        # carry the proxy URL. For a CI bundle we build the checked-out tree
+        # and bake LASTFM_PROXY_URL into build-options.env so build.rs picks
+        # it up — mirroring how the other packaging workflows pass the secret.
+        run: |
+          python3 - <<'PY'
+          import os, sys, yaml
+          proxy = os.environ.get('LASTFM_PROXY_URL', '')
+          if not proxy:
+              sys.exit('LASTFM_PROXY_URL vacio: no se genera el manifest.')
+          with open('io.github.amurpo.audra.yml') as f:
+              manifest = yaml.safe_load(f)
+          module = manifest['modules'][0]
+          module['sources'] = [
+              {'type': 'dir', 'path': '.',
+               'skip': ['.git', '.flatpak-builder', 'target',
+                        'build', 'build-dir', 'flatpak-build', 'flatpak-repo']},
+              'cargo-sources.json',
+          ]
+          env = manifest.setdefault('build-options', {}).setdefault('env', {})
+          env['LASTFM_PROXY_URL'] = proxy
+          with open('audra-ci.yml', 'w') as f:
+              yaml.safe_dump(manifest, f, sort_keys=False)
+          PY
+
+      - name: Build
+        run: |
+          flatpak-builder \
+            --user \
+            --disable-rofiles-fuse \
+            --force-clean \
+            --install-deps-from=flathub \
+            --repo=flatpak-repo \
+            flatpak-build audra-ci.yml
+
+      - name: Bundle
+        run: |
+          flatpak build-bundle \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+            flatpak-repo \
+            "audra-${VER}-x86_64.flatpak" \
+            io.github.amurpo.audra
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v7
+        with:
+          name: flatpak-bundle
+          path: audra-*.flatpak
