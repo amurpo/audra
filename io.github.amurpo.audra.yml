@@ -36,8 +36,12 @@ modules:
           /app/share/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg
       - install -Dm644 data/io.github.amurpo.audra.metainfo.xml
           /app/share/metainfo/io.github.amurpo.audra.metainfo.xml
+      - install -Dm644 data/fonts/JostVariable.ttf
+          /app/share/fonts/audra/JostVariable.ttf
       - mkdir -p /app/share/locale/es/LC_MESSAGES
       - msgfmt po/es.po -o /app/share/locale/es/LC_MESSAGES/audra.mo
+      - appstreamcli compose --prefix=/app --origin=flatpak
+          --result-root=/app/share/swcatalog /app/share/metainfo/
     sources:
       - type: git
         url: https://github.com/amurpo/audra.git
