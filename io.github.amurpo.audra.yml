@@ -40,17 +40,18 @@ modules:
           /app/share/fonts/audra/JostVariable.ttf
       - mkdir -p /app/share/locale/es/LC_MESSAGES
       - msgfmt po/es.po -o /app/share/locale/es/LC_MESSAGES/audra.mo
-      - mkdir -p /tmp/as-stage/app/share/metainfo
-          /tmp/as-stage/app/share/applications
-          /tmp/as-stage/app/share/icons/hicolor/scalable/apps
+      - install -d /app/as-stage/app/share/metainfo
+          /app/as-stage/app/share/applications
+          /app/as-stage/app/share/icons/hicolor/scalable/apps
       - cp /app/share/metainfo/io.github.amurpo.audra.metainfo.xml
-          /tmp/as-stage/app/share/metainfo/
+          /app/as-stage/app/share/metainfo/
       - cp /app/share/applications/io.github.amurpo.audra.desktop
-          /tmp/as-stage/app/share/applications/
+          /app/as-stage/app/share/applications/
       - cp /app/share/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg
-          /tmp/as-stage/app/share/icons/hicolor/scalable/apps/
+          /app/as-stage/app/share/icons/hicolor/scalable/apps/
       - appstreamcli compose --prefix=/app --origin=flatpak
-          --no-net --result-root=/app/share/swcatalog /tmp/as-stage
+          --no-net --result-root=/app/share/swcatalog /app/as-stage
+      - rm -rf /app/as-stage
     sources:
       - type: git
         url: https://github.com/amurpo/audra.git
