@@ -1,5 +1,4 @@
 name: Release
-
 on:
   push:
     branches:
@@ -10,7 +9,6 @@ on:
       - 'LICENSE*'
       - '.gitignore'
       - 'docs/**'
-
 jobs:
   version:
     runs-on: ubuntu-latest
@@ -26,37 +24,26 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
     secrets: inherit
-
   build-fedora:
     needs: [version, test]
     uses: ./.github/workflows/build-fedora.yml
     with:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
-
   build-windows:
     needs: [version, test]
     uses: ./.github/workflows/build-windows.yml
     with:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
-
   build-deb:
     needs: [version, test]
     uses: ./.github/workflows/build-deb.yml
     with:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
-
-  build-flatpak:
-    needs: [version, test]
-    uses: ./.github/workflows/build-flatpak.yml
-    with:
-      ver: ${{ needs.version.outputs.ver }}
-    secrets: inherit
-
   release:
-    needs: [version, build-fedora, build-windows, build-deb, build-flatpak]
+    needs: [version, build-fedora, build-windows, build-deb]
     name: Publicar Release
     runs-on: ubuntu-latest
     permissions:
@@ -67,7 +54,6 @@ jobs:
         with:
           path: dist/
           merge-multiple: true
-
       - name: Crear Release en GitHub
         uses: softprops/action-gh-release@v3
         with:
