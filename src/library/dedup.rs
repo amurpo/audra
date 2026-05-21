@@ -278,6 +278,48 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
             groups.entry(key).or_default().push((d, t));
         }
 
+        // Stage 3: tag-based merge pass.
+        // Stage 2 keys groups by folder name. When a release spans multiple
+        // differently-named folders (common in classical rips: one folder per
+        // disc content, one more with the full album title), they stay as
+        // separate groups even though every track shares the same album tag.
+        // Merge them when: (a) multiple groups share the same dominant tag
+        // (tag_norm), AND (b) at least one group's key already equals that
+        // tag_norm — meaning a folder IS the canonical album title.
+        // The "at least one folder matches" guard prevents merging folders
+        // that share a generic tag (e.g. "Concertos") where the folder
+        // structure is the intended grouping.
+        {
+            let mut by_tag_norm: HashMap<String, Vec<String>> = HashMap::new();
+            for (key, members) in &groups {
+                let tag_norm =
+                    dominant(members.iter().filter_map(|(_, t)| t.album.as_deref()))
+                        .map(|s| normalize(&s))
+                        .unwrap_or_default();
+                if !tag_norm.is_empty() {
+                    by_tag_norm.entry(tag_norm).or_default().push(key.clone());
+                }
+            }
+            let mut to_merge: Vec<(String, String)> = Vec::new();
+            for (tag_norm, keys) in &by_tag_norm {
+                if keys.len() < 2 {
+                    continue;
+                }
+                if keys.iter().any(|k| k == tag_norm) {
+                    for k in keys {
+                        if k != tag_norm {
+                            to_merge.push((k.clone(), tag_norm.clone()));
+                        }
+                    }
+                }
+            }
+            for (src, dst) in to_merge {
+                if let Some(src_members) = groups.remove(&src) {
+                    groups.entry(dst).or_default().extend(src_members);
+                }
+            }
+        }
+
         for (_gkey, members) in groups {
             let mut tracks: Vec<Track> = members.iter().map(|(_, t)| (*t).clone()).collect();
             tracks.sort_by_key(|t| {
@@ -664,5 +706,37 @@ mod tests {
         assert_eq!(albums.len(), 1);
         assert_eq!(albums[0].tracks[0].disc_num, Some(1));
         assert_eq!(albums[0].tracks[1].disc_num, Some(2));
+    }
+
+    #[test]
+    fn differently_named_folders_with_same_specific_tag_merge_into_one_album() {
+        // Classical rip pattern: one folder per disc content + one folder with
+        // the full album title. All tracks share the same album tag, so they
+        // should appear as one album (not two). The "at least one folder name
+        // matches the tag" guard prevents generic-tag false merges.
+        let mf = Some("/Music");
+        let tracks = vec![
+            t(
+                "/Music/Beethoven/Concerto en Em Op64/1.mp3",
+                "Beethoven",
+                "Beethoven & Mendelssohn: Violin Concertos",
+                1,
+            ),
+            t(
+                "/Music/Beethoven/Beethoven & Mendelssohn Violin Concertos/1.mp3",
+                "Beethoven",
+                "Beethoven & Mendelssohn: Violin Concertos",
+                1,
+            ),
+            t(
+                "/Music/Beethoven/Beethoven & Mendelssohn Violin Concertos/2.mp3",
+                "Beethoven",
+                "Beethoven & Mendelssohn: Violin Concertos",
+                2,
+            ),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1, "should merge into one album");
+        assert_eq!(albums[0].tracks.len(), 3);
     }
 }

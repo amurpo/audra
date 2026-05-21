@@ -26,6 +26,11 @@ pub fn init(lang_override: Option<&str>) {
     }
     // setlocale("") re-reads the environment on every platform; it also satisfies
     // the internal locale-change detection that triggers gettext cache invalidation.
+    // In Flatpak the sandbox locale is always "C", so calling setlocale("") twice
+    // in a row is a no-op and glibc does NOT increment _nl_locale_changed_counter,
+    // meaning gettext silently skips reloading the catalog. Bouncing through "C"
+    // first guarantees a change is detected even when the effective locale is "C".
+    gettextrs::setlocale(gettextrs::LocaleCategory::LcAll, "C");
     gettextrs::setlocale(gettextrs::LocaleCategory::LcAll, "");
 
     // Resolve the catalog directory by probing an ordered list of candidates
