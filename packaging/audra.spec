@@ -17,21 +17,21 @@ with Last.fm integration and automatic scrobbling.
 
 %install
 install -Dm755 %{_sourcedir}/audra          %{buildroot}%{_bindir}/audra
-install -Dm644 %{_sourcedir}/com.audra.player.desktop \
-               %{buildroot}%{_datadir}/applications/com.audra.player.desktop
-install -Dm644 %{_sourcedir}/com.audra.player.svg \
-               %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/com.audra.player.svg
-install -Dm644 %{_sourcedir}/com.audra.player.metainfo.xml \
-               %{buildroot}%{_datadir}/metainfo/com.audra.player.metainfo.xml
+install -Dm644 %{_sourcedir}/io.github.amurpo.audra.desktop \
+               %{buildroot}%{_datadir}/applications/io.github.amurpo.audra.desktop
+install -Dm644 %{_sourcedir}/io.github.amurpo.audra.svg \
+               %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg
+install -Dm644 %{_sourcedir}/io.github.amurpo.audra.metainfo.xml \
+               %{buildroot}%{_datadir}/metainfo/io.github.amurpo.audra.metainfo.xml
 mkdir -p %{buildroot}%{_datadir}/locale/es/LC_MESSAGES
 msgfmt %{_sourcedir}/es.po \
        -o %{buildroot}%{_datadir}/locale/es/LC_MESSAGES/audra.mo
 
 %files
 %{_bindir}/audra
-%{_datadir}/applications/com.audra.player.desktop
-%{_datadir}/metainfo/com.audra.player.metainfo.xml
-%{_datadir}/icons/hicolor/scalable/apps/com.audra.player.svg
+%{_datadir}/applications/io.github.amurpo.audra.desktop
+%{_datadir}/metainfo/io.github.amurpo.audra.metainfo.xml
+%{_datadir}/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg
 %{_datadir}/locale/es/LC_MESSAGES/audra.mo
 
 %post

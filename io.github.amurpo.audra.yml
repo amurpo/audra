@@ -1,0 +1,46 @@
+app-id: io.github.amurpo.audra
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: audra
+
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=dri
+  - --filesystem=home:ro
+  - --own-name=org.mpris.MediaPlayer2.audra
+  - --talk-name=org.mpris.MediaPlayer2.*
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/audra/cargo
+    LOCALEDIR: /app/share/locale
+
+modules:
+  - name: audra
+    buildsystem: simple
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release --verbose
+      - install -Dm755 target/release/audra /app/bin/audra
+      - install -Dm644 data/io.github.amurpo.audra.desktop
+          /app/share/applications/io.github.amurpo.audra.desktop
+      - install -Dm644 data/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg
+          /app/share/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg
+      - install -Dm644 data/io.github.amurpo.audra.metainfo.xml
+          /app/share/metainfo/io.github.amurpo.audra.metainfo.xml
+      - mkdir -p /app/share/locale/es/LC_MESSAGES
+      - msgfmt po/es.po -o /app/share/locale/es/LC_MESSAGES/audra.mo
+    sources:
+      - type: git
+        url: https://github.com/amurpo/audra.git
+        branch: dev
+        commit: bfd43ba7db1f72edf6e12602b81e1292575b5e8d
+      - cargo-sources.json
