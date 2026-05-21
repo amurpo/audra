@@ -44,9 +44,9 @@ jobs:
         run: |
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
           cp target/release/audra \
-             data/com.audra.player.desktop \
-             data/com.audra.player.metainfo.xml \
-             data/icons/hicolor/scalable/apps/com.audra.player.svg \
+             data/io.github.amurpo.audra.desktop \
+             data/io.github.amurpo.audra.metainfo.xml \
+             data/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg \
              po/es.po \
              ~/rpmbuild/BUILD/
           rpmbuild -bb \

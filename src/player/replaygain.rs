@@ -48,8 +48,14 @@ mod tests {
 
     #[test]
     fn missing_file_returns_unity_gain() {
-        assert_eq!(read_gain("/nonexistent/file.mp3", ReplayGainMode::Track), 1.0);
-        assert_eq!(read_gain("/nonexistent/file.mp3", ReplayGainMode::Album), 1.0);
+        assert_eq!(
+            read_gain("/nonexistent/file.mp3", ReplayGainMode::Track),
+            1.0
+        );
+        assert_eq!(
+            read_gain("/nonexistent/file.mp3", ReplayGainMode::Album),
+            1.0
+        );
     }
 
     #[test]
