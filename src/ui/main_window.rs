@@ -842,10 +842,13 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         let player_c = Rc::clone(&player);
         let init_once = Rc::new(std::cell::RefCell::new(Some((mpris_tx, mpris_rx))));
         window.connect_realize(move |window| {
+            log::info!("mpris/smtc: connect_realize fired");
             let Some((tx, rx)) = init_once.borrow_mut().take() else {
+                log::info!("mpris/smtc: connect_realize fired again (already initialized)");
                 return;
             };
             if let Some(m) = crate::player::mpris::Mpris::new(window, tx) {
+                log::info!("mpris/smtc: initialized successfully");
                 *mpris_cell.borrow_mut() = Some(m);
                 wire_mpris(
                     rx,
@@ -854,7 +857,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                     window.downgrade(),
                 );
             } else {
-                log::warn!("mpris/smtc: media controls unavailable on this platform");
+                log::warn!("mpris/smtc: Mpris::new returned None — SMTC unavailable");
             }
         });
     }

@@ -45,9 +45,12 @@ impl Mpris {
         // handle. Bail out cleanly here so callers can retry once the
         // surface is realized.
         #[cfg(windows)]
-        if hwnd.is_none() {
-            log::warn!("mpris/smtc: no HWND yet, deferring controls setup");
-            return None;
+        {
+            log::info!("mpris/smtc: window_handle returned {:?}", hwnd);
+            if hwnd.is_none() {
+                log::warn!("mpris/smtc: no HWND yet, deferring controls setup");
+                return None;
+            }
         }
 
         let config = PlatformConfig {
@@ -55,13 +58,18 @@ impl Mpris {
             display_name: "Audra",
             hwnd,
         };
+        log::info!("mpris/smtc: calling MediaControls::new");
         let mut controls = match MediaControls::new(config) {
-            Ok(c) => c,
+            Ok(c) => {
+                log::info!("mpris/smtc: MediaControls::new succeeded");
+                c
+            }
             Err(e) => {
-                log::warn!("mpris/smtc: MediaControls::new failed: {e}");
+                log::warn!("mpris/smtc: MediaControls::new failed: {e:?}");
                 return None;
             }
         };
+        log::info!("mpris/smtc: calling attach");
         if let Err(e) = controls.attach(move |event: MediaControlEvent| {
             let cmd = match event {
                 MediaControlEvent::Toggle => MprisCommand::PlayPause,
@@ -75,9 +83,10 @@ impl Mpris {
             };
             let _ = tx.send(cmd);
         }) {
-            log::warn!("mpris/smtc: attach failed: {e}");
+            log::warn!("mpris/smtc: attach failed: {e:?}");
             return None;
         }
+        log::info!("mpris/smtc: attach succeeded — SMTC ready");
         let cover_dir = dirs::data_local_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("audra")
@@ -146,13 +155,25 @@ impl Mpris {
 #[cfg(windows)]
 fn window_handle(window: &adw::ApplicationWindow) -> Option<*mut std::ffi::c_void> {
     use gtk4::prelude::*;
-    let surface = gtk4::prelude::NativeExt::surface(window)?;
-    let win32 = surface.downcast::<gdk4_win32::Win32Surface>().ok()?;
-    // `handle()` returns HWND(0) if the surface is not realized yet —
-    // pass that up as None so the caller can retry instead of feeding
-    // souvlaki a NULL handle that SMTC will reject.
+    let surface = match gtk4::prelude::NativeExt::surface(window) {
+        Some(s) => s,
+        None => {
+            log::warn!("mpris/smtc: NativeExt::surface returned None");
+            return None;
+        }
+    };
+    log::info!("mpris/smtc: surface type = {}", surface.type_().name());
+    let win32 = match surface.downcast::<gdk4_win32::Win32Surface>() {
+        Ok(w) => w,
+        Err(_) => {
+            log::warn!("mpris/smtc: surface downcast to Win32Surface failed");
+            return None;
+        }
+    };
     let raw = win32.handle().0;
+    log::info!("mpris/smtc: HWND = {raw:#x}");
     if raw == 0 {
+        log::warn!("mpris/smtc: HWND is 0 (surface not realized yet)");
         return None;
     }
     Some(raw as *mut std::ffi::c_void)
