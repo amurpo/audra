@@ -41,7 +41,7 @@ modules:
       - mkdir -p /app/share/locale/es/LC_MESSAGES
       - msgfmt po/es.po -o /app/share/locale/es/LC_MESSAGES/audra.mo
       - appstreamcli compose --prefix=/app --origin=flatpak
-          --result-root=/app/share/swcatalog /app
+          --result-root=/app/share/swcatalog /
     sources:
       - type: git
         url: https://github.com/amurpo/audra.git
