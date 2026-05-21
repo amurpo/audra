@@ -174,7 +174,8 @@ fn derive(track: &Track, music_folder: Option<&str>) -> Derived {
 
     match rel_dirs(&track.path, music_folder) {
         Some(dirs) if !dirs.is_empty() => {
-            let artist_label = dirs[0].clone();
+            let folder_name = dirs[0].clone();
+            let artist_label = tag_artist.unwrap_or_else(|| folder_name.clone());
             let (album_label, _from_folder) = if dirs.len() >= 2 {
                 (strip_disc_marker(&dirs[1]), true)
             } else {
@@ -188,7 +189,7 @@ fn derive(track: &Track, music_folder: Option<&str>) -> Derived {
                 )
             };
             Derived {
-                artist_key: normalize(&artist_label),
+                artist_key: normalize(&folder_name),
                 artist_label,
                 album_key: normalize(&album_label),
                 album_label,
@@ -380,32 +381,41 @@ mod tests {
     }
 
     #[test]
-    fn canonical_artist_map_maps_inconsistent_tags_to_folder_name() {
+    fn canonical_artist_map_collapses_inconsistent_tags_to_same_canonical() {
         let mf = Some("/Music");
         let tracks = vec![
             t("/Music/Tokyo Phil/Gundam/1.mp3", "東京フィル", "Gundam", 1),
             t("/Music/Tokyo Phil/Gundam/2.mp3", "Tokyo Phil.", "Gundam", 2),
         ];
         let map = canonical_artist_map(&tracks, mf);
-        // Both raw artist tags differ from the folder name and must be remapped.
-        assert_eq!(map.len(), 2);
-        assert!(map.values().all(|v| v == "Tokyo Phil"));
-        // The canonical name itself must not appear as a key (no self-mapping).
-        assert!(!map.contains_key("Tokyo Phil"));
+        // Both tracks share the same folder key, so they resolve to the same
+        // canonical artist label (whichever tag is dominant).
+        let values: std::collections::HashSet<_> = map.values().collect();
+        assert_eq!(
+            values.len(),
+            1,
+            "both tags must remap to the same canonical"
+        );
+        // The canonical label itself must not appear as a key (no self-mapping).
+        let canonical = values.into_iter().next().unwrap();
+        assert!(!map.contains_key(canonical));
     }
 
     #[test]
-    fn canonical_artist_map_is_empty_when_tags_match_folder() {
+    fn canonical_artist_map_is_empty_when_single_consistent_tag() {
         let mf = Some("/Music");
-        let tracks = vec![
-            t("/Music/Radiohead/OK Computer/1.mp3", "Radiohead", "OK Computer", 1),
-        ];
+        let tracks = vec![t(
+            "/Music/Radiohead/OK Computer/1.mp3",
+            "Radiohead",
+            "OK Computer",
+            1,
+        )];
         let map = canonical_artist_map(&tracks, mf);
-        assert!(map.is_empty(), "no remap needed when tag equals folder name");
+        assert!(map.is_empty(), "no remap needed when there is only one tag");
     }
 
     #[test]
-    fn canonical_key_map_points_raw_tags_at_folder_canon() {
+    fn canonical_key_map_collapses_inconsistent_tags_to_one_canon() {
         let mf = Some("/Music");
         let tracks = vec![
             t(
@@ -422,14 +432,10 @@ mod tests {
             ),
         ];
         let map = canonical_key_map(&tracks, mf);
-        // Both raw (artist, album) tags must resolve to the same canonical
+        // Both raw (artist, album) pairs must resolve to the same canonical
         // pair so their covers converge instead of being lost.
         let canon: std::collections::HashSet<_> = map.values().collect();
         assert_eq!(canon.len(), 1);
-        let (ca, _) = canon.into_iter().next().unwrap();
-        assert_eq!(ca, "Tokyo Phil");
-        // Identity entries are not emitted.
-        assert!(!map.contains_key(&("Tokyo Phil".to_string(), "Gundam OST".to_string())));
     }
 
     #[test]
@@ -478,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn artist_comes_from_folder_not_inconsistent_tag() {
+    fn folder_groups_tracks_with_inconsistent_tags_into_one_album() {
         let mf = Some("/Music");
         let tracks = vec![
             t(
@@ -495,9 +501,38 @@ mod tests {
             ),
         ];
         let albums = group_albums(&tracks, mf);
+        // Folder acts as the grouping key so both tracks land in one album
+        // regardless of the inconsistent artist tags.
         assert_eq!(albums.len(), 1);
-        assert_eq!(albums[0].artist, "Tokyo City Philharmonic Orchestra");
         assert_eq!(albums[0].tracks.len(), 2);
+        // Artist label comes from the dominant tag, not the folder name.
+        let artist = &albums[0].artist;
+        assert!(
+            artist == "東京シティフィルハーモニック管弦楽団" || artist == "Tokyo City Phil.",
+            "unexpected artist label: {artist}"
+        );
+    }
+
+    #[test]
+    fn artist_label_comes_from_tag_not_abbreviated_folder() {
+        let mf = Some("/Music");
+        let tracks = vec![
+            t(
+                "/Music/wd/The Winery Dogs/1.mp3",
+                "Winery Dogs",
+                "The Winery Dogs",
+                1,
+            ),
+            t(
+                "/Music/wd/The Winery Dogs/2.mp3",
+                "Winery Dogs",
+                "The Winery Dogs",
+                2,
+            ),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].artist, "Winery Dogs");
     }
 
     #[test]

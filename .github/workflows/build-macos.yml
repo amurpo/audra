@@ -93,7 +93,7 @@ jobs:
           cp -r "$BREW/share/icons/Adwaita" dist/audra/share/icons/ || true
           cp -r "$BREW/share/icons/hicolor"  dist/audra/share/icons/ || true
           mkdir -p dist/audra/share/icons/hicolor/scalable/apps
-          cp data/icons/hicolor/scalable/apps/com.audra.player.svg \
+          cp data/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg \
              dist/audra/share/icons/hicolor/scalable/apps/
           # GTK settings
           mkdir -p dist/audra/share/gtk-4.0

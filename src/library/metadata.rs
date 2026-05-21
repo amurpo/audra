@@ -50,11 +50,7 @@ pub fn fetch_album_cover_candidates(artist: &str, album: &str) -> Vec<CoverCandi
 
 /// Query MusicBrainz for the MBIDs of the top matching releases for the given
 /// artist and album. Returns up to 3 release IDs, or an empty vec on failure.
-fn musicbrainz_mbids(
-    client: &reqwest::blocking::Client,
-    artist: &str,
-    album: &str,
-) -> Vec<String> {
+fn musicbrainz_mbids(client: &reqwest::blocking::Client, artist: &str, album: &str) -> Vec<String> {
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let query = format!("release:\"{}\" AND artist:\"{}\"", esc(album), esc(artist));
     let resp: Option<serde_json::Value> = client

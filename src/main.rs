@@ -10,7 +10,7 @@ use libadwaita as adw;
 use library::db::Database;
 use std::sync::{Arc, Mutex};
 
-const APP_ID: &str = "com.audra.player";
+const APP_ID: &str = "io.github.amurpo.audra";
 
 fn main() {
     env_logger::init();

@@ -2,8 +2,8 @@
 Name=Audra
 Comment=Reproductor de música
 Exec=audra
-Icon=com.audra.player
+Icon=io.github.amurpo.audra
 Terminal=false
 Type=Application
 Categories=AudioVideo;Audio;Music;Player;GTK;
-StartupWMClass=com.audra.player
+StartupWMClass=io.github.amurpo.audra

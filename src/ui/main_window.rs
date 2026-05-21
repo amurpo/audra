@@ -100,7 +100,7 @@ pub(crate) fn start_scan(
 }
 
 const APP_ICON_SVG: &[u8] =
-    include_bytes!("../../data/icons/hicolor/scalable/apps/com.audra.player.svg");
+    include_bytes!("../../data/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg");
 
 fn register_app_icon() {
     let Some(display) = gtk4::gdk::Display::default() else {
@@ -113,7 +113,7 @@ fn register_app_icon() {
         .join("scalable")
         .join("apps");
     if std::fs::create_dir_all(&icon_dir).is_ok() {
-        let icon_path = icon_dir.join("com.audra.player.svg");
+        let icon_path = icon_dir.join("io.github.amurpo.audra.svg");
         if std::fs::write(&icon_path, APP_ICON_SVG).is_ok() {
             theme.add_search_path(std::env::temp_dir().join("audra-icons"));
         }
@@ -122,7 +122,7 @@ fn register_app_icon() {
 
 pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // On Windows, register the bundled share/icons directory so GTK can
-    // resolve "com.audra.player" from hicolor. Without this, GTK falls
+    // resolve "io.github.amurpo.audra" from hicolor. Without this, GTK falls
     // back to its own default icon and overwrites the embedded .ico.
     #[cfg(windows)]
     if let Some(display) = gtk4::gdk::Display::default() {
@@ -174,7 +174,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         .title("Audra")
         .default_width(1024)
         .default_height(680)
-        .icon_name("com.audra.player")
+        .icon_name("io.github.amurpo.audra")
         .build();
 
     #[cfg(target_os = "windows")]
@@ -612,7 +612,10 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     ));
 
     rg_btn_off.connect_toggled(clone!(
-        #[strong] db, #[strong] player,
+        #[strong]
+        db,
+        #[strong]
+        player,
         move |btn| {
             if btn.is_active() {
                 player.borrow_mut().replaygain_mode = None;
@@ -621,7 +624,10 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
     rg_btn_track.connect_toggled(clone!(
-        #[strong] db, #[strong] player,
+        #[strong]
+        db,
+        #[strong]
+        player,
         move |btn| {
             if btn.is_active() {
                 player.borrow_mut().replaygain_mode = Some(ReplayGainMode::Track);
@@ -630,7 +636,10 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
     rg_btn_album.connect_toggled(clone!(
-        #[strong] db, #[strong] player,
+        #[strong]
+        db,
+        #[strong]
+        player,
         move |btn| {
             if btn.is_active() {
                 player.borrow_mut().replaygain_mode = Some(ReplayGainMode::Album);
@@ -746,7 +755,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             popover.popdown();
             let about = adw::AboutDialog::builder()
                 .application_name("Audra")
-                .application_icon("com.audra.player")
+                .application_icon("io.github.amurpo.audra")
                 .developer_name("Daniel Avila")
                 .version(env!("CARGO_PKG_VERSION"))
                 .comments(gettext("Native music player with Last.fm scrobbling"))

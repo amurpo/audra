@@ -25,9 +25,9 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/DEBIAN"
 
 install -Dm755 "$ROOT/target/release/audra"                                   "$STAGE/usr/bin/audra"
-install -Dm644 "$ROOT/data/com.audra.player.desktop"                          "$STAGE/usr/share/applications/com.audra.player.desktop"
-install -Dm644 "$ROOT/data/com.audra.player.metainfo.xml"                     "$STAGE/usr/share/metainfo/com.audra.player.metainfo.xml"
-install -Dm644 "$ROOT/data/icons/hicolor/scalable/apps/com.audra.player.svg"  "$STAGE/usr/share/icons/hicolor/scalable/apps/com.audra.player.svg"
+install -Dm644 "$ROOT/data/io.github.amurpo.audra.desktop"                          "$STAGE/usr/share/applications/io.github.amurpo.audra.desktop"
+install -Dm644 "$ROOT/data/io.github.amurpo.audra.metainfo.xml"                     "$STAGE/usr/share/metainfo/io.github.amurpo.audra.metainfo.xml"
+install -Dm644 "$ROOT/data/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg"  "$STAGE/usr/share/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg"
 mkdir -p "$STAGE/usr/share/locale/es/LC_MESSAGES"
 msgfmt "$ROOT/po/es.po" -o "$STAGE/usr/share/locale/es/LC_MESSAGES/audra.mo"
 
