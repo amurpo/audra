@@ -41,8 +41,8 @@ type ScaledCandidate = (String, Vec<u8>, i32, bool, Vec<u8>);
 fn apply_album_cover(stack: &Stack, picture: &Picture, data: Option<&[u8]>) {
     match data {
         Some(d) => {
-            if let Some((px, rs, alpha)) = scale_to_pixels(d, CARD_SIZE) {
-                let tex = pixels_to_texture(px, rs, alpha, CARD_SIZE);
+            if let Some((px, rs, alpha)) = scale_to_pixels(d, CARD_SIZE * 2) {
+                let tex = pixels_to_texture(px, rs, alpha, CARD_SIZE * 2);
                 picture.set_paintable(Some(&tex));
                 stack.set_visible_child_name("art");
             }
@@ -54,8 +54,8 @@ fn apply_album_cover(stack: &Stack, picture: &Picture, data: Option<&[u8]>) {
 fn apply_artist_photo(avatar: &adw::Avatar, data: Option<&[u8]>) {
     match data {
         Some(d) => {
-            if let Some((px, rs, alpha)) = scale_to_pixels(d, AVATAR_SIZE) {
-                let tex = pixels_to_texture(px, rs, alpha, AVATAR_SIZE);
+            if let Some((px, rs, alpha)) = scale_to_pixels(d, AVATAR_SIZE * 2) {
+                let tex = pixels_to_texture(px, rs, alpha, AVATAR_SIZE * 2);
                 avatar.set_custom_image(Some(&tex));
             }
         }
@@ -397,7 +397,7 @@ fn open_picker(
                 let candidates = Arc::clone(&candidates);
                 std::thread::spawn(move || {
                     for c in candidates(&query) {
-                        if let Some((px, rs, alpha)) = scale_to_pixels(&c.data, THUMB) {
+                        if let Some((px, rs, alpha)) = scale_to_pixels(&c.data, THUMB * 2) {
                             queue
                                 .lock()
                                 .unwrap()
@@ -435,7 +435,7 @@ fn open_picker(
                         }
                         for (source, px, rs, alpha, raw) in queue.lock().unwrap().drain(..) {
                             any_added.store(true, Ordering::Relaxed);
-                            let tex = pixels_to_texture(px, rs, alpha, THUMB);
+                            let tex = pixels_to_texture(px, rs, alpha, THUMB * 2);
                             let pic = Picture::new();
                             pic.set_paintable(Some(&tex));
                             pic.set_content_fit(ContentFit::Cover);
