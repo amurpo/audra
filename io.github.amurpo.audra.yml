@@ -21,7 +21,6 @@ build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
     CARGO_HOME: /run/build/audra/cargo
-    LASTFM_PROXY_URL: "https://proxy.amurpo.icu/lastfm"
     LOCALEDIR: /app/share/locale
 
 modules:
@@ -42,6 +41,6 @@ modules:
     sources:
       - type: git
         url: https://github.com/amurpo/audra.git
-        tag: v0.2.1
-        commit: 9bb3e74301d88f883ec0b7d1bd4dde69a877faeb
+        branch: dev
+        commit: bfd43ba7db1f72edf6e12602b81e1292575b5e8d
       - cargo-sources.json
