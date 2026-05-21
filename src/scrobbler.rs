@@ -22,6 +22,17 @@ pub struct AuthSessionResponse {
     pub username: String,
 }
 
+/// Extract the human-readable error message from a failed proxy response.
+/// Tries to parse `{"error": "..."}` JSON; falls back to the raw body.
+fn proxy_error(resp: reqwest::blocking::Response) -> anyhow::Error {
+    let text = resp.text().unwrap_or_default();
+    let msg = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("error")?.as_str().map(str::to_string))
+        .unwrap_or(text);
+    anyhow::anyhow!("{}", msg)
+}
+
 impl LastFmClient {
     pub fn new() -> Self {
         Self {
@@ -47,12 +58,7 @@ impl LastFmClient {
         let proxy = PROXY_URL.trim_end_matches('/');
         let resp = Client::new().get(format!("{proxy}/auth/token")).send()?;
         if !resp.status().is_success() {
-            let text = resp.text().unwrap_or_default();
-            let msg = serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
-                .and_then(|v| v.get("error")?.as_str().map(str::to_string))
-                .unwrap_or(text);
-            anyhow::bail!("{}", msg);
+            return Err(proxy_error(resp));
         }
         Ok(resp.json()?)
     }
@@ -64,12 +70,7 @@ impl LastFmClient {
             .query(&[("token", token)])
             .send()?;
         if !resp.status().is_success() {
-            let text = resp.text().unwrap_or_default();
-            let msg = serde_json::from_str::<serde_json::Value>(&text)
-                .ok()
-                .and_then(|v| v.get("error")?.as_str().map(str::to_string))
-                .unwrap_or(text);
-            anyhow::bail!("{}", msg);
+            return Err(proxy_error(resp));
         }
         Ok(resp.json()?)
     }

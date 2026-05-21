@@ -9,6 +9,7 @@ BuildRequires:  gettext
 
 Requires:       gtk4
 Requires:       libadwaita
+Requires:       adwaita-icon-theme
 
 %description
 Audra is a native music player for Linux (GTK4/libadwaita)

@@ -3,7 +3,7 @@ use lofty::prelude::*;
 use lofty::probe::Probe;
 use std::path::Path;
 
-/// Nombres de archivo candidatos para arte de carpeta, en orden de preferencia.
+/// Candidate filenames for folder art, in preference order.
 const FOLDER_CANDIDATES: &[&str] = &[
     "cover.jpg",
     "cover.png",
@@ -19,13 +19,11 @@ const FOLDER_CANDIDATES: &[&str] = &[
 ];
 
 pub fn read_cover_art(path: &str) -> Option<Vec<u8>> {
-    // 1. Intentar arte embebida en el archivo de audio
     if let Some(bytes) = read_embedded(path) {
         log::debug!("cover art: embebida encontrada en {path}");
         return Some(bytes);
     }
 
-    // 2. Buscar imagen en la misma carpeta del archivo
     if let Some(bytes) = read_folder_art(path) {
         log::debug!("cover art: encontrada en carpeta para {path}");
         return Some(bytes);
@@ -55,7 +53,6 @@ fn read_embedded(path: &str) -> Option<Vec<u8>> {
 fn read_folder_art(audio_path: &str) -> Option<Vec<u8>> {
     let dir = Path::new(audio_path).parent()?;
 
-    // Primero buscar nombres canónicos exactos
     for name in FOLDER_CANDIDATES {
         let candidate = dir.join(name);
         if candidate.exists() {
@@ -63,7 +60,7 @@ fn read_folder_art(audio_path: &str) -> Option<Vec<u8>> {
         }
     }
 
-    // Como último recurso, cualquier .jpg o .png en la carpeta
+    // Fall back to any image file in the folder.
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let p = entry.path();

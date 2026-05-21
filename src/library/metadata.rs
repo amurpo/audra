@@ -48,6 +48,33 @@ pub fn fetch_album_cover_candidates(artist: &str, album: &str) -> Vec<CoverCandi
     out
 }
 
+/// Query MusicBrainz for the MBIDs of the top matching releases for the given
+/// artist and album. Returns up to 3 release IDs, or an empty vec on failure.
+fn musicbrainz_mbids(
+    client: &reqwest::blocking::Client,
+    artist: &str,
+    album: &str,
+) -> Vec<String> {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let query = format!("release:\"{}\" AND artist:\"{}\"", esc(album), esc(artist));
+    let resp: Option<serde_json::Value> = client
+        .get("https://musicbrainz.org/ws/2/release")
+        .query(&[("query", query.as_str()), ("fmt", "json"), ("limit", "5")])
+        .send()
+        .ok()
+        .and_then(|r| r.json().ok());
+    resp.and_then(|r| {
+        r["releases"].as_array().map(|releases| {
+            releases
+                .iter()
+                .take(3)
+                .filter_map(|rel| rel["id"].as_str().map(str::to_string))
+                .collect()
+        })
+    })
+    .unwrap_or_default()
+}
+
 /// Like `musicbrainz_album_cover` but returns the front art of the top few
 /// matching releases instead of stopping at the first hit.
 fn musicbrainz_album_covers(
@@ -55,38 +82,20 @@ fn musicbrainz_album_covers(
     artist: &str,
     album: &str,
 ) -> Vec<Vec<u8>> {
-    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    let query = format!("release:\"{}\" AND artist:\"{}\"", esc(album), esc(artist));
-
     let mut out = Vec::new();
-    let resp: Option<serde_json::Value> = client
-        .get("https://musicbrainz.org/ws/2/release")
-        .query(&[("query", query.as_str()), ("fmt", "json"), ("limit", "5")])
-        .send()
-        .ok()
-        .and_then(|r| r.json().ok());
-    let Some(resp) = resp else {
-        return out;
-    };
-
-    let Some(releases) = resp["releases"].as_array() else {
-        return out;
-    };
-    for release in releases.iter().take(3) {
-        if let Some(mbid) = release["id"].as_str() {
-            let url = format!("https://coverartarchive.org/release/{}/front-500", mbid);
-            if let Ok(resp) = client.get(&url).send() {
-                if resp.status().is_success() {
-                    if let Ok(bytes) = resp.bytes() {
-                        if !bytes.is_empty() {
-                            out.push(bytes.to_vec());
-                        }
+    for mbid in musicbrainz_mbids(client, artist, album) {
+        let url = format!("https://coverartarchive.org/release/{}/front-500", mbid);
+        if let Ok(resp) = client.get(&url).send() {
+            if resp.status().is_success() {
+                if let Ok(bytes) = resp.bytes() {
+                    if !bytes.is_empty() {
+                        out.push(bytes.to_vec());
                     }
                 }
             }
-            // Respect the MusicBrainz rate limit (1 req/s).
-            std::thread::sleep(std::time::Duration::from_millis(1100));
         }
+        // Respect the MusicBrainz / CAA rate limit (1 req/s).
+        std::thread::sleep(std::time::Duration::from_millis(1100));
     }
     out
 }
@@ -161,7 +170,7 @@ fn download(client: &reqwest::blocking::Client, url: &str) -> Option<Vec<u8>> {
     }
 }
 
-/// Busca carátula de álbum: MusicBrainz → TheAudioDB.
+/// Fetch an album cover: MusicBrainz → TheAudioDB.
 pub fn fetch_album_cover(artist: &str, album: &str) -> Option<Vec<u8>> {
     let path = album_cache_path(artist, album);
     if path.exists() {
@@ -182,20 +191,7 @@ fn musicbrainz_album_cover(
     artist: &str,
     album: &str,
 ) -> Option<Vec<u8>> {
-    // Escape Lucene special chars so quotes in titles don't break the query.
-    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    let query = format!("release:\"{}\" AND artist:\"{}\"", esc(album), esc(artist));
-
-    let resp: serde_json::Value = client
-        .get("https://musicbrainz.org/ws/2/release")
-        .query(&[("query", query.as_str()), ("fmt", "json"), ("limit", "5")])
-        .send()
-        .ok()?
-        .json()
-        .ok()?;
-
-    for release in resp["releases"].as_array()?.iter().take(3) {
-        let mbid = release["id"].as_str()?;
+    for mbid in musicbrainz_mbids(client, artist, album) {
         let url = format!("https://coverartarchive.org/release/{}/front-500", mbid);
         if let Ok(resp) = client.get(&url).send() {
             if resp.status().is_success() {
@@ -207,7 +203,7 @@ fn musicbrainz_album_cover(
                 }
             }
         }
-        // Respetar el rate limit de MusicBrainz (1 req/s)
+        // Respect the MusicBrainz / CAA rate limit (1 req/s).
         std::thread::sleep(std::time::Duration::from_millis(1100));
     }
     None
@@ -342,7 +338,7 @@ fn deezer_artist_photos(client: &reqwest::blocking::Client, artist: &str) -> Vec
     out
 }
 
-/// Busca foto del artista: Deezer → TheAudioDB → iTunes (portada de álbum).
+/// Fetch an artist photo: Deezer → TheAudioDB → iTunes (album art fallback).
 pub fn fetch_artist_photo(artist: &str) -> Option<Vec<u8>> {
     let path = artist_cache_path(artist);
     if path.exists() {
@@ -386,7 +382,7 @@ fn deezer_artist_photo(client: &reqwest::blocking::Client, artist: &str) -> Opti
         })?
         .to_string();
 
-    // Deezer retorna "artist//" (hash vacío) cuando no tiene foto del artista
+    // Deezer returns "artist//" (empty hash) when no photo exists for the artist.
     if url.contains("artist//") {
         return None;
     }
@@ -409,7 +405,7 @@ fn audiodb_artist_photo(client: &reqwest::blocking::Client, artist: &str) -> Opt
         .map(|s| s.to_string())
 }
 
-// Último recurso: portada del álbum más reciente vía iTunes (música-específico, sin clave)
+// Last resort: latest album artwork from iTunes (music-specific, no API key required).
 fn itunes_album_art(client: &reqwest::blocking::Client, artist: &str) -> Option<String> {
     let resp: serde_json::Value = client
         .get("https://itunes.apple.com/search")

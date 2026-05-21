@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::i18n::gettext;
 use crate::library::{self, db::Database, scanner};
-use crate::player::Player;
+use crate::player::{replaygain::ReplayGainMode, Player};
 use crate::scrobbler::LastFmClient;
 use crate::ui::albums_view::AlbumsView;
 use crate::ui::artists_view::ArtistsView;
@@ -99,8 +99,63 @@ pub(crate) fn start_scan(
     });
 }
 
+const APP_ICON_SVG: &[u8] =
+    include_bytes!("../../data/icons/hicolor/scalable/apps/com.audra.player.svg");
+
+fn register_app_icon() {
+    let Some(display) = gtk4::gdk::Display::default() else {
+        return;
+    };
+    let theme = gtk4::IconTheme::for_display(&display);
+    let icon_dir = std::env::temp_dir()
+        .join("audra-icons")
+        .join("hicolor")
+        .join("scalable")
+        .join("apps");
+    if std::fs::create_dir_all(&icon_dir).is_ok() {
+        let icon_path = icon_dir.join("com.audra.player.svg");
+        if std::fs::write(&icon_path, APP_ICON_SVG).is_ok() {
+            theme.add_search_path(std::env::temp_dir().join("audra-icons"));
+        }
+    }
+}
+
 pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
+    // On Windows, register the bundled share/icons directory so GTK can
+    // resolve "com.audra.player" from hicolor. Without this, GTK falls
+    // back to its own default icon and overwrites the embedded .ico.
+    #[cfg(windows)]
+    if let Some(display) = gtk4::gdk::Display::default() {
+        let theme = gtk4::IconTheme::for_display(&display);
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                theme.add_search_path(dir.join("share").join("icons"));
+            }
+        }
+    }
+
+    // Ensure the app icon is always resolvable for the About dialog.
+    // The SVG is embedded in the binary; we write it once to a temp dir and
+    // register that dir with the icon theme. This is a no-op on systems where
+    // the icon is already installed (the theme finds it there first).
+    register_app_icon();
+
     let use_system_font = db.lock().unwrap().get_setting("use_system_font").as_deref() == Some("1");
+    let replaygain_setting = db
+        .lock()
+        .unwrap()
+        .get_setting("replaygain")
+        .unwrap_or_default();
+    let replaygain_init_idx: u32 = match replaygain_setting.as_str() {
+        "track" => 1,
+        "album" => 2,
+        _ => 0,
+    };
+    let replaygain_init_mode: Option<ReplayGainMode> = match replaygain_setting.as_str() {
+        "track" => Some(ReplayGainMode::Track),
+        "album" => Some(ReplayGainMode::Album),
+        _ => None,
+    };
     let lang_setting = db
         .lock()
         .unwrap()
@@ -213,6 +268,33 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     font_row.append(&font_label);
     font_row.append(&font_switch);
 
+    let rg_row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    rg_row.set_margin_top(4);
+    rg_row.set_margin_bottom(4);
+    rg_row.set_margin_start(8);
+    rg_row.set_margin_end(8);
+    let rg_label = gtk4::Label::new(Some(&gettext("ReplayGain")));
+    rg_label.set_xalign(0.0);
+    rg_label.add_css_class("caption");
+    rg_label.add_css_class("dim-label");
+    let rg_btn_off = gtk4::ToggleButton::with_label(&gettext("Off"));
+    let rg_btn_track = gtk4::ToggleButton::with_label(&gettext("Track"));
+    let rg_btn_album = gtk4::ToggleButton::with_label(&gettext("Album"));
+    rg_btn_track.set_group(Some(&rg_btn_off));
+    rg_btn_album.set_group(Some(&rg_btn_off));
+    match replaygain_init_idx {
+        1 => rg_btn_track.set_active(true),
+        2 => rg_btn_album.set_active(true),
+        _ => rg_btn_off.set_active(true),
+    }
+    let rg_seg = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    rg_seg.add_css_class("linked");
+    rg_seg.append(&rg_btn_off);
+    rg_seg.append(&rg_btn_track);
+    rg_seg.append(&rg_btn_album);
+    rg_row.append(&rg_label);
+    rg_row.append(&rg_seg);
+
     let pop_sep3 = gtk4::Separator::new(gtk4::Orientation::Horizontal);
     pop_sep3.set_margin_top(14);
     pop_sep3.set_margin_bottom(3);
@@ -275,6 +357,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     pop_box.append(&item_lastfm);
     pop_box.append(&pop_sep2);
     pop_box.append(&font_row);
+    pop_box.append(&rg_row);
     pop_box.append(&lang_row);
     pop_box.append(&pop_sep3);
     pop_box.append(&item_reset);
@@ -294,6 +377,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let player: Rc<RefCell<Player>> = Rc::new(RefCell::new(
         Player::new().expect("Error iniciando el motor de audio"),
     ));
+    player.borrow_mut().replaygain_mode = replaygain_init_mode;
     // Single source of truth for "what's currently playing". All track lists
     // subscribe to this bus and update their `.playing` row indicator in sync.
     let now_playing = NowPlaying::new();
@@ -527,6 +611,34 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
+    rg_btn_off.connect_toggled(clone!(
+        #[strong] db, #[strong] player,
+        move |btn| {
+            if btn.is_active() {
+                player.borrow_mut().replaygain_mode = None;
+                let _ = db.lock().unwrap().set_setting("replaygain", "off");
+            }
+        }
+    ));
+    rg_btn_track.connect_toggled(clone!(
+        #[strong] db, #[strong] player,
+        move |btn| {
+            if btn.is_active() {
+                player.borrow_mut().replaygain_mode = Some(ReplayGainMode::Track);
+                let _ = db.lock().unwrap().set_setting("replaygain", "track");
+            }
+        }
+    ));
+    rg_btn_album.connect_toggled(clone!(
+        #[strong] db, #[strong] player,
+        move |btn| {
+            if btn.is_active() {
+                player.borrow_mut().replaygain_mode = Some(ReplayGainMode::Album);
+                let _ = db.lock().unwrap().set_setting("replaygain", "album");
+            }
+        }
+    ));
+
     btn_lang_auto.connect_toggled(clone!(
         #[strong]
         db,
@@ -637,14 +749,12 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                 .application_icon("com.audra.player")
                 .developer_name("Daniel Avila")
                 .version(env!("CARGO_PKG_VERSION"))
-                .comments(&gettext(
-                    "Native music player with Last.fm scrobbling",
-                ))
+                .comments(gettext("Native music player with Last.fm scrobbling"))
                 .copyright("© Daniel Avila")
                 .license_type(gtk4::License::Gpl30)
                 .website("https://github.com/amurpo/audra")
                 .issue_url("https://github.com/amurpo/audra/issues")
-                .translator_credits(&gettext("translator-credits"))
+                .translator_credits(gettext("translator-credits"))
                 .build();
             about.present(Some(&window));
         }
@@ -708,19 +818,43 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
-    window.present();
-
-    // Build the OS media controls in a deferred idle tick. `present()`
-    // does not synchronously allocate the native HWND on Windows, so
-    // calling `Mpris::new` right away gives souvlaki an invalid handle
-    // and SMTC silently rejects it. By the time the next idle iteration
-    // runs, the surface is realized and `gdk_win32_surface_get_handle`
-    // returns a usable HWND. Linux's MPRIS backend does not need the
-    // handle, so the deferral is harmless there.
     let (mpris_tx, mpris_rx) = std::sync::mpsc::channel();
     let mpris_cell: crate::ui::playback::MprisHandle =
         std::rc::Rc::new(std::cell::RefCell::new(None));
 
+    // Windows: connect_realize fires during present() at the exact moment
+    // GDK calls CreateWindowExW — the HWND is guaranteed valid here.
+    // idle_add_local_once was unreliable because the Win32 message pump
+    // can process WM_CREATE after the idle fires, giving souvlaki null.
+    #[cfg(windows)]
+    {
+        let mpris_cell = Rc::clone(&mpris_cell);
+        let bar_c = Rc::clone(&bar);
+        let player_c = Rc::clone(&player);
+        let init_once = Rc::new(std::cell::RefCell::new(Some((mpris_tx, mpris_rx))));
+        window.connect_realize(move |window| {
+            let Some((tx, rx)) = init_once.borrow_mut().take() else {
+                return;
+            };
+            if let Some(m) = crate::player::mpris::Mpris::new(window, tx) {
+                *mpris_cell.borrow_mut() = Some(m);
+                wire_mpris(
+                    rx,
+                    Rc::clone(&player_c),
+                    Rc::clone(&bar_c),
+                    window.downgrade(),
+                );
+            } else {
+                log::warn!("mpris/smtc: media controls unavailable on this platform");
+            }
+        });
+    }
+
+    window.present();
+
+    // Linux/other: D-Bus MPRIS does not need an HWND; one idle tick is
+    // enough to let the surface map before calling Mpris::new.
+    #[cfg(not(windows))]
     {
         let mpris_cell = Rc::clone(&mpris_cell);
         let bar_c = Rc::clone(&bar);

@@ -27,9 +27,9 @@ jobs:
     uses: ./.github/workflows/test.yml
     secrets: inherit
 
-  build-linux:
+  build-fedora:
     needs: [version, test]
-    uses: ./.github/workflows/build-linux.yml
+    uses: ./.github/workflows/build-fedora.yml
     with:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
@@ -49,7 +49,7 @@ jobs:
     secrets: inherit
 
   release:
-    needs: [version, build-linux, build-windows, build-deb]
+    needs: [version, build-fedora, build-windows, build-deb]
     name: Publicar Release
     runs-on: ubuntu-latest
     permissions:

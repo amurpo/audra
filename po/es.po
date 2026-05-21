@@ -13,6 +13,9 @@ msgstr "Sin título"
 msgid "Unknown artist"
 msgstr "Artista desconocido"
 
+msgid "Unknown album"
+msgstr "Álbum desconocido"
+
 msgid "Artists"
 msgstr "Artistas"
 
@@ -176,3 +179,21 @@ msgstr "Buscar…"
 
 msgid "Various Artists"
 msgstr "Varios artistas"
+
+msgid "All your music"
+msgstr "Toda tu música"
+
+msgid "Back"
+msgstr "Atrás"
+
+msgid "ReplayGain"
+msgstr "ReplayGain"
+
+msgid "Off"
+msgstr "Desactivado"
+
+msgid "Track"
+msgstr "Por pista"
+
+msgid "Album"
+msgstr "Por álbum"
