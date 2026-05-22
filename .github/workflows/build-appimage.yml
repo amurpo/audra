@@ -43,19 +43,16 @@ jobs:
 
       - name: Descargar linuxdeploy
         run: |
-          curl -L -o linuxdeploy-x86_64.AppImage \
+          curl -fL -o linuxdeploy-x86_64.AppImage \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          curl -L -o linuxdeploy-plugin-gtk-x86_64.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk-x86_64.AppImage
-          # Pre-extraer ambos para que ninguno necesite FUSE en el container.
-          # linuxdeploy lanza el plugin como subproceso y no garantiza propagar
-          # APPIMAGE_EXTRACT_AND_RUN; usando los binarios extraídos lo evitamos.
+          chmod +x linuxdeploy-x86_64.AppImage
+          # El plugin GTK es un shell script, no un AppImage
+          curl -fL -o /usr/local/bin/linuxdeploy-plugin-gtk \
+            https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
+          chmod +x /usr/local/bin/linuxdeploy-plugin-gtk
+          # Extraer linuxdeploy para no necesitar FUSE en el container
           ./linuxdeploy-x86_64.AppImage --appimage-extract
           mv squashfs-root linuxdeploy
-          ./linuxdeploy-plugin-gtk-x86_64.AppImage --appimage-extract
-          mv squashfs-root linuxdeploy-plugin-gtk
-          ln -sf "$(pwd)/linuxdeploy-plugin-gtk/AppRun" /usr/local/bin/linuxdeploy-plugin-gtk
 
       - name: Crear AppDir
         run: |
