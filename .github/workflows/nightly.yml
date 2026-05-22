@@ -1,0 +1,92 @@
+name: Nightly (dev)
+
+on:
+  push:
+    branches:
+      - dev
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE*'
+      - '.gitignore'
+      - 'docs/**'
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      hash: ${{ steps.info.outputs.hash }}
+      date: ${{ steps.info.outputs.date }}
+      ver:  ${{ steps.info.outputs.ver }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: info
+        run: |
+          HASH=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%d)
+          echo "hash=$HASH"  >> $GITHUB_OUTPUT
+          echo "date=$DATE"  >> $GITHUB_OUTPUT
+          echo "ver=nightly-${HASH}" >> $GITHUB_OUTPUT
+
+  test:
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+
+  build-fedora:
+    needs: [meta, test]
+    uses: ./.github/workflows/build-fedora.yml
+    with:
+      ver: ${{ needs.meta.outputs.ver }}
+    secrets: inherit
+
+  build-windows:
+    needs: [meta, test]
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      ver: ${{ needs.meta.outputs.ver }}
+    secrets: inherit
+
+  build-deb:
+    needs: [meta, test]
+    uses: ./.github/workflows/build-deb.yml
+    with:
+      ver: ${{ needs.meta.outputs.ver }}
+    secrets: inherit
+
+  build-appimage:
+    needs: [meta, test]
+    uses: ./.github/workflows/build-appimage.yml
+    with:
+      ver: ${{ needs.meta.outputs.ver }}
+    secrets: inherit
+
+  publish:
+    needs: [meta, build-fedora, build-windows, build-deb, build-appimage]
+    name: Publicar nightly
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Descargar artefactos
+        uses: actions/download-artifact@v7
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Eliminar release nightly anterior
+        run: gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Publicar nightly
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: nightly
+          name: "Nightly ${{ needs.meta.outputs.date }} (${{ needs.meta.outputs.hash }})"
+          prerelease: true
+          generate_release_notes: false
+          body: |
+            Build automático desde la rama `dev`. No es una versión estable.
+
+            **Commit:** `${{ github.sha }}`
+            **Fecha:** ${{ needs.meta.outputs.date }}
+          files: dist/**
