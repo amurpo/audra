@@ -79,7 +79,7 @@ jobs:
           # recreate from scratch with only this run's artifacts. Avoids
           # any accumulation across runs.
           gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
-          gh release create nightly dist/* \
+          gh release create nightly $(find dist -type f) \
             --target ${{ github.sha }} \
             --latest \
             --title "Nightly ${{ needs.meta.outputs.date }} (${{ needs.meta.outputs.hash }})" \
