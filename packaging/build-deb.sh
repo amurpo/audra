@@ -2,7 +2,9 @@
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VER=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
+VER="${VER:-$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')}"
+# DEB no permite guiones en la versión upstream; reemplazar con ~
+DEB_VER=$(echo "$VER" | tr '-' '~')
 
 # Load credentials so build.rs embeds them in the binary
 if [ -f "$ROOT/.env" ]; then
@@ -17,7 +19,7 @@ fi
 echo "==> Building audra v$VER..."
 cargo build --release --manifest-path "$ROOT/Cargo.toml"
 
-PKG="audra_${VER}_amd64"
+PKG="audra_${DEB_VER}_amd64"
 STAGE="$ROOT/target/debpkg/$PKG"
 
 echo "==> Staging package tree..."
@@ -37,7 +39,7 @@ msgfmt "$ROOT/po/es.po" -o "$STAGE/usr/share/locale/es/LC_MESSAGES/audra.mo"
 # (Debian trixie / Ubuntu 24.04+); the DEB is built in a debian:trixie container.
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: audra
-Version: $VER
+Version: $DEB_VER
 Architecture: amd64
 Maintainer: Daniel Avila <daigo.tnt@gmail.com>
 Section: sound

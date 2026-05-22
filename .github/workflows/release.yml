@@ -48,15 +48,8 @@ jobs:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
 
-  build-appimage:
-    needs: [version, test]
-    uses: ./.github/workflows/build-appimage.yml
-    with:
-      ver: ${{ needs.version.outputs.ver }}
-    secrets: inherit
-
   release:
-    needs: [version, build-fedora, build-windows, build-deb, build-appimage]
+    needs: [version, build-fedora, build-windows, build-deb]
     name: Publicar Release
     runs-on: ubuntu-latest
     permissions:

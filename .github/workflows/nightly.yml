@@ -52,15 +52,8 @@ jobs:
       ver: ${{ needs.meta.outputs.ver }}
     secrets: inherit
 
-  build-appimage:
-    needs: [meta, test]
-    uses: ./.github/workflows/build-appimage.yml
-    with:
-      ver: ${{ needs.meta.outputs.ver }}
-    secrets: inherit
-
   publish:
-    needs: [meta, build-fedora, build-windows, build-deb, build-appimage]
+    needs: [meta, build-fedora, build-windows, build-deb]
     name: Publicar nightly
     runs-on: ubuntu-latest
     permissions:
