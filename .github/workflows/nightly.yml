@@ -70,21 +70,18 @@ jobs:
           path: dist/
           merge-multiple: true
 
-      - name: Delete previous nightly release
-        run: gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+      - name: Publish nightly release
         env:
           GH_TOKEN: ${{ github.token }}
+        run: |
+          # Full replace: delete the previous release (assets + tag) and
+          # recreate from scratch with only this run's artifacts. Avoids
+          # any accumulation across runs.
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+          gh release create nightly dist/* \
+            --latest \
+            --title "Nightly ${{ needs.meta.outputs.date }} (${{ needs.meta.outputs.hash }})" \
+            --notes "Automated build from the \`dev\` branch. Not a stable release.
 
-      - name: Publish nightly release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: nightly
-          name: "Nightly ${{ needs.meta.outputs.date }} (${{ needs.meta.outputs.hash }})"
-          prerelease: true
-          generate_release_notes: false
-          body: |
-            Automated build from the `dev` branch. Not a stable release.
-
-            **Commit:** `${{ github.sha }}`
-            **Date:** ${{ needs.meta.outputs.date }}
-          files: dist/**
+          **Commit:** \`${{ github.sha }}\`
+          **Date:** ${{ needs.meta.outputs.date }}"
