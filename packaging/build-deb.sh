@@ -44,7 +44,7 @@ cat > "$STAGE/DEBIAN/control" <<EOF
 Package: audra
 Version: $DEB_VER
 Architecture: amd64
-Maintainer: Daniel Avila <daigo.tnt@gmail.com>
+Maintainer: Daniel Avila
 Section: sound
 Priority: optional
 Homepage: https://github.com/amurpo/audra

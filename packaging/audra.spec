@@ -55,5 +55,5 @@ msgfmt %{_sourcedir}/es.po \
 /usr/bin/update-desktop-database >/dev/null 2>&1 || :
 
 %changelog
-* Thu Jan 01 2026 Daniel Avila <daigo.tnt@gmail.com> - %{ver}-1
+* Thu Jan 01 2026 Daniel Avila - %{ver}-1
 - Initial release

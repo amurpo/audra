@@ -151,7 +151,7 @@ fn write_cache(path: &PathBuf, data: &[u8]) {
 /// requires an identifying one) and a per-call timeout.
 fn http_client(timeout_secs: u64) -> Option<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
-        .user_agent("audra/0.1 (https://github.com/audra-player; daigo.tnt@gmail.com)")
+        .user_agent("audra/0.1 (https://github.com/amurpo/audra)")
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .ok()
