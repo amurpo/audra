@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-windows:
-    name: Build Windows (.zip)
+    name: Build Windows (installer)
     runs-on: windows-latest
     env:
       VER: ${{ inputs.ver }}
@@ -100,11 +100,6 @@ jobs:
           gtk-theme-name=Adwaita
           EOF
 
-      - name: Empaquetar zip
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist\audra -DestinationPath "audra-$env:VER-windows-x64.zip"
-
       - name: Instalar Inno Setup
         shell: pwsh
         run: |
@@ -120,6 +115,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
-          path: |
-            audra-${{ inputs.ver }}-windows-x64.zip
-            packaging/audra-${{ inputs.ver }}-windows-x64-setup.exe
+          path: packaging/audra-${{ inputs.ver }}-windows-x64-setup.exe
