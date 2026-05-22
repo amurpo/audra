@@ -51,6 +51,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.2.2" date="2026-05-22">
+      <description>
+        <p>Fix audio continuing in background on language change, Windows SMTC improvements, and AppImage packaging.</p>
+      </description>
+    </release>
     <release version="0.2.1" date="2026-05-21">
       <description>
         <p>Windows media controls improvements, packaging refinements, and code quality pass.</p>

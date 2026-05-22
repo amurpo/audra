@@ -26,6 +26,11 @@ impl AudioEngine {
         Ok(())
     }
 
+    pub fn stop(&self) {
+        self.sink.clear();
+        self.sink.pause();
+    }
+
     pub fn pause(&self) {
         self.sink.pause();
     }

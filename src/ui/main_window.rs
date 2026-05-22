@@ -648,55 +648,46 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
+    let apply_language: Rc<dyn Fn(Option<&'static str>)> = Rc::new({
+        let player = Rc::clone(&player);
+        let db = Arc::clone(&db);
+        let app = app.clone();
+        let window = window.downgrade();
+        move |lang: Option<&'static str>| {
+            player.borrow_mut().stop();
+            let _ = db.lock().unwrap().set_setting("language", lang.unwrap_or(""));
+            crate::i18n::init(lang);
+            if let Some(w) = window.upgrade() {
+                w.close();
+            }
+            build_window(&app, Arc::clone(&db));
+        }
+    });
     btn_lang_auto.connect_toggled(clone!(
         #[strong]
-        db,
-        #[strong]
-        app,
-        #[weak]
-        window,
+        apply_language,
         move |btn| {
-            if !btn.is_active() {
-                return;
+            if btn.is_active() {
+                apply_language(None);
             }
-            let _ = db.lock().unwrap().set_setting("language", "");
-            crate::i18n::init(None);
-            window.close();
-            build_window(&app, Arc::clone(&db));
         }
     ));
     btn_lang_en.connect_toggled(clone!(
         #[strong]
-        db,
-        #[strong]
-        app,
-        #[weak]
-        window,
+        apply_language,
         move |btn| {
-            if !btn.is_active() {
-                return;
+            if btn.is_active() {
+                apply_language(Some("en"));
             }
-            let _ = db.lock().unwrap().set_setting("language", "en");
-            crate::i18n::init(Some("en"));
-            window.close();
-            build_window(&app, Arc::clone(&db));
         }
     ));
     btn_lang_es.connect_toggled(clone!(
         #[strong]
-        db,
-        #[strong]
-        app,
-        #[weak]
-        window,
+        apply_language,
         move |btn| {
-            if !btn.is_active() {
-                return;
+            if btn.is_active() {
+                apply_language(Some("es"));
             }
-            let _ = db.lock().unwrap().set_setting("language", "es");
-            crate::i18n::init(Some("es"));
-            window.close();
-            build_window(&app, Arc::clone(&db));
         }
     ));
 
@@ -831,24 +822,21 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let mpris_cell: crate::ui::playback::MprisHandle =
         std::rc::Rc::new(std::cell::RefCell::new(None));
 
-    // Windows: connect_realize fires during present() at the exact moment
-    // GDK calls CreateWindowExW — the HWND is guaranteed valid here.
-    // idle_add_local_once was unreliable because the Win32 message pump
-    // can process WM_CREATE after the idle fires, giving souvlaki null.
+    // Windows: connect_map fires once the Win32 window is visible on screen,
+    // which guarantees WM_CREATE has been processed and the HWND is non-zero.
+    // connect_realize was too early: the HWND can still be 0 at that point,
+    // causing souvlaki to silently bail out.
     #[cfg(windows)]
     {
         let mpris_cell = Rc::clone(&mpris_cell);
         let bar_c = Rc::clone(&bar);
         let player_c = Rc::clone(&player);
         let init_once = Rc::new(std::cell::RefCell::new(Some((mpris_tx, mpris_rx))));
-        window.connect_realize(move |window| {
-            log::info!("mpris/smtc: connect_realize fired");
+        window.connect_map(move |window| {
             let Some((tx, rx)) = init_once.borrow_mut().take() else {
-                log::info!("mpris/smtc: connect_realize fired again (already initialized)");
                 return;
             };
             if let Some(m) = crate::player::mpris::Mpris::new(window, tx) {
-                log::info!("mpris/smtc: initialized successfully");
                 *mpris_cell.borrow_mut() = Some(m);
                 wire_mpris(
                     rx,
@@ -856,8 +844,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                     Rc::clone(&bar_c),
                     window.downgrade(),
                 );
-            } else {
-                log::warn!("mpris/smtc: Mpris::new returned None — SMTC unavailable");
             }
         });
     }

@@ -17,21 +17,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Deps (MSYS2)
+      - name: Deps (MSYS2 CLANG64)
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: CLANG64
           update: true
           cache: true
           install: >-
-            mingw-w64-x86_64-gtk4
-            mingw-w64-x86_64-libadwaita
-            mingw-w64-x86_64-sqlite3
-            mingw-w64-x86_64-pkg-config
-            mingw-w64-x86_64-rust
-            mingw-w64-x86_64-python
-            mingw-w64-x86_64-python-pip
-            mingw-w64-x86_64-librsvg
+            mingw-w64-clang-x86_64-gtk4
+            mingw-w64-clang-x86_64-libadwaita
+            mingw-w64-clang-x86_64-sqlite3
+            mingw-w64-clang-x86_64-pkg-config
+            mingw-w64-clang-x86_64-rust
+            mingw-w64-clang-x86_64-python
+            mingw-w64-clang-x86_64-python-pip
+            mingw-w64-clang-x86_64-librsvg
             gettext
 
       - uses: Swatinem/rust-cache@v2
@@ -48,16 +48,16 @@ jobs:
           mkdir -p dist/audra
           cp target/release/audra.exe dist/audra/
 
-          cp /mingw64/bin/*.dll dist/audra/
+          cp /clang64/bin/*.dll dist/audra/
 
           # Schemas de GLib
           mkdir -p dist/audra/share/glib-2.0/schemas
-          cp /mingw64/share/glib-2.0/schemas/* dist/audra/share/glib-2.0/schemas/
+          cp /clang64/share/glib-2.0/schemas/* dist/audra/share/glib-2.0/schemas/
 
           # Tema de iconos Adwaita
           mkdir -p dist/audra/share/icons
-          cp -r /mingw64/share/icons/Adwaita dist/audra/share/icons/
-          cp -r /mingw64/share/icons/hicolor dist/audra/share/icons/
+          cp -r /clang64/share/icons/Adwaita dist/audra/share/icons/
+          cp -r /clang64/share/icons/hicolor dist/audra/share/icons/
 
           # App icon: SVG + PNG fallbacks so GTK finds it even if the
           # pixbuf SVG loader path isn't configured in the bundle.
@@ -73,12 +73,12 @@ jobs:
           cp data/icons/audra.ico dist/audra/
 
           # GDK Pixbuf loaders
-          if [ -d /mingw64/lib/gdk-pixbuf-2.0 ]; then
+          if [ -d /clang64/lib/gdk-pixbuf-2.0 ]; then
             mkdir -p dist/audra/lib
-            cp -r /mingw64/lib/gdk-pixbuf-2.0 dist/audra/lib/
+            cp -r /clang64/lib/gdk-pixbuf-2.0 dist/audra/lib/
           fi
 
-          cp /mingw64/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.dll dist/audra/lib/gdk-pixbuf-2.0/2.10.0/loaders/ || true
+          cp /clang64/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.dll dist/audra/lib/gdk-pixbuf-2.0/2.10.0/loaders/ || true
 
           # Catálogo de traducción (gettext)
           mkdir -p dist/audra/share/locale/es/LC_MESSAGES
@@ -86,8 +86,8 @@ jobs:
 
           # libadwaita/GTK/GLib translations (for AboutDialog and other built-in strings)
           for cat in libadwaita gtk40 gtk40-properties glib20; do
-            if [ -f /mingw64/share/locale/es/LC_MESSAGES/${cat}.mo ]; then
-              cp /mingw64/share/locale/es/LC_MESSAGES/${cat}.mo \
+            if [ -f /clang64/share/locale/es/LC_MESSAGES/${cat}.mo ]; then
+              cp /clang64/share/locale/es/LC_MESSAGES/${cat}.mo \
                  dist/audra/share/locale/es/LC_MESSAGES/
             fi
           done

@@ -48,15 +48,15 @@ jobs:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
 
-  build-flatpak:
+  build-appimage:
     needs: [version, test]
-    uses: ./.github/workflows/build-flatpak.yml
+    uses: ./.github/workflows/build-appimage.yml
     with:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
 
   release:
-    needs: [version, build-fedora, build-windows, build-deb, build-flatpak]
+    needs: [version, build-fedora, build-windows, build-deb, build-appimage]
     name: Publicar Release
     runs-on: ubuntu-latest
     permissions:

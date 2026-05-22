@@ -126,7 +126,13 @@ impl Mpris {
             let _ = self.controls.set_metadata(MediaMetadata::default());
             return;
         };
+        // Windows: souvlaki issue #39 — loading cover art via file:// URL
+        // hangs or fails silently on some Windows versions. Skip cover art
+        // on Windows; MPRIS on Linux handles file:// URLs correctly.
+        #[cfg(not(windows))]
         let cover_url = cover.and_then(|b| self.cover_url(b));
+        #[cfg(windows)]
+        let cover_url: Option<String> = None;
         let _ = self.controls.set_metadata(MediaMetadata {
             title: track.title.as_deref(),
             artist: track.artist.as_deref(),

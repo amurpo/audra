@@ -1,0 +1,74 @@
+name: Build AppImage
+
+on:
+  workflow_call:
+    inputs:
+      ver:
+        required: true
+        type: string
+
+jobs:
+  build-appimage:
+    name: Build AppImage
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    env:
+      VER: ${{ inputs.ver }}
+      LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
+    steps:
+      - name: Deps
+        run: |
+          apt-get update
+          apt-get install -y \
+            curl ca-certificates git file wget \
+            build-essential pkg-config \
+            libgtk-4-dev libadwaita-1-dev \
+            libsqlite3-dev libasound2-dev \
+            libfontconfig1-dev \
+            gettext
+
+      - uses: actions/checkout@v6
+
+      - name: Instalar Rust (rustup)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Compilar
+        run: cargo build --release
+        env:
+          RUST_BACKTRACE: 1
+
+      - name: Descargar linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk-x86_64.AppImage
+
+      - name: Crear AppDir
+        run: |
+          mkdir -p AppDir/usr/{bin,share/{applications,icons,locale}}
+          cp target/release/audra AppDir/usr/bin/
+          cp data/io.github.amurpo.audra.desktop AppDir/usr/share/applications/
+          cp -r data/icons AppDir/usr/share/
+          mkdir -p AppDir/usr/share/locale/es/LC_MESSAGES
+          msgfmt po/es.po -o AppDir/usr/share/locale/es/LC_MESSAGES/audra.mo
+
+      - name: Empaquetar AppImage
+        run: |
+          DEPLOY_GTK_VERSION=4 APPIMAGE_EXTRACT_AND_RUN=1 \
+            ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --plugin gtk \
+            --output appimage
+        env:
+          VERSION: ${{ inputs.ver }}
+          ARCH: x86_64
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: "*.AppImage"

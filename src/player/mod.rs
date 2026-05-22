@@ -82,6 +82,11 @@ impl Player {
         Ok(self.queue.get(idx))
     }
 
+    pub fn stop(&mut self) {
+        self.engine.stop();
+        self.state = PlayerState::Stopped;
+    }
+
     pub fn pause_resume(&mut self) {
         match self.state {
             PlayerState::Playing => {
