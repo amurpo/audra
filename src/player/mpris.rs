@@ -46,9 +46,7 @@ impl Mpris {
         // surface is realized.
         #[cfg(windows)]
         {
-            log::info!("mpris/smtc: window_handle returned {:?}", hwnd);
             if hwnd.is_none() {
-                log::warn!("mpris/smtc: no HWND yet, deferring controls setup");
                 return None;
             }
         }
@@ -58,35 +56,25 @@ impl Mpris {
             display_name: "Audra",
             hwnd,
         };
-        log::info!("mpris/smtc: calling MediaControls::new");
-        let mut controls = match MediaControls::new(config) {
-            Ok(c) => {
-                log::info!("mpris/smtc: MediaControls::new succeeded");
-                c
-            }
-            Err(e) => {
-                log::warn!("mpris/smtc: MediaControls::new failed: {e:?}");
-                return None;
-            }
-        };
-        log::info!("mpris/smtc: calling attach");
-        if let Err(e) = controls.attach(move |event: MediaControlEvent| {
-            let cmd = match event {
-                MediaControlEvent::Toggle => MprisCommand::PlayPause,
-                MediaControlEvent::Play => MprisCommand::Play,
-                MediaControlEvent::Pause => MprisCommand::Pause,
-                MediaControlEvent::Next => MprisCommand::Next,
-                MediaControlEvent::Previous => MprisCommand::Previous,
-                MediaControlEvent::Stop | MediaControlEvent::Quit => MprisCommand::Stop,
-                MediaControlEvent::Raise => MprisCommand::Raise,
-                _ => return,
-            };
-            let _ = tx.send(cmd);
-        }) {
-            log::warn!("mpris/smtc: attach failed: {e:?}");
+        let mut controls = MediaControls::new(config).ok()?;
+        if controls
+            .attach(move |event: MediaControlEvent| {
+                let cmd = match event {
+                    MediaControlEvent::Toggle => MprisCommand::PlayPause,
+                    MediaControlEvent::Play => MprisCommand::Play,
+                    MediaControlEvent::Pause => MprisCommand::Pause,
+                    MediaControlEvent::Next => MprisCommand::Next,
+                    MediaControlEvent::Previous => MprisCommand::Previous,
+                    MediaControlEvent::Stop | MediaControlEvent::Quit => MprisCommand::Stop,
+                    MediaControlEvent::Raise => MprisCommand::Raise,
+                    _ => return,
+                };
+                let _ = tx.send(cmd);
+            })
+            .is_err()
+        {
             return None;
         }
-        log::info!("mpris/smtc: attach succeeded — SMTC ready");
         let cover_dir = dirs::data_local_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
             .join("audra")
@@ -161,25 +149,10 @@ impl Mpris {
 #[cfg(windows)]
 fn window_handle(window: &adw::ApplicationWindow) -> Option<*mut std::ffi::c_void> {
     use gtk4::prelude::*;
-    let surface = match gtk4::prelude::NativeExt::surface(window) {
-        Some(s) => s,
-        None => {
-            log::warn!("mpris/smtc: NativeExt::surface returned None");
-            return None;
-        }
-    };
-    log::info!("mpris/smtc: surface type = {}", surface.type_().name());
-    let win32 = match surface.downcast::<gdk4_win32::Win32Surface>() {
-        Ok(w) => w,
-        Err(_) => {
-            log::warn!("mpris/smtc: surface downcast to Win32Surface failed");
-            return None;
-        }
-    };
+    let surface = gtk4::prelude::NativeExt::surface(window)?;
+    let win32 = surface.downcast::<gdk4_win32::Win32Surface>().ok()?;
     let raw = win32.handle().0;
-    log::info!("mpris/smtc: HWND = {raw:#x}");
     if raw == 0 {
-        log::warn!("mpris/smtc: HWND is 0 (surface not realized yet)");
         return None;
     }
     Some(raw as *mut std::ffi::c_void)
