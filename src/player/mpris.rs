@@ -30,7 +30,6 @@ pub enum MprisCommand {
 pub struct Mpris {
     controls: MediaControls,
     last_track: Option<String>,
-    last_state: Option<&'static str>,
     cover_dir: std::path::PathBuf,
 }
 
@@ -55,9 +54,7 @@ impl Mpris {
         }
 
         let config = PlatformConfig {
-            // Use the reverse-DNS app ID so MPRIS widgets resolve the icon
-            // via io.github.amurpo.audra.desktop.
-            dbus_name: "io.github.amurpo.audra",
+            dbus_name: "audra",
             display_name: "Audra",
             hwnd,
         };
@@ -97,7 +94,6 @@ impl Mpris {
         Some(Self {
             controls,
             last_track: None,
-            last_state: None,
             cover_dir,
         })
     }
@@ -127,10 +123,7 @@ impl Mpris {
         }
         self.last_track = path;
         let Some(track) = track else {
-            log::info!("mpris/smtc: update_track -> clearing metadata");
-            if let Err(e) = self.controls.set_metadata(MediaMetadata::default()) {
-                log::warn!("mpris/smtc: set_metadata(clear) failed: {e:?}");
-            }
+            let _ = self.controls.set_metadata(MediaMetadata::default());
             return;
         };
         // Windows: souvlaki issue #39 — loading cover art via file:// URL
@@ -140,13 +133,7 @@ impl Mpris {
         let cover_url = cover.and_then(|b| self.cover_url(b));
         #[cfg(windows)]
         let cover_url: Option<String> = None;
-        log::info!(
-            "mpris/smtc: update_track -> title={:?} artist={:?} cover={:?}",
-            track.title,
-            track.artist,
-            cover_url
-        );
-        if let Err(e) = self.controls.set_metadata(MediaMetadata {
+        let _ = self.controls.set_metadata(MediaMetadata {
             title: track.title.as_deref(),
             artist: track.artist.as_deref(),
             album: track.album.as_deref(),
@@ -154,34 +141,20 @@ impl Mpris {
             duration: track
                 .duration_secs
                 .map(|d| Duration::from_secs(d.max(0) as u64)),
-        }) {
-            log::warn!("mpris/smtc: set_metadata failed: {e:?}");
-        }
+        });
     }
 
     pub fn set_playback(&mut self, state: &PlayerState, position: Duration) {
-        let (playback, name) = match state {
-            PlayerState::Playing => (
-                MediaPlayback::Playing {
-                    progress: Some(MediaPosition(position)),
-                },
-                "Playing",
-            ),
-            PlayerState::Paused => (
-                MediaPlayback::Paused {
-                    progress: Some(MediaPosition(position)),
-                },
-                "Paused",
-            ),
-            PlayerState::Stopped => (MediaPlayback::Stopped, "Stopped"),
+        let playback = match state {
+            PlayerState::Playing => MediaPlayback::Playing {
+                progress: Some(MediaPosition(position)),
+            },
+            PlayerState::Paused => MediaPlayback::Paused {
+                progress: Some(MediaPosition(position)),
+            },
+            PlayerState::Stopped => MediaPlayback::Stopped,
         };
-        if self.last_state != Some(name) {
-            self.last_state = Some(name);
-            log::info!("mpris/smtc: set_playback -> {name}");
-        }
-        if let Err(e) = self.controls.set_playback(playback) {
-            log::warn!("mpris/smtc: set_playback({name}) failed: {e:?}");
-        }
+        let _ = self.controls.set_playback(playback);
     }
 }
 
