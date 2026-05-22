@@ -12,6 +12,7 @@ on:
 
 jobs:
   meta:
+    name: Build metadata
     runs-on: ubuntu-latest
     outputs:
       hash: ${{ steps.info.outputs.hash }}
@@ -28,10 +29,12 @@ jobs:
           echo "ver=nightly-${HASH}" >> $GITHUB_OUTPUT
 
   test:
+    name: Tests
     uses: ./.github/workflows/test.yml
     secrets: inherit
 
   build-fedora:
+    name: Build Fedora (RPM)
     needs: [meta, test]
     uses: ./.github/workflows/build-fedora.yml
     with:
@@ -39,6 +42,7 @@ jobs:
     secrets: inherit
 
   build-windows:
+    name: Build Windows
     needs: [meta, test]
     uses: ./.github/workflows/build-windows.yml
     with:
@@ -46,6 +50,7 @@ jobs:
     secrets: inherit
 
   build-deb:
+    name: Build Debian (DEB)
     needs: [meta, test]
     uses: ./.github/workflows/build-deb.yml
     with:
@@ -53,24 +58,24 @@ jobs:
     secrets: inherit
 
   publish:
+    name: Publish nightly
     needs: [meta, build-fedora, build-windows, build-deb]
-    name: Publicar nightly
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Descargar artefactos
+      - name: Download artifacts
         uses: actions/download-artifact@v7
         with:
           path: dist/
           merge-multiple: true
 
-      - name: Eliminar release nightly anterior
+      - name: Delete previous nightly release
         run: gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Publicar nightly
+      - name: Publish nightly release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: nightly
@@ -78,8 +83,8 @@ jobs:
           prerelease: true
           generate_release_notes: false
           body: |
-            Build automático desde la rama `dev`. No es una versión estable.
+            Automated build from the `dev` branch. Not a stable release.
 
             **Commit:** `${{ github.sha }}`
-            **Fecha:** ${{ needs.meta.outputs.date }}
+            **Date:** ${{ needs.meta.outputs.date }}
           files: dist/**
