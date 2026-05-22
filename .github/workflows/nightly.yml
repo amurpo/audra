@@ -73,12 +73,14 @@ jobs:
       - name: Publish nightly release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           # Full replace: delete the previous release (assets + tag) and
           # recreate from scratch with only this run's artifacts. Avoids
           # any accumulation across runs.
           gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
           gh release create nightly dist/* \
+            --target ${{ github.sha }} \
             --latest \
             --title "Nightly ${{ needs.meta.outputs.date }} (${{ needs.meta.outputs.hash }})" \
             --notes "Automated build from the \`dev\` branch. Not a stable release.
