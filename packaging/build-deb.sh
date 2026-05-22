@@ -3,8 +3,9 @@ set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VER="${VER:-$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')}"
-# DEB no permite guiones en la versión upstream; reemplazar con ~
+# DEB requiere que la versión empiece con dígito; pre-releases llevan prefijo 0~
 DEB_VER=$(echo "$VER" | tr '-' '~')
+case "$DEB_VER" in [0-9]*) ;; *) DEB_VER="0~${DEB_VER}" ;; esac
 
 # Load credentials so build.rs embeds them in the binary
 if [ -f "$ROOT/.env" ]; then
