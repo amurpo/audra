@@ -81,7 +81,7 @@ jobs:
           gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
           gh release create nightly $(find dist -type f) \
             --target ${{ github.sha }} \
-            --latest \
+            --prerelease \
             --title "Nightly ${{ needs.meta.outputs.date }} (${{ needs.meta.outputs.hash }})" \
             --notes "Automated build from the \`dev\` branch. Not a stable release.
 
