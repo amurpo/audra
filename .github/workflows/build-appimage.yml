@@ -51,7 +51,10 @@ jobs:
 
       - name: Crear AppDir
         run: |
-          mkdir -p AppDir/usr/{bin,share/{applications,icons,locale}}
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons
+          mkdir -p AppDir/usr/share/locale
           cp target/release/audra AppDir/usr/bin/
           cp data/io.github.amurpo.audra.desktop AppDir/usr/share/applications/
           cp -r data/icons AppDir/usr/share/
