@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-const AVATAR_SIZE: i32 = 152;
+pub const AVATAR_SIZE: i32 = 152;
 
 type PlayCallback = Box<dyn Fn(Vec<Track>, usize)>;
 type AvatarMap = Rc<RefCell<HashMap<String, adw::Avatar>>>;

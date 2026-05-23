@@ -655,7 +655,10 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         let window = window.downgrade();
         move |lang: Option<&'static str>| {
             player.borrow_mut().stop();
-            let _ = db.lock().unwrap().set_setting("language", lang.unwrap_or(""));
+            let _ = db
+                .lock()
+                .unwrap()
+                .set_setting("language", lang.unwrap_or(""));
             crate::i18n::init(lang);
             if let Some(w) = window.upgrade() {
                 w.close();

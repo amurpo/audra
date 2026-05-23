@@ -292,10 +292,9 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
         {
             let mut by_tag_norm: HashMap<String, Vec<String>> = HashMap::new();
             for (key, members) in &groups {
-                let tag_norm =
-                    dominant(members.iter().filter_map(|(_, t)| t.album.as_deref()))
-                        .map(|s| normalize(&s))
-                        .unwrap_or_default();
+                let tag_norm = dominant(members.iter().filter_map(|(_, t)| t.album.as_deref()))
+                    .map(|s| normalize(&s))
+                    .unwrap_or_default();
                 if !tag_norm.is_empty() {
                     by_tag_norm.entry(tag_norm).or_default().push(key.clone());
                 }

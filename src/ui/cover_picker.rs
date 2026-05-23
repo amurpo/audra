@@ -20,11 +20,10 @@ use std::sync::{Arc, Mutex};
 use crate::i18n::gettext;
 use crate::library::db::Database;
 use crate::library::metadata::{self, CoverCandidate};
-use crate::ui::albums_view::CARD_SIZE;
+use crate::ui::artists_view::AVATAR_SIZE;
 use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels};
 
 const THUMB: i32 = 168;
-const AVATAR_SIZE: i32 = 120;
 
 /// Apply chosen bytes to the target widget on the UI thread; `None` clears it.
 type ApplyFn = Rc<dyn Fn(Option<&[u8]>)>;
@@ -41,8 +40,11 @@ type ScaledCandidate = (String, Vec<u8>, i32, bool, Vec<u8>);
 fn apply_album_cover(stack: &Stack, picture: &Picture, data: Option<&[u8]>) {
     match data {
         Some(d) => {
-            if let Some((px, rs, alpha)) = scale_to_pixels(d, CARD_SIZE) {
-                let tex = pixels_to_texture(px, rs, alpha, CARD_SIZE);
+            // Hand the encoded bytes straight to GDK so the texture keeps the
+            // source resolution; GTK downsamples at paint time, which looks
+            // sharper than pre-scaling to CARD_SIZE on the CPU.
+            let gbytes = glib::Bytes::from(d);
+            if let Ok(tex) = gtk4::gdk::Texture::from_bytes(&gbytes) {
                 picture.set_paintable(Some(&tex));
                 stack.set_visible_child_name("art");
             }
@@ -52,12 +54,34 @@ fn apply_album_cover(stack: &Stack, picture: &Picture, data: Option<&[u8]>) {
 }
 
 fn apply_artist_photo(avatar: &adw::Avatar, data: Option<&[u8]>) {
+    // Replicate start_photo_fetch exactly: scale on a worker thread, then
+    // deliver the MemoryTexture from the GLib main loop — the same async
+    // path that produces sharp results on app startup / restart.
     match data {
         Some(d) => {
-            if let Some((px, rs, alpha)) = scale_to_pixels(d, AVATAR_SIZE) {
-                let tex = pixels_to_texture(px, rs, alpha, AVATAR_SIZE);
-                avatar.set_custom_image(Some(&tex));
-            }
+            let bytes = d.to_vec();
+            let avatar = avatar.clone();
+            let result: Arc<Mutex<Option<(Vec<u8>, i32, bool)>>> =
+                Arc::new(Mutex::new(None));
+            let done = Arc::new(AtomicBool::new(false));
+            let result_tx = Arc::clone(&result);
+            let done_tx = Arc::clone(&done);
+            std::thread::spawn(move || {
+                if let Some(scaled) = scale_to_pixels(&bytes, AVATAR_SIZE) {
+                    *result_tx.lock().unwrap() = Some(scaled);
+                }
+                done_tx.store(true, Ordering::Relaxed);
+            });
+            glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+                if !done.load(Ordering::Relaxed) {
+                    return glib::ControlFlow::Continue;
+                }
+                if let Some((px, rs, alpha)) = result.lock().unwrap().take() {
+                    let tex = pixels_to_texture(px, rs, alpha, AVATAR_SIZE);
+                    avatar.set_custom_image(Some(&tex));
+                }
+                glib::ControlFlow::Break
+            });
         }
         None => avatar.set_custom_image(None::<&gtk4::gdk::Texture>),
     }
@@ -313,6 +337,7 @@ fn open_picker(
     persist: PersistFn,
     candidates: CandidatesFn,
 ) {
+    let _ = parent;
     let dialog = adw::Dialog::new();
     dialog.set_title(&title);
     dialog.set_content_width(560);
