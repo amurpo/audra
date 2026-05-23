@@ -165,6 +165,9 @@ struct Derived {
 }
 
 fn derive(track: &Track, music_folder: Option<&str>) -> Derived {
+    // album_artist is used for album-level grouping in tag mode but must not
+    // override the performer (artist tag) for display: a track tagged
+    // artist=INFIX / album_artist=千住明 should show as INFIX, not 千住明.
     let tag_artist = track
         .album_artist
         .as_deref()
@@ -172,10 +175,17 @@ fn derive(track: &Track, music_folder: Option<&str>) -> Derived {
         .or(track.artist.as_deref())
         .map(str::to_string);
 
+    let display_artist = track
+        .artist
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| tag_artist.clone());
+
     match rel_dirs(&track.path, music_folder) {
         Some(dirs) if !dirs.is_empty() => {
             let folder_name = dirs[0].clone();
-            let artist_label = tag_artist.unwrap_or_else(|| folder_name.clone());
+            let artist_label = display_artist.unwrap_or_else(|| folder_name.clone());
             let (album_label, _from_folder) = if dirs.len() >= 2 {
                 (strip_disc_marker(&dirs[1]), true)
             } else {
@@ -202,7 +212,7 @@ fn derive(track: &Track, music_folder: Option<&str>) -> Derived {
             let album = track.display_album();
             Derived {
                 artist_key: normalize(&artist),
-                artist_label: tag_artist.unwrap_or(artist),
+                artist_label: display_artist.unwrap_or(artist),
                 album_key: normalize(&album),
                 album_label: album,
             }
@@ -692,6 +702,18 @@ mod tests {
             dirs_v.first().map(String::as_str),
             Some("Comes With the Fall")
         );
+    }
+
+    #[test]
+    fn album_artist_does_not_override_performer_label() {
+        // INFIX tracks on a V Gundam OST have album_artist=千住明 (composer) but
+        // artist=INFIX (performer). The artist view must show INFIX, not 千住明.
+        let mf = Some("/Music");
+        let mut track = t("/Music/INFIX/V Gundam Score I/1.mp3", "INFIX", "V Gundam Score I", 1);
+        track.album_artist = Some("千住明".to_string());
+        let albums = group_albums(&[track], mf);
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].artist, "INFIX", "album_artist must not override artist label");
     }
 
     #[test]
