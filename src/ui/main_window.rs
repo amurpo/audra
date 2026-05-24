@@ -863,29 +863,52 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let mpris_cell: crate::ui::playback::MprisHandle =
         std::rc::Rc::new(std::cell::RefCell::new(None));
 
-    // Windows: connect_map fires once the Win32 window is visible on screen,
-    // which guarantees WM_CREATE has been processed and the HWND is non-zero.
-    // connect_realize was too early: the HWND can still be 0 at that point,
-    // causing souvlaki to silently bail out.
+    // Windows SMTC: wire the command-drain timer unconditionally so it is
+    // ready before the first event arrives. Sender<T>: Clone lets the
+    // connect_map handler below supply a fresh tx for each attempt without
+    // rebinding the receiver.
     #[cfg(windows)]
     {
         let mpris_cell = Rc::clone(&mpris_cell);
         let bar_c = Rc::clone(&bar);
         let player_c = Rc::clone(&player);
-        let init_once = Rc::new(std::cell::RefCell::new(Some((mpris_tx, mpris_rx))));
+
+        wire_mpris(
+            mpris_rx,
+            Rc::clone(&player_c),
+            Rc::clone(&bar_c),
+            window.downgrade(),
+        );
+
+        // connect_map fires when the window becomes visible on screen.
+        // Defer the souvlaki call by 300 ms: GetForWindow() can silently
+        // fail even with a valid HWND if the Win32 message pump has not
+        // yet finished processing its initial queue of window messages.
+        // If the window is hidden and reshown, connect_map fires again
+        // and retries (the is_some() guard prevents double-init).
         window.connect_map(move |window| {
-            let Some((tx, rx)) = init_once.borrow_mut().take() else {
+            if mpris_cell.borrow().is_some() {
                 return;
-            };
-            if let Some(m) = crate::player::mpris::Mpris::new(window, tx) {
-                *mpris_cell.borrow_mut() = Some(m);
-                wire_mpris(
-                    rx,
-                    Rc::clone(&player_c),
-                    Rc::clone(&bar_c),
-                    window.downgrade(),
-                );
             }
+            let win_weak = window.downgrade();
+            let cell = Rc::clone(&mpris_cell);
+            let tx = mpris_tx.clone();
+            glib::timeout_add_local_once(
+                std::time::Duration::from_millis(300),
+                move || {
+                    if cell.borrow().is_some() {
+                        return;
+                    }
+                    let Some(win) = win_weak.upgrade() else {
+                        return;
+                    };
+                    if let Some(m) = crate::player::mpris::Mpris::new(&win, tx) {
+                        *cell.borrow_mut() = Some(m);
+                    } else {
+                        log::warn!("mpris/smtc: media controls unavailable");
+                    }
+                },
+            );
         });
     }
 
