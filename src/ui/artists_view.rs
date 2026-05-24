@@ -85,17 +85,21 @@ impl ArtistsView {
                     //     do match (Various Artists / OSTs) → keep only the
                     //     artist's tracks under that album, with the original
                     //     album name preserved so the cover still resolves.
+                    // Both comparisons are case-insensitive so tags like
+                    // "Comes With The Fall" vs "Comes With the Fall" resolve
+                    // to the same canonical artist entry.
+                    let name_lower = name.to_lowercase();
                     let mut artist_albums: Vec<Album> = albums_c
                         .borrow()
                         .iter()
                         .filter_map(|a| {
-                            if a.artist == name {
+                            if a.artist.to_lowercase() == name_lower {
                                 return Some(a.clone());
                             }
                             let tracks: Vec<crate::library::Track> = a
                                 .tracks
                                 .iter()
-                                .filter(|t| t.display_artist() == name)
+                                .filter(|t| t.display_artist().to_lowercase() == name_lower)
                                 .cloned()
                                 .collect();
                             if tracks.is_empty() {

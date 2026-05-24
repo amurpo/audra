@@ -37,8 +37,11 @@ pub fn group_into_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Al
 /// ("千住明").
 pub fn group_into_artists(albums: &[Album]) -> Vec<Artist> {
     use std::collections::HashSet;
-    // value: (set of distinct album keys this artist appears on, total tracks)
-    let mut map: HashMap<String, (HashSet<String>, usize)> = HashMap::new();
+    // key: lowercase artist name for case-insensitive dedup
+    // value: (album_keys, total_tracks, name_freq) — name_freq picks the
+    // display name: the variant that appears on the most tracks wins.
+    let mut map: HashMap<String, (HashSet<String>, usize, HashMap<String, usize>)> =
+        HashMap::new();
     for album in albums {
         let album_key = format!("{}|{}", album.artist, album.name);
         // Count per-artist track contributions to this album in one pass so
@@ -48,19 +51,26 @@ pub fn group_into_artists(albums: &[Album]) -> Vec<Artist> {
             *per_artist.entry(t.display_artist()).or_insert(0) += 1;
         }
         for (artist, count) in per_artist {
-            let entry = map
-                .entry(artist)
-                .or_insert_with(|| (HashSet::new(), 0));
+            let key = artist.to_lowercase();
+            let entry = map.entry(key).or_insert_with(|| (HashSet::new(), 0, HashMap::new()));
             entry.0.insert(album_key.clone());
             entry.1 += count;
+            *entry.2.entry(artist).or_insert(0) += count;
         }
     }
     let mut artists: Vec<Artist> = map
         .into_iter()
-        .map(|(name, (album_keys, track_count))| Artist {
-            name,
-            album_count: album_keys.len(),
-            track_count,
+        .map(|(_, (album_keys, track_count, name_freq))| {
+            let name = name_freq
+                .into_iter()
+                .max_by_key(|(_, c)| *c)
+                .map(|(n, _)| n)
+                .unwrap_or_default();
+            Artist {
+                name,
+                album_count: album_keys.len(),
+                track_count,
+            }
         })
         .collect();
     artists.sort_by(|a, b| a.name.cmp(&b.name));
