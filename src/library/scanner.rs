@@ -6,7 +6,10 @@ use lofty::tag::ItemKey;
 use std::path::Path;
 use walkdir::WalkDir;
 
-const AUDIO_EXTS: &[&str] = &["mp3", "flac", "ogg", "opus", "m4a", "wav", "aac"];
+// Must match the features enabled on `rodio` in Cargo.toml. Listing an
+// extension here without the matching decoder makes the file appear in the
+// library and then fail at play time.
+const AUDIO_EXTS: &[&str] = &["mp3", "flac", "ogg", "wav"];
 
 pub fn scan_folder(folder: &str) -> Vec<Track> {
     WalkDir::new(folder)
