@@ -43,17 +43,19 @@ fn main() {
             }
         };
 
-        // One-time, idempotent migration of cover/photo keys to their canonical
-        // (deduplicated) form so user-picked images survive the new grouping.
+        // One-time, idempotent migration of album-cover keys to their
+        // canonical (deduplicated) form so user-picked covers survive the
+        // folder-based grouping. Artist-photo slots are NOT migrated: the
+        // Artists view now renders one card per raw `display_artist` tag,
+        // so the on-disk slot already matches the card name verbatim.
+        // Rekeying would move per-tag photos into a single "dominant"
+        // slot and erase the others.
         {
             let g = db.lock().unwrap();
             if let Ok(tracks) = g.all_tracks() {
                 let mf = g.get_setting("music_folder");
                 let cover_map = library::dedup::canonical_key_map(&tracks, mf.as_deref());
                 let _ = g.migrate_cover_keys(&cover_map);
-                for (old, new) in library::dedup::canonical_artist_map(&tracks, mf.as_deref()) {
-                    library::metadata::rekey_artist_photo(&old, &new);
-                }
             }
         }
 

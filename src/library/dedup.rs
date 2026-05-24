@@ -398,31 +398,6 @@ pub fn canonical_key_map(
     map
 }
 
-/// Map every raw artist tag to its canonical (folder) artist, for migrating
-/// the on-disk artist-photo cache.
-pub fn canonical_artist_map(
-    tracks: &[Track],
-    music_folder: Option<&str>,
-) -> HashMap<String, String> {
-    let albums = group_albums(tracks, music_folder);
-    let mut path_to_artist: HashMap<&str, String> = HashMap::new();
-    for a in &albums {
-        for t in &a.tracks {
-            path_to_artist.insert(t.path.as_str(), a.artist.clone());
-        }
-    }
-    let mut map = HashMap::new();
-    for t in tracks {
-        if let Some(canon) = path_to_artist.get(t.path.as_str()) {
-            let raw = t.display_artist();
-            if raw != *canon {
-                map.insert(raw, canon.clone());
-            }
-        }
-    }
-    map
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,40 +414,6 @@ mod tests {
             disc_num: None,
             album_artist: None,
         }
-    }
-
-    #[test]
-    fn canonical_artist_map_collapses_inconsistent_tags_to_same_canonical() {
-        let mf = Some("/Music");
-        let tracks = vec![
-            t("/Music/Tokyo Phil/Gundam/1.mp3", "東京フィル", "Gundam", 1),
-            t("/Music/Tokyo Phil/Gundam/2.mp3", "Tokyo Phil.", "Gundam", 2),
-        ];
-        let map = canonical_artist_map(&tracks, mf);
-        // Both tracks share the same folder key, so they resolve to the same
-        // canonical artist label (whichever tag is dominant).
-        let values: std::collections::HashSet<_> = map.values().collect();
-        assert_eq!(
-            values.len(),
-            1,
-            "both tags must remap to the same canonical"
-        );
-        // The canonical label itself must not appear as a key (no self-mapping).
-        let canonical = values.into_iter().next().unwrap();
-        assert!(!map.contains_key(canonical));
-    }
-
-    #[test]
-    fn canonical_artist_map_is_empty_when_single_consistent_tag() {
-        let mf = Some("/Music");
-        let tracks = vec![t(
-            "/Music/Radiohead/OK Computer/1.mp3",
-            "Radiohead",
-            "OK Computer",
-            1,
-        )];
-        let map = canonical_artist_map(&tracks, mf);
-        assert!(map.is_empty(), "no remap needed when there is only one tag");
     }
 
     #[test]
