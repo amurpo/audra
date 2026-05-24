@@ -2,8 +2,8 @@ use crate::i18n::{gettext, ngettext};
 use crate::library::db::Database;
 use crate::library::{Album, Artist, Track};
 use crate::ui::albums_view::{make_album_card, make_album_detail_page, CARD_SIZE};
+use crate::ui::image_apply::{apply_image, ImageTarget};
 use crate::ui::image_loader::{self, FetchOutcome, ImagePipelineConfig};
-use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels};
 use crate::ui::now_playing::NowPlaying;
 use crate::ui::widgets::{content_clamp, page_title_row, play_all_button};
 use adw::prelude::*;
@@ -345,11 +345,14 @@ fn make_artist_detail_page(
 fn make_artist_album_card(album: &Album, db: Arc<Mutex<Database>>) -> FlowBoxChild {
     let (child, stack, picture) = make_album_card(album, false);
     if let Some(ref data) = album.cover {
-        if let Some((pixels, rowstride, has_alpha)) = scale_to_pixels(data.as_slice(), CARD_SIZE) {
-            let texture = pixels_to_texture(pixels, rowstride, has_alpha, CARD_SIZE);
-            picture.set_paintable(Some(&texture));
-            stack.set_visible_child_name("art");
-        }
+        apply_image(
+            ImageTarget::AlbumCover {
+                picture: picture.clone(),
+                stack: stack.clone(),
+            },
+            Some(data.as_slice()),
+            CARD_SIZE,
+        );
     }
 
     // Right-click on the album card opens the cover picker, the same way the

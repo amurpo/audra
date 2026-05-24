@@ -22,7 +22,8 @@ use crate::library::db::Database;
 use crate::library::metadata::{self, CoverCandidate};
 use crate::ui::albums_view::CARD_SIZE;
 use crate::ui::artists_view::AVATAR_SIZE;
-use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels, ScaledPixels};
+use crate::ui::image_apply::{apply_image, ImageTarget};
+use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels};
 
 const THUMB: i32 = 168;
 
@@ -38,57 +39,6 @@ type CandidatesFn = Arc<dyn Fn(&str) -> Vec<CoverCandidate> + Send + Sync>;
 /// original bytes to store verbatim if the user picks it.
 type ScaledCandidate = (String, Vec<u8>, i32, bool, Vec<u8>);
 
-fn apply_album_cover(stack: &Stack, picture: &Picture, data: Option<&[u8]>) {
-    match data {
-        Some(d) => {
-            // Scale to CARD_SIZE — the same path image_loader uses. Handing
-            // raw bytes to Texture::from_bytes preserved source resolution
-            // but produced a texture whose natural-size grew the FlowBox
-            // homogeneous cells, so every album card in the grid expanded
-            // to match the picked one.
-            if let Some((px, rs, alpha)) = scale_to_pixels(d, CARD_SIZE) {
-                let tex = pixels_to_texture(px, rs, alpha, CARD_SIZE);
-                picture.set_paintable(Some(&tex));
-                stack.set_visible_child_name("art");
-            }
-        }
-        None => stack.set_visible_child_name("placeholder"),
-    }
-}
-
-fn apply_artist_photo(avatar: &adw::Avatar, data: Option<&[u8]>) {
-    // Replicate start_photo_fetch exactly: scale on a worker thread, then
-    // deliver the MemoryTexture from the GLib main loop — the same async
-    // path that produces sharp results on app startup / restart.
-    match data {
-        Some(d) => {
-            let bytes = d.to_vec();
-            let avatar = avatar.clone();
-            let result: Arc<Mutex<Option<ScaledPixels>>> = Arc::new(Mutex::new(None));
-            let done = Arc::new(AtomicBool::new(false));
-            let result_tx = Arc::clone(&result);
-            let done_tx = Arc::clone(&done);
-            std::thread::spawn(move || {
-                if let Some(scaled) = scale_to_pixels(&bytes, AVATAR_SIZE) {
-                    *result_tx.lock().unwrap() = Some(scaled);
-                }
-                done_tx.store(true, Ordering::Relaxed);
-            });
-            glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
-                if !done.load(Ordering::Relaxed) {
-                    return glib::ControlFlow::Continue;
-                }
-                if let Some((px, rs, alpha)) = result.lock().unwrap().take() {
-                    let tex = pixels_to_texture(px, rs, alpha, AVATAR_SIZE);
-                    avatar.set_custom_image(Some(&tex));
-                }
-                glib::ControlFlow::Break
-            });
-        }
-        None => avatar.set_custom_image(None::<&gtk4::gdk::Texture>),
-    }
-}
-
 /// Add a right-click gesture to an album card opening the cover menu.
 pub fn install_album_cover_gesture(
     child: &gtk4::FlowBoxChild,
@@ -99,7 +49,8 @@ pub fn install_album_cover_gesture(
     stack: Stack,
     picture: Picture,
 ) {
-    let apply: ApplyFn = Rc::new(move |d| apply_album_cover(&stack, &picture, d));
+    let target = ImageTarget::AlbumCover { picture, stack };
+    let apply: ApplyFn = Rc::new(move |d| apply_image(target.clone(), d, CARD_SIZE));
 
     let persist: PersistFn = {
         let (db, a, al) = (Arc::clone(&db), artist.clone(), album.clone());
@@ -143,7 +94,8 @@ pub fn install_artist_photo_gesture(
     artist: String,
     avatar: adw::Avatar,
 ) {
-    let apply: ApplyFn = Rc::new(move |d| apply_artist_photo(&avatar, d));
+    let target = ImageTarget::ArtistPhoto { avatar };
+    let apply: ApplyFn = Rc::new(move |d| apply_image(target.clone(), d, AVATAR_SIZE));
 
     let persist: PersistFn = {
         let a = artist.clone();
