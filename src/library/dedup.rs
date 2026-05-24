@@ -239,16 +239,26 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
         let artist_label = dominant(rows.iter().map(|(d, _)| d.artist_label.as_str()))
             .unwrap_or_else(|| rows[0].0.artist_label.clone());
 
-        // "Various Artists": no artist folder (label came from a tag) and the
-        // performer varies across this bucket.
+        // "Various Artists" detection. Two shapes both qualify:
+        //   1. No music folder at all (or track outside it): label comes from
+        //      tags, and performers differ → tag grouping picked a wrong
+        //      artist by accident.
+        //   2. Tracks live directly under a single folder under the music
+        //      folder (Compilations/track.mp3, no per-album subfolder) and
+        //      performers differ → it's an OST or compilation, not a real
+        //      single-artist release.
         let distinct_perf: std::collections::HashSet<String> = rows
             .iter()
             .map(|(_, t)| normalize(&t.display_artist()))
             .collect();
-        let from_folder = rel_dirs(&rows[0].1.path, music_folder)
-            .map(|d| !d.is_empty())
-            .unwrap_or(false);
-        let artist_label = if !from_folder && distinct_perf.len() > 1 {
+        // True when every track is either outside the music folder, or sits
+        // directly under a single folder (no per-album subfolder).
+        let single_level_or_loose = rows.iter().all(|(_, t)| {
+            rel_dirs(&t.path, music_folder)
+                .map(|d| d.len() <= 1)
+                .unwrap_or(true)
+        });
+        let artist_label = if single_level_or_loose && distinct_perf.len() > 1 {
             crate::i18n::gettext("Various Artists")
         } else {
             artist_label
@@ -759,5 +769,67 @@ mod tests {
         let albums = group_albums(&tracks, mf);
         assert_eq!(albums.len(), 1, "should merge into one album");
         assert_eq!(albums[0].tracks.len(), 3);
+    }
+
+    #[test]
+    fn single_level_folder_with_many_artists_is_various_artists() {
+        // Rurouni Kenshin OST shape: every track sits directly under one
+        // folder (no per-album subfolder) and the performer is different on
+        // each track. The whole set must collapse into a single album
+        // labelled "Various Artists", not silently adopt one of the twelve
+        // performers as the bucket's artist.
+        let mf = Some("/Music");
+        let tracks = vec![
+            t("/Music/Rurouni Kenshin OST/01.mp3", "Judy and Mary", "Rurouni Kenshin OST", 1),
+            t("/Music/Rurouni Kenshin OST/02.mp3", "The Yellow Monkey", "Rurouni Kenshin OST", 2),
+            t("/Music/Rurouni Kenshin OST/03.mp3", "Curio", "Rurouni Kenshin OST", 3),
+            t("/Music/Rurouni Kenshin OST/04.mp3", "T.M. Revolution", "Rurouni Kenshin OST", 4),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1, "compilation folds into one album");
+        assert_eq!(albums[0].artist, "Various Artists");
+        assert_eq!(
+            albums[0].tracks.len(),
+            4,
+            "every track must survive the compilation collapse"
+        );
+    }
+
+    #[test]
+    fn single_level_folder_with_one_artist_is_not_various() {
+        // Same shape as the OST case, but every track is the same artist —
+        // the all-tracks-same-folder guard must NOT trip Various Artists.
+        let mf = Some("/Music");
+        let tracks = vec![
+            t("/Music/Live Bootleg/01.mp3", "Soundgarden", "Live Bootleg", 1),
+            t("/Music/Live Bootleg/02.mp3", "Soundgarden", "Live Bootleg", 2),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].artist, "Soundgarden");
+    }
+
+    #[test]
+    fn artist_subfolder_protects_album_from_various_misdetection() {
+        // Artist/Album/track shape: even if for some reason multiple
+        // performers showed up in the same album subfolder (collab record),
+        // we must NOT relabel it Various — the folder structure says it is
+        // a single release.
+        let mf = Some("/Music");
+        let tracks = vec![
+            t("/Music/Daft Punk/Random Access Memories/01.mp3", "Daft Punk", "RAM", 1),
+            t(
+                "/Music/Daft Punk/Random Access Memories/02.mp3",
+                "Daft Punk feat. Pharrell",
+                "RAM",
+                2,
+            ),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1);
+        assert_ne!(
+            albums[0].artist, "Various Artists",
+            "two-level folder must override per-track artist disagreement"
+        );
     }
 }
