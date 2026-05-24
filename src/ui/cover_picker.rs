@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use crate::i18n::gettext;
 use crate::library::db::Database;
 use crate::library::metadata::{self, CoverCandidate};
+use crate::ui::albums_view::CARD_SIZE;
 use crate::ui::artists_view::AVATAR_SIZE;
 use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels, ScaledPixels};
 
@@ -40,11 +41,13 @@ type ScaledCandidate = (String, Vec<u8>, i32, bool, Vec<u8>);
 fn apply_album_cover(stack: &Stack, picture: &Picture, data: Option<&[u8]>) {
     match data {
         Some(d) => {
-            // Hand the encoded bytes straight to GDK so the texture keeps the
-            // source resolution; GTK downsamples at paint time, which looks
-            // sharper than pre-scaling to CARD_SIZE on the CPU.
-            let gbytes = glib::Bytes::from(d);
-            if let Ok(tex) = gtk4::gdk::Texture::from_bytes(&gbytes) {
+            // Scale to CARD_SIZE — the same path image_loader uses. Handing
+            // raw bytes to Texture::from_bytes preserved source resolution
+            // but produced a texture whose natural-size grew the FlowBox
+            // homogeneous cells, so every album card in the grid expanded
+            // to match the picked one.
+            if let Some((px, rs, alpha)) = scale_to_pixels(d, CARD_SIZE) {
+                let tex = pixels_to_texture(px, rs, alpha, CARD_SIZE);
                 picture.set_paintable(Some(&tex));
                 stack.set_visible_child_name("art");
             }
