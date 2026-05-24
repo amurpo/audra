@@ -99,6 +99,29 @@ pub(crate) fn start_scan(
     });
 }
 
+/// Present a modal error dialog and quit the application when it closes.
+/// Used for failures during startup where the app cannot run at all (DB
+/// inaccessible, audio engine missing).
+pub fn show_fatal_error(app: &adw::Application, title: &str, detail: &str) {
+    let window = adw::ApplicationWindow::builder()
+        .application(app)
+        .title("Audra")
+        .default_width(420)
+        .default_height(160)
+        .build();
+    window.present();
+
+    let dialog = adw::AlertDialog::new(Some(title), Some(detail));
+    dialog.add_response("ok", "OK");
+    dialog.set_default_response(Some("ok"));
+    dialog.set_close_response("ok");
+    let app_c = app.clone();
+    dialog.connect_response(None, move |_, _| {
+        app_c.quit();
+    });
+    dialog.present(Some(&window));
+}
+
 const APP_ICON_SVG: &[u8] =
     include_bytes!("../../data/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg");
 
@@ -374,9 +397,24 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     header.pack_end(&btn_search);
 
     // --- Player, vistas y estado compartido ---
-    let player: Rc<RefCell<Player>> = Rc::new(RefCell::new(
-        Player::new().expect("Error iniciando el motor de audio"),
-    ));
+    // No audio device (CI/headless, missing ALSA, etc.) is recoverable enough
+    // to keep the rest of the app off the panic path: show a modal and exit
+    // cleanly instead of aborting with a stack trace.
+    let player: Rc<RefCell<Player>> = match Player::new() {
+        Ok(p) => Rc::new(RefCell::new(p)),
+        Err(e) => {
+            show_fatal_error(
+                app,
+                &gettext("Audio output unavailable"),
+                &format!(
+                    "{}\n\n{}",
+                    gettext("Audra could not initialise the audio engine."),
+                    e
+                ),
+            );
+            return;
+        }
+    };
     player.borrow_mut().replaygain_mode = replaygain_init_mode;
     // Single source of truth for "what's currently playing". All track lists
     // subscribe to this bus and update their `.playing` row indicator in sync.
