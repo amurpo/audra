@@ -21,7 +21,7 @@ use crate::i18n::gettext;
 use crate::library::db::Database;
 use crate::library::metadata::{self, CoverCandidate};
 use crate::ui::artists_view::AVATAR_SIZE;
-use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels};
+use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels, ScaledPixels};
 
 const THUMB: i32 = 168;
 
@@ -61,8 +61,7 @@ fn apply_artist_photo(avatar: &adw::Avatar, data: Option<&[u8]>) {
         Some(d) => {
             let bytes = d.to_vec();
             let avatar = avatar.clone();
-            let result: Arc<Mutex<Option<(Vec<u8>, i32, bool)>>> =
-                Arc::new(Mutex::new(None));
+            let result: Arc<Mutex<Option<ScaledPixels>>> = Arc::new(Mutex::new(None));
             let done = Arc::new(AtomicBool::new(false));
             let result_tx = Arc::clone(&result);
             let done_tx = Arc::clone(&done);
@@ -478,6 +477,12 @@ fn open_picker(
 
                             let btn = Button::new();
                             btn.add_css_class("flat");
+                            // Keep the hover/active background tight to the
+                            // thumbnail; otherwise the homogeneous FlowBox
+                            // stretches each cell (very visible with only 2
+                            // candidates) and the highlight runs wide.
+                            btn.set_halign(Align::Center);
+                            btn.set_hexpand(false);
                             btn.set_child(Some(&cell));
                             btn.connect_clicked(clone!(
                                 #[strong]
