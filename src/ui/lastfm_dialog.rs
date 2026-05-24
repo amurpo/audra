@@ -12,10 +12,21 @@ use crate::library::db::Database;
 use crate::scrobbler::LastFmClient;
 
 fn open_url(url: &str) -> std::io::Result<()> {
+    // Only ever hand the OS handler an http/https URL. Anything else (file://,
+    // javascript:, a flag-looking string) could be coerced by `start`/`open`
+    // into doing something other than opening a browser tab.
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "refusing to open non-http URL",
+        ));
+    }
     #[cfg(target_os = "windows")]
     {
+        // `start` treats the first quoted argument as the window title, so we
+        // pass an empty title explicitly to keep the URL in the URL slot.
         std::process::Command::new("cmd")
-            .args(["/c", "start", url])
+            .args(["/c", "start", "", url])
             .spawn()?;
     }
     #[cfg(target_os = "macos")]
@@ -176,7 +187,7 @@ pub fn show_lastfm_dialog(
         pending_token,
         move |_| {
             if !LastFmClient::is_configured() {
-                auth_error_label.set_text("La URL del proxy no está configurada.");
+                auth_error_label.set_text(&gettext("The proxy URL is not configured."));
                 return;
             }
             btn_authorize.set_sensitive(false);
@@ -204,7 +215,7 @@ pub fn show_lastfm_dialog(
                         glib::ControlFlow::Break
                     }
                     Ok(Err(e)) => {
-                        auth_error_label.set_text(&format!("Error: {}", e));
+                        auth_error_label.set_text(&format!("{}: {}", gettext("Error"), e));
                         btn_authorize.set_sensitive(true);
                         glib::ControlFlow::Break
                     }
@@ -237,7 +248,9 @@ pub fn show_lastfm_dialog(
             let token = match pending_token.borrow().clone() {
                 Some(t) => t,
                 None => {
-                    wait_error_label.set_text("No hay token pendiente. Vuelve a autorizar.");
+                    wait_error_label.set_text(&gettext(
+                        "No pending token. Please authorize again.",
+                    ));
                     return;
                 }
             };
@@ -273,7 +286,7 @@ pub fn show_lastfm_dialog(
                         glib::ControlFlow::Break
                     }
                     Ok(Err(e)) => {
-                        wait_error_label.set_text(&format!("Error: {}", e));
+                        wait_error_label.set_text(&format!("{}: {}", gettext("Error"), e));
                         btn_confirmed.set_sensitive(true);
                         glib::ControlFlow::Break
                     }
