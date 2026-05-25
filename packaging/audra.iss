@@ -3,6 +3,10 @@
 #define MyAppPublisher "Amurpo"
 #define MyAppExeName "audra.exe"
 #define MyAppId "{{B7C3A1F2-4E9D-4B8A-A012-3F5C6D7E8901}"
+; AppUserModelID: Windows groups the taskbar button and resolves its icon
+; from the Start Menu shortcut tagged with this ID (launching via the
+; shortcut propagates it to the process).
+#define MyAppUserModelID "io.github.amurpo.audra"
 
 [Setup]
 AppId={#MyAppId}
@@ -32,9 +36,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\dist\audra\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\audra.ico"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\audra.ico"; AppUserModelID: "{#MyAppUserModelID}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\audra.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\audra.ico"; Tasks: desktopicon; AppUserModelID: "{#MyAppUserModelID}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent

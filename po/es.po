@@ -197,3 +197,12 @@ msgstr "Por pista"
 
 msgid "Album"
 msgstr "Por álbum"
+
+msgid "Dynamic color"
+msgstr "Color dinámico"
+
+msgid "Partial"
+msgstr "Parcial"
+
+msgid "Full"
+msgstr "Total"

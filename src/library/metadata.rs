@@ -71,6 +71,22 @@ fn musicbrainz_mbids(client: &reqwest::blocking::Client, artist: &str, album: &s
     .unwrap_or_default()
 }
 
+/// Fetch the CoverArtArchive front-500 image for a single MBID, or None.
+/// Callers must respect the CAA rate limit between calls.
+fn caa_front_500(client: &reqwest::blocking::Client, mbid: &str) -> Option<Vec<u8>> {
+    let url = format!("https://coverartarchive.org/release/{}/front-500", mbid);
+    let resp = client.get(&url).send().ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let bytes = resp.bytes().ok()?;
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(bytes.to_vec())
+    }
+}
+
 /// Like `musicbrainz_album_cover` but returns the front art of the top few
 /// matching releases instead of stopping at the first hit.
 fn musicbrainz_album_covers(
@@ -80,15 +96,8 @@ fn musicbrainz_album_covers(
 ) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for mbid in musicbrainz_mbids(client, artist, album) {
-        let url = format!("https://coverartarchive.org/release/{}/front-500", mbid);
-        if let Ok(resp) = client.get(&url).send() {
-            if resp.status().is_success() {
-                if let Ok(bytes) = resp.bytes() {
-                    if !bytes.is_empty() {
-                        out.push(bytes.to_vec());
-                    }
-                }
-            }
+        if let Some(bytes) = caa_front_500(client, &mbid) {
+            out.push(bytes);
         }
         // Respect the MusicBrainz / CAA rate limit (1 req/s).
         std::thread::sleep(std::time::Duration::from_millis(1100));
@@ -151,7 +160,7 @@ fn write_cache(path: &PathBuf, data: &[u8]) {
 /// requires an identifying one) and a per-call timeout.
 fn http_client(timeout_secs: u64) -> Option<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
-        .user_agent("audra/0.1 (https://github.com/audra-player; daigo.tnt@gmail.com)")
+        .user_agent("audra/0.1 (https://github.com/amurpo/audra)")
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .ok()
@@ -188,16 +197,9 @@ fn musicbrainz_album_cover(
     album: &str,
 ) -> Option<Vec<u8>> {
     for mbid in musicbrainz_mbids(client, artist, album) {
-        let url = format!("https://coverartarchive.org/release/{}/front-500", mbid);
-        if let Ok(resp) = client.get(&url).send() {
-            if resp.status().is_success() {
-                if let Ok(bytes) = resp.bytes() {
-                    if !bytes.is_empty() {
-                        log::debug!("metadata: carátula MusicBrainz '{}' - '{}'", artist, album);
-                        return Some(bytes.to_vec());
-                    }
-                }
-            }
+        if let Some(bytes) = caa_front_500(client, &mbid) {
+            log::debug!("metadata: carátula MusicBrainz '{}' - '{}'", artist, album);
+            return Some(bytes);
         }
         // Respect the MusicBrainz / CAA rate limit (1 req/s).
         std::thread::sleep(std::time::Duration::from_millis(1100));
@@ -251,28 +253,6 @@ pub fn set_artist_photo(artist: &str, data: &[u8]) {
     write_cache(&artist_cache_path(artist), data);
 }
 
-/// Move a cached artist photo from its raw-tag slot to the canonical-artist
-/// slot so user picks survive deduplication. Idempotent; preserves empty
-/// files (the "photo removed on purpose" marker). The canonical slot wins if
-/// it already exists.
-pub fn rekey_artist_photo(old_artist: &str, new_artist: &str) {
-    let from = artist_cache_path(old_artist);
-    let to = artist_cache_path(new_artist);
-    if from == to || !from.exists() {
-        return;
-    }
-    if to.exists() {
-        let _ = std::fs::remove_file(&from);
-        return;
-    }
-    if std::fs::rename(&from, &to).is_err() {
-        if let Ok(data) = std::fs::read(&from) {
-            write_cache(&to, &data);
-            let _ = std::fs::remove_file(&from);
-        }
-    }
-}
-
 /// Collect several artist-photo candidates from every online source for the
 /// picker UI. Network-bound: must run off the UI thread.
 pub fn fetch_artist_photo_candidates(artist: &str) -> Vec<CoverCandidate> {
@@ -308,6 +288,18 @@ pub fn fetch_artist_photo_candidates(artist: &str) -> Vec<CoverCandidate> {
     out
 }
 
+/// Read a usable photo URL from one Deezer `data[]` item, or None if the
+/// hit is the empty-photo sentinel (`picture_xl` ends in `artist//`).
+fn deezer_item_photo_url(item: &serde_json::Value) -> Option<String> {
+    let url = item["picture_xl"]
+        .as_str()
+        .or_else(|| item["picture_big"].as_str())?;
+    if url.contains("artist//") {
+        return None;
+    }
+    Some(url.to_string())
+}
+
 /// Like `deezer_artist_photo` but returns the photo URL of the top few
 /// matching artists instead of stopping at the first hit.
 fn deezer_artist_photos(client: &reqwest::blocking::Client, artist: &str) -> Vec<String> {
@@ -318,20 +310,10 @@ fn deezer_artist_photos(client: &reqwest::blocking::Client, artist: &str) -> Vec
         .ok()
         .and_then(|r| r.json().ok());
 
-    let mut out = Vec::new();
-    if let Some(data) = resp.as_ref().and_then(|r| r["data"].as_array()) {
-        for item in data {
-            if let Some(url) = item["picture_xl"]
-                .as_str()
-                .or_else(|| item["picture_big"].as_str())
-            {
-                if !url.contains("artist//") {
-                    out.push(url.to_string());
-                }
-            }
-        }
-    }
-    out
+    resp.as_ref()
+        .and_then(|r| r["data"].as_array())
+        .map(|data| data.iter().filter_map(deezer_item_photo_url).collect())
+        .unwrap_or_default()
 }
 
 /// Fetch an artist photo: Deezer → TheAudioDB → iTunes (album art fallback).
@@ -369,20 +351,10 @@ fn deezer_artist_photo(client: &reqwest::blocking::Client, artist: &str) -> Opti
             log::debug!("metadata: Deezer no encontró artista '{}'", artist);
             None
         })?;
-    let url = data[0]["picture_xl"]
-        .as_str()
-        .or_else(|| data[0]["picture_big"].as_str())
-        .or_else(|| {
-            log::debug!("metadata: Deezer sin foto para '{}'", artist);
-            None
-        })?
-        .to_string();
-
-    // Deezer returns "artist//" (empty hash) when no photo exists for the artist.
-    if url.contains("artist//") {
-        return None;
-    }
-    Some(url)
+    deezer_item_photo_url(&data[0]).or_else(|| {
+        log::debug!("metadata: Deezer sin foto para '{}'", artist);
+        None
+    })
 }
 
 fn audiodb_artist_photo(client: &reqwest::blocking::Client, artist: &str) -> Option<String> {

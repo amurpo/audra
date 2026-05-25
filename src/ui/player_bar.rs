@@ -1,5 +1,6 @@
 use crate::i18n::gettext;
 use crate::library::{fmt_duration, Track};
+use crate::ui::image_apply::{apply_image, ImageTarget};
 use gtk4::prelude::*;
 use gtk4::{
     Align, Box, Button, CenterBox, GestureClick, Image, Label, Orientation, ProgressBar, Scale,
@@ -259,15 +260,14 @@ impl PlayerBar {
     }
 
     pub fn update_cover(&self, bytes: Option<&[u8]>) {
-        if let Some(data) = bytes {
-            let gbytes = glib::Bytes::from(data);
-            if let Ok(texture) = gtk4::gdk::Texture::from_bytes(&gbytes) {
-                self.cover_img.set_paintable(Some(&texture));
-                self.cover_stack.set_visible_child_name("art");
-                return;
-            }
-        }
-        self.cover_stack.set_visible_child_name("placeholder");
+        apply_image(
+            ImageTarget::PlayerCover {
+                image: self.cover_img.clone(),
+                stack: self.cover_stack.clone(),
+            },
+            bytes,
+            COVER_SIZE,
+        );
     }
 
     pub fn update_progress(&self, elapsed_secs: f64, total_secs: f64) {

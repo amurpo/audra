@@ -2,7 +2,12 @@ use gdk_pixbuf::{self, prelude::*};
 use glib;
 use gtk4::prelude::Cast;
 
-pub fn scale_to_pixels(data: &[u8], size: i32) -> Option<(Vec<u8>, i32, bool)> {
+/// Raw output of `scale_to_pixels`: (pixels, rowstride, has_alpha).
+/// Kept as a type alias so callers can wrap it in `Arc<Mutex<Option<…>>>`
+/// without the nested signature tripping clippy::type_complexity.
+pub type ScaledPixels = (Vec<u8>, i32, bool);
+
+pub fn scale_to_pixels(data: &[u8], size: i32) -> Option<ScaledPixels> {
     let loader = gdk_pixbuf::PixbufLoader::new();
     let _ = loader.write(data);
     let _ = loader.close();

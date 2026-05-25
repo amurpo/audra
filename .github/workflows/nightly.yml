@@ -1,0 +1,89 @@
+name: Nightly (dev)
+
+on:
+  push:
+    branches:
+      - dev
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE*'
+      - '.gitignore'
+      - 'docs/**'
+
+jobs:
+  meta:
+    name: Build metadata
+    runs-on: ubuntu-latest
+    outputs:
+      hash: ${{ steps.info.outputs.hash }}
+      date: ${{ steps.info.outputs.date }}
+      ver:  ${{ steps.info.outputs.ver }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: info
+        run: |
+          HASH=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%d)
+          echo "hash=$HASH"  >> $GITHUB_OUTPUT
+          echo "date=$DATE"  >> $GITHUB_OUTPUT
+          echo "ver=nightly-${HASH}" >> $GITHUB_OUTPUT
+
+  test:
+    name: Tests
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+
+  build-fedora:
+    name: Build Fedora (RPM)
+    needs: [meta, test]
+    uses: ./.github/workflows/build-fedora.yml
+    with:
+      ver: ${{ needs.meta.outputs.ver }}
+    secrets: inherit
+
+  build-windows:
+    name: Build Windows
+    needs: [meta, test]
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      ver: ${{ needs.meta.outputs.ver }}
+    secrets: inherit
+
+  build-deb:
+    name: Build Debian (DEB)
+    needs: [meta, test]
+    uses: ./.github/workflows/build-deb.yml
+    with:
+      ver: ${{ needs.meta.outputs.ver }}
+    secrets: inherit
+
+  publish:
+    name: Publish nightly
+    needs: [meta, build-fedora, build-windows, build-deb]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Publish nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Full replace: delete the previous release (assets + tag) and
+          # recreate from scratch with only this run's artifacts. Avoids
+          # any accumulation across runs.
+          gh release delete nightly --yes --cleanup-tag 2>/dev/null || true
+          gh release create nightly $(find dist -type f) \
+            --target ${{ github.sha }} \
+            --prerelease \
+            --title "Nightly ${{ needs.meta.outputs.date }} (${{ needs.meta.outputs.hash }})" \
+            --notes "Automated build from the \`dev\` branch. Not a stable release.
+
+          **Commit:** \`${{ github.sha }}\`
+          **Date:** ${{ needs.meta.outputs.date }}"

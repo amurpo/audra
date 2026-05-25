@@ -103,11 +103,20 @@ flowboxchild.artist-card:hover {
  * Mirrors the player bar so the top and bottom of the window share the
  * same subtle shade. The selector is intentionally more specific than
  * libadwaita's `toolbarview > .top-bar headerbar { background: none; }`
- * (which resets the headerbar background in flat ToolbarView mode) so
- * our tint actually wins by specificity.
+ * so our tint actually wins by specificity.
  */
-toolbarview > .top-bar headerbar.audra-header-bar {
+toolbarview .top-bar headerbar.audra-header-bar {
     background-color: @card_shade_color;
+}
+
+/* Kill the 3 px padding-top that GTK's `box.collapse-spacing` adds above
+ * the headerbar. That gap is transparent by default and exposes the raw
+ * window tint without the @card_shade_color overlay — producing the thin
+ * fringe strip visible at the very top of the toolbar area.
+ * Specificity 0-2-2 beats GTK's own rule (0-1-1).
+ */
+toolbarview.audra-toolbar .collapse-spacing {
+    padding-top: 0;
 }
 
 /* Kill libadwaita's automatic "raised" shadow above the bottom bar.
@@ -187,15 +196,28 @@ overlay-split-view > dimming {
     font-variant-numeric: tabular-nums;
 }
 
-/* --- Track list (unified row used by library + album detail) --- */
-listview.audra-track-list {
+/* --- Track list (unified row used by library + album detail) ---
+ *
+ * The list lives inside `.audra-list-card`, which carries the only solid
+ * background of the stack. Every layer underneath the rows — listview,
+ * scrolledwindow, viewport, and each row — has to be transparent or
+ * libadwaita's default `@view_bg_color` would paint over the card's tint
+ * and the dynamic window background would never show through.
+ */
+.audra-list-card scrolledwindow,
+.audra-list-card scrolledwindow > viewport,
+listview.audra-track-list,
+listview.audra-track-list > row {
     background: transparent;
 }
 /* Soft rounded container that hosts the list. Clipped so the scrollbar
- * stays inside the rounded corners.
+ * stays inside the rounded corners. Uses `@card_shade_color` (the same
+ * libadwaita variable as the header and player bars) so the list filters
+ * the dynamic tint the same way those two surfaces do — keeping the
+ * three shaded surfaces visually coherent across the window.
  */
 .audra-list-card {
-    background-color: alpha(currentColor, 0.04);
+    background-color: @card_shade_color;
     border-radius: 12px;
     margin: 6px 0 12px 0;
 }

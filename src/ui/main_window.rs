@@ -21,7 +21,7 @@ use crate::ui::playback::{
 };
 use crate::ui::player_bar::PlayerBar;
 use crate::ui::reset::show_reset_dialog;
-use crate::ui::theme::{setup_css, update_font};
+use crate::ui::theme::{set_tint_mode, setup_css, update_font, TintMode};
 
 pub(crate) fn reload_all_views(
     db: &Arc<Mutex<Database>>,
@@ -99,6 +99,29 @@ pub(crate) fn start_scan(
     });
 }
 
+/// Present a modal error dialog and quit the application when it closes.
+/// Used for failures during startup where the app cannot run at all (DB
+/// inaccessible, audio engine missing).
+pub fn show_fatal_error(app: &adw::Application, title: &str, detail: &str) {
+    let window = adw::ApplicationWindow::builder()
+        .application(app)
+        .title("Audra")
+        .default_width(420)
+        .default_height(160)
+        .build();
+    window.present();
+
+    let dialog = adw::AlertDialog::new(Some(title), Some(detail));
+    dialog.add_response("ok", "OK");
+    dialog.set_default_response(Some("ok"));
+    dialog.set_close_response("ok");
+    let app_c = app.clone();
+    dialog.connect_response(None, move |_, _| {
+        app_c.quit();
+    });
+    dialog.present(Some(&window));
+}
+
 const APP_ICON_SVG: &[u8] =
     include_bytes!("../../data/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg");
 
@@ -161,6 +184,13 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         .unwrap()
         .get_setting("language")
         .unwrap_or_default();
+    let dyn_color_setting = db
+        .lock()
+        .unwrap()
+        .get_setting("dynamic_color")
+        .unwrap_or_default();
+    let dyn_color_init = TintMode::from_setting(&dyn_color_setting);
+    set_tint_mode(dyn_color_init);
     let saved_vol: f64 = db
         .lock()
         .unwrap()
@@ -218,6 +248,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     menu_btn.add_css_class("flat");
 
     let popover = Popover::new();
+    popover.add_css_class("audra-shaded");
     let pop_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
     pop_box.set_margin_top(4);
     pop_box.set_margin_bottom(4);
@@ -295,6 +326,33 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     rg_row.append(&rg_label);
     rg_row.append(&rg_seg);
 
+    let dc_row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    dc_row.set_margin_top(4);
+    dc_row.set_margin_bottom(4);
+    dc_row.set_margin_start(8);
+    dc_row.set_margin_end(8);
+    let dc_label = gtk4::Label::new(Some(&gettext("Dynamic color")));
+    dc_label.set_xalign(0.0);
+    dc_label.add_css_class("caption");
+    dc_label.add_css_class("dim-label");
+    let dc_btn_off = gtk4::ToggleButton::with_label(&gettext("Off"));
+    let dc_btn_partial = gtk4::ToggleButton::with_label(&gettext("Partial"));
+    let dc_btn_full = gtk4::ToggleButton::with_label(&gettext("Full"));
+    dc_btn_partial.set_group(Some(&dc_btn_off));
+    dc_btn_full.set_group(Some(&dc_btn_off));
+    match dyn_color_init {
+        TintMode::Off => dc_btn_off.set_active(true),
+        TintMode::Partial => dc_btn_partial.set_active(true),
+        TintMode::Full => dc_btn_full.set_active(true),
+    }
+    let dc_seg = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    dc_seg.add_css_class("linked");
+    dc_seg.append(&dc_btn_off);
+    dc_seg.append(&dc_btn_partial);
+    dc_seg.append(&dc_btn_full);
+    dc_row.append(&dc_label);
+    dc_row.append(&dc_seg);
+
     let pop_sep3 = gtk4::Separator::new(gtk4::Orientation::Horizontal);
     pop_sep3.set_margin_top(14);
     pop_sep3.set_margin_bottom(3);
@@ -358,6 +416,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     pop_box.append(&pop_sep2);
     pop_box.append(&font_row);
     pop_box.append(&rg_row);
+    pop_box.append(&dc_row);
     pop_box.append(&lang_row);
     pop_box.append(&pop_sep3);
     pop_box.append(&item_reset);
@@ -374,9 +433,24 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     header.pack_end(&btn_search);
 
     // --- Player, vistas y estado compartido ---
-    let player: Rc<RefCell<Player>> = Rc::new(RefCell::new(
-        Player::new().expect("Error iniciando el motor de audio"),
-    ));
+    // No audio device (CI/headless, missing ALSA, etc.) is recoverable enough
+    // to keep the rest of the app off the panic path: show a modal and exit
+    // cleanly instead of aborting with a stack trace.
+    let player: Rc<RefCell<Player>> = match Player::new() {
+        Ok(p) => Rc::new(RefCell::new(p)),
+        Err(e) => {
+            show_fatal_error(
+                app,
+                &gettext("Audio output unavailable"),
+                &format!(
+                    "{}\n\n{}",
+                    gettext("Audra could not initialise the audio engine."),
+                    e
+                ),
+            );
+            return;
+        }
+    };
     player.borrow_mut().replaygain_mode = replaygain_init_mode;
     // Single source of truth for "what's currently playing". All track lists
     // subscribe to this bus and update their `.playing` row indicator in sync.
@@ -469,6 +543,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     view_stack.set_margin_bottom(6);
 
     let toolbar_view = adw::ToolbarView::new();
+    toolbar_view.add_css_class("audra-toolbar");
     toolbar_view.add_top_bar(&header);
     toolbar_view.add_top_bar(&search_bar);
     toolbar_view.set_content(Some(&view_stack));
@@ -648,55 +723,81 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
-    btn_lang_auto.connect_toggled(clone!(
+    let apply_tint_mode = |db: &Arc<Mutex<Database>>, mode: TintMode| {
+        let _ = db.lock().unwrap().set_setting("dynamic_color", mode.as_setting());
+        set_tint_mode(mode);
+    };
+    dc_btn_off.connect_toggled(clone!(
         #[strong]
         db,
-        #[strong]
-        app,
-        #[weak]
-        window,
         move |btn| {
-            if !btn.is_active() {
-                return;
+            if btn.is_active() {
+                apply_tint_mode(&db, TintMode::Off);
             }
-            let _ = db.lock().unwrap().set_setting("language", "");
-            crate::i18n::init(None);
-            window.close();
+        }
+    ));
+    dc_btn_partial.connect_toggled(clone!(
+        #[strong]
+        db,
+        move |btn| {
+            if btn.is_active() {
+                apply_tint_mode(&db, TintMode::Partial);
+            }
+        }
+    ));
+    dc_btn_full.connect_toggled(clone!(
+        #[strong]
+        db,
+        move |btn| {
+            if btn.is_active() {
+                apply_tint_mode(&db, TintMode::Full);
+            }
+        }
+    ));
+
+    let apply_language: Rc<dyn Fn(Option<&'static str>)> = Rc::new({
+        let player = Rc::clone(&player);
+        let db = Arc::clone(&db);
+        let app = app.clone();
+        let window = window.downgrade();
+        move |lang: Option<&'static str>| {
+            player.borrow_mut().stop();
+            let _ = db
+                .lock()
+                .unwrap()
+                .set_setting("language", lang.unwrap_or(""));
+            crate::i18n::init(lang);
+            if let Some(w) = window.upgrade() {
+                w.close();
+            }
             build_window(&app, Arc::clone(&db));
+        }
+    });
+    btn_lang_auto.connect_toggled(clone!(
+        #[strong]
+        apply_language,
+        move |btn| {
+            if btn.is_active() {
+                apply_language(None);
+            }
         }
     ));
     btn_lang_en.connect_toggled(clone!(
         #[strong]
-        db,
-        #[strong]
-        app,
-        #[weak]
-        window,
+        apply_language,
         move |btn| {
-            if !btn.is_active() {
-                return;
+            if btn.is_active() {
+                apply_language(Some("en"));
             }
-            let _ = db.lock().unwrap().set_setting("language", "en");
-            crate::i18n::init(Some("en"));
-            window.close();
-            build_window(&app, Arc::clone(&db));
         }
     ));
     btn_lang_es.connect_toggled(clone!(
         #[strong]
-        db,
-        #[strong]
-        app,
-        #[weak]
-        window,
+        apply_language,
         move |btn| {
-            if !btn.is_active() {
-                return;
+            if btn.is_active() {
+                apply_language(Some("es"));
             }
-            let _ = db.lock().unwrap().set_setting("language", "es");
-            crate::i18n::init(Some("es"));
-            window.close();
-            build_window(&app, Arc::clone(&db));
         }
     ));
 
@@ -765,6 +866,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                 .issue_url("https://github.com/amurpo/audra/issues")
                 .translator_credits(gettext("translator-credits"))
                 .build();
+            about.add_css_class("audra-shaded");
             about.present(Some(&window));
         }
     ));
@@ -831,34 +933,52 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let mpris_cell: crate::ui::playback::MprisHandle =
         std::rc::Rc::new(std::cell::RefCell::new(None));
 
-    // Windows: connect_realize fires during present() at the exact moment
-    // GDK calls CreateWindowExW — the HWND is guaranteed valid here.
-    // idle_add_local_once was unreliable because the Win32 message pump
-    // can process WM_CREATE after the idle fires, giving souvlaki null.
+    // Windows SMTC: wire the command-drain timer unconditionally so it is
+    // ready before the first event arrives. Sender<T>: Clone lets the
+    // connect_map handler below supply a fresh tx for each attempt without
+    // rebinding the receiver.
     #[cfg(windows)]
     {
         let mpris_cell = Rc::clone(&mpris_cell);
         let bar_c = Rc::clone(&bar);
         let player_c = Rc::clone(&player);
-        let init_once = Rc::new(std::cell::RefCell::new(Some((mpris_tx, mpris_rx))));
-        window.connect_realize(move |window| {
-            log::info!("mpris/smtc: connect_realize fired");
-            let Some((tx, rx)) = init_once.borrow_mut().take() else {
-                log::info!("mpris/smtc: connect_realize fired again (already initialized)");
+
+        wire_mpris(
+            mpris_rx,
+            Rc::clone(&player_c),
+            Rc::clone(&bar_c),
+            window.downgrade(),
+        );
+
+        // connect_map fires when the window becomes visible on screen.
+        // Defer the souvlaki call by 300 ms: GetForWindow() can silently
+        // fail even with a valid HWND if the Win32 message pump has not
+        // yet finished processing its initial queue of window messages.
+        // If the window is hidden and reshown, connect_map fires again
+        // and retries (the is_some() guard prevents double-init).
+        window.connect_map(move |window| {
+            if mpris_cell.borrow().is_some() {
                 return;
-            };
-            if let Some(m) = crate::player::mpris::Mpris::new(window, tx) {
-                log::info!("mpris/smtc: initialized successfully");
-                *mpris_cell.borrow_mut() = Some(m);
-                wire_mpris(
-                    rx,
-                    Rc::clone(&player_c),
-                    Rc::clone(&bar_c),
-                    window.downgrade(),
-                );
-            } else {
-                log::warn!("mpris/smtc: Mpris::new returned None — SMTC unavailable");
             }
+            let win_weak = window.downgrade();
+            let cell = Rc::clone(&mpris_cell);
+            let tx = mpris_tx.clone();
+            glib::timeout_add_local_once(
+                std::time::Duration::from_millis(300),
+                move || {
+                    if cell.borrow().is_some() {
+                        return;
+                    }
+                    let Some(win) = win_weak.upgrade() else {
+                        return;
+                    };
+                    if let Some(m) = crate::player::mpris::Mpris::new(&win, tx) {
+                        *cell.borrow_mut() = Some(m);
+                    } else {
+                        log::warn!("mpris/smtc: media controls unavailable");
+                    }
+                },
+            );
         });
     }
 

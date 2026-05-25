@@ -38,10 +38,18 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Verificar secret del proxy
+        run: |
+          if [ -z "$LASTFM_PROXY_URL" ]; then
+            echo "::error::LASTFM_PROXY_URL no está configurado; el binario no tendrá scrobbling."
+            exit 1
+          fi
+
       - name: Compilar
         run: cargo build --release
         env:
           RUST_BACKTRACE: 1
+          LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
 
       - name: Empaquetar DEB
         run: bash packaging/build-deb.sh

@@ -36,7 +36,10 @@ fn main() {
     println!("cargo:rustc-env=AUDRA_LOCALE_DIR={}", locale_dir);
 
     let proxy_url = env::var("LASTFM_PROXY_URL").unwrap_or_default();
-    let content = format!("pub const PROXY_URL: &str = \"{}\";\n", proxy_url);
+    // {:?} emits a Rust string literal with quotes and backslashes escaped, so
+    // a hostile LASTFM_PROXY_URL containing `"` cannot break out of the literal
+    // or inject extra items into the generated module.
+    let content = format!("pub const PROXY_URL: &str = {:?};\n", proxy_url);
     fs::write(Path::new(&out_dir).join("credentials_gen.rs"), content).unwrap();
 
     if env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {

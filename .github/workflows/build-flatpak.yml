@@ -6,6 +6,9 @@ on:
       ver:
         required: true
         type: string
+    secrets:
+      LASTFM_PROXY_URL:
+        required: true
 
 jobs:
   build-flatpak:

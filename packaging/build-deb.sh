@@ -2,22 +2,27 @@
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VER=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
+VER="${VER:-$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')}"
+# DEB requiere que la versión empiece con dígito; pre-releases llevan prefijo 0~
+DEB_VER=$(echo "$VER" | tr '-' '~')
+case "$DEB_VER" in [0-9]*) ;; *) DEB_VER="0~${DEB_VER}" ;; esac
 
-# Load credentials so build.rs embeds them in the binary
-if [ -f "$ROOT/.env" ]; then
+# En CI, LASTFM_PROXY_URL viene del entorno del workflow.
+# En local, se carga desde .env solo si aún no está definida.
+if [ -z "$LASTFM_PROXY_URL" ] && [ -f "$ROOT/.env" ]; then
     set -a
     # shellcheck source=/dev/null
     source "$ROOT/.env"
     set +a
-else
-    echo "WARNING: .env not found — binary will be built without Last.fm credentials"
+fi
+if [ -z "$LASTFM_PROXY_URL" ]; then
+    echo "WARNING: LASTFM_PROXY_URL no está configurado — el binario no tendrá scrobbling de Last.fm"
 fi
 
 echo "==> Building audra v$VER..."
 cargo build --release --manifest-path "$ROOT/Cargo.toml"
 
-PKG="audra_${VER}_amd64"
+PKG="audra_${DEB_VER}_amd64"
 STAGE="$ROOT/target/debpkg/$PKG"
 
 echo "==> Staging package tree..."
@@ -37,9 +42,9 @@ msgfmt "$ROOT/po/es.po" -o "$STAGE/usr/share/locale/es/LC_MESSAGES/audra.mo"
 # (Debian trixie / Ubuntu 24.04+); the DEB is built in a debian:trixie container.
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: audra
-Version: $VER
+Version: $DEB_VER
 Architecture: amd64
-Maintainer: Daniel Avila <daigo.tnt@gmail.com>
+Maintainer: Daniel Avila
 Section: sound
 Priority: optional
 Homepage: https://github.com/amurpo/audra

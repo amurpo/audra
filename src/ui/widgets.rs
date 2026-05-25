@@ -100,6 +100,10 @@ pub fn page_title_row(text: &str, navigable: bool) -> GtkBox {
 pub fn play_all_button(label: &str) -> Button {
     let btn = Button::new();
     btn.add_css_class("suggested-action");
+    // Marker class so the dynamic-tint Full mode can override its
+    // background with @card_shade_color — otherwise the button takes the
+    // tinted accent color and disappears into the tinted window bg.
+    btn.add_css_class("audra-play-all");
 
     let row = GtkBox::new(Orientation::Horizontal, 8);
     row.set_valign(Align::Center);

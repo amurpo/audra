@@ -42,6 +42,7 @@ jobs:
     with:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
+
   release:
     needs: [version, build-fedora, build-windows, build-deb]
     name: Publicar Release

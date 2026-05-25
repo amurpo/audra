@@ -49,8 +49,9 @@ jobs:
              data/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg \
              po/es.po \
              ~/rpmbuild/BUILD/
+          RPM_VER=$(echo "$VER" | tr '-' '~')
           rpmbuild -bb \
-            --define "ver $VER" \
+            --define "ver $RPM_VER" \
             --define "_sourcedir $HOME/rpmbuild/BUILD" \
             packaging/audra.spec
 

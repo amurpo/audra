@@ -165,6 +165,9 @@ struct Derived {
 }
 
 fn derive(track: &Track, music_folder: Option<&str>) -> Derived {
+    // album_artist is used for album-level grouping in tag mode but must not
+    // override the performer (artist tag) for display: a track tagged
+    // artist=INFIX / album_artist=千住明 should show as INFIX, not 千住明.
     let tag_artist = track
         .album_artist
         .as_deref()
@@ -172,10 +175,17 @@ fn derive(track: &Track, music_folder: Option<&str>) -> Derived {
         .or(track.artist.as_deref())
         .map(str::to_string);
 
+    let display_artist = track
+        .artist
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| tag_artist.clone());
+
     match rel_dirs(&track.path, music_folder) {
         Some(dirs) if !dirs.is_empty() => {
             let folder_name = dirs[0].clone();
-            let artist_label = tag_artist.unwrap_or_else(|| folder_name.clone());
+            let artist_label = display_artist.unwrap_or_else(|| folder_name.clone());
             let (album_label, _from_folder) = if dirs.len() >= 2 {
                 (strip_disc_marker(&dirs[1]), true)
             } else {
@@ -202,7 +212,7 @@ fn derive(track: &Track, music_folder: Option<&str>) -> Derived {
             let album = track.display_album();
             Derived {
                 artist_key: normalize(&artist),
-                artist_label: tag_artist.unwrap_or(artist),
+                artist_label: display_artist.unwrap_or(artist),
                 album_key: normalize(&album),
                 album_label: album,
             }
@@ -229,16 +239,26 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
         let artist_label = dominant(rows.iter().map(|(d, _)| d.artist_label.as_str()))
             .unwrap_or_else(|| rows[0].0.artist_label.clone());
 
-        // "Various Artists": no artist folder (label came from a tag) and the
-        // performer varies across this bucket.
+        // "Various Artists" detection. Two shapes both qualify:
+        //   1. No music folder at all (or track outside it): label comes from
+        //      tags, and performers differ → tag grouping picked a wrong
+        //      artist by accident.
+        //   2. Tracks live directly under a single folder under the music
+        //      folder (Compilations/track.mp3, no per-album subfolder) and
+        //      performers differ → it's an OST or compilation, not a real
+        //      single-artist release.
         let distinct_perf: std::collections::HashSet<String> = rows
             .iter()
             .map(|(_, t)| normalize(&t.display_artist()))
             .collect();
-        let from_folder = rel_dirs(&rows[0].1.path, music_folder)
-            .map(|d| !d.is_empty())
-            .unwrap_or(false);
-        let artist_label = if !from_folder && distinct_perf.len() > 1 {
+        // True when every track is either outside the music folder, or sits
+        // directly under a single folder (no per-album subfolder).
+        let single_level_or_loose = rows.iter().all(|(_, t)| {
+            rel_dirs(&t.path, music_folder)
+                .map(|d| d.len() <= 1)
+                .unwrap_or(true)
+        });
+        let artist_label = if single_level_or_loose && distinct_perf.len() > 1 {
             crate::i18n::gettext("Various Artists")
         } else {
             artist_label
@@ -292,10 +312,9 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
         {
             let mut by_tag_norm: HashMap<String, Vec<String>> = HashMap::new();
             for (key, members) in &groups {
-                let tag_norm =
-                    dominant(members.iter().filter_map(|(_, t)| t.album.as_deref()))
-                        .map(|s| normalize(&s))
-                        .unwrap_or_default();
+                let tag_norm = dominant(members.iter().filter_map(|(_, t)| t.album.as_deref()))
+                    .map(|s| normalize(&s))
+                    .unwrap_or_default();
                 if !tag_norm.is_empty() {
                     by_tag_norm.entry(tag_norm).or_default().push(key.clone());
                 }
@@ -379,31 +398,6 @@ pub fn canonical_key_map(
     map
 }
 
-/// Map every raw artist tag to its canonical (folder) artist, for migrating
-/// the on-disk artist-photo cache.
-pub fn canonical_artist_map(
-    tracks: &[Track],
-    music_folder: Option<&str>,
-) -> HashMap<String, String> {
-    let albums = group_albums(tracks, music_folder);
-    let mut path_to_artist: HashMap<&str, String> = HashMap::new();
-    for a in &albums {
-        for t in &a.tracks {
-            path_to_artist.insert(t.path.as_str(), a.artist.clone());
-        }
-    }
-    let mut map = HashMap::new();
-    for t in tracks {
-        if let Some(canon) = path_to_artist.get(t.path.as_str()) {
-            let raw = t.display_artist();
-            if raw != *canon {
-                map.insert(raw, canon.clone());
-            }
-        }
-    }
-    map
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,40 +414,6 @@ mod tests {
             disc_num: None,
             album_artist: None,
         }
-    }
-
-    #[test]
-    fn canonical_artist_map_collapses_inconsistent_tags_to_same_canonical() {
-        let mf = Some("/Music");
-        let tracks = vec![
-            t("/Music/Tokyo Phil/Gundam/1.mp3", "東京フィル", "Gundam", 1),
-            t("/Music/Tokyo Phil/Gundam/2.mp3", "Tokyo Phil.", "Gundam", 2),
-        ];
-        let map = canonical_artist_map(&tracks, mf);
-        // Both tracks share the same folder key, so they resolve to the same
-        // canonical artist label (whichever tag is dominant).
-        let values: std::collections::HashSet<_> = map.values().collect();
-        assert_eq!(
-            values.len(),
-            1,
-            "both tags must remap to the same canonical"
-        );
-        // The canonical label itself must not appear as a key (no self-mapping).
-        let canonical = values.into_iter().next().unwrap();
-        assert!(!map.contains_key(canonical));
-    }
-
-    #[test]
-    fn canonical_artist_map_is_empty_when_single_consistent_tag() {
-        let mf = Some("/Music");
-        let tracks = vec![t(
-            "/Music/Radiohead/OK Computer/1.mp3",
-            "Radiohead",
-            "OK Computer",
-            1,
-        )];
-        let map = canonical_artist_map(&tracks, mf);
-        assert!(map.is_empty(), "no remap needed when there is only one tag");
     }
 
     #[test]
@@ -696,6 +656,18 @@ mod tests {
     }
 
     #[test]
+    fn album_artist_does_not_override_performer_label() {
+        // INFIX tracks on a V Gundam OST have album_artist=千住明 (composer) but
+        // artist=INFIX (performer). The artist view must show INFIX, not 千住明.
+        let mf = Some("/Music");
+        let mut track = t("/Music/INFIX/V Gundam Score I/1.mp3", "INFIX", "V Gundam Score I", 1);
+        track.album_artist = Some("千住明".to_string());
+        let albums = group_albums(&[track], mf);
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].artist, "INFIX", "album_artist must not override artist label");
+    }
+
+    #[test]
     fn disc_num_orders_tracks_across_discs() {
         let mf = Some("/Music");
         let mut a = t("/Music/Band/Set Disc 2/1.mp3", "Band", "Set", 1);
@@ -738,5 +710,67 @@ mod tests {
         let albums = group_albums(&tracks, mf);
         assert_eq!(albums.len(), 1, "should merge into one album");
         assert_eq!(albums[0].tracks.len(), 3);
+    }
+
+    #[test]
+    fn single_level_folder_with_many_artists_is_various_artists() {
+        // Rurouni Kenshin OST shape: every track sits directly under one
+        // folder (no per-album subfolder) and the performer is different on
+        // each track. The whole set must collapse into a single album
+        // labelled "Various Artists", not silently adopt one of the twelve
+        // performers as the bucket's artist.
+        let mf = Some("/Music");
+        let tracks = vec![
+            t("/Music/Rurouni Kenshin OST/01.mp3", "Judy and Mary", "Rurouni Kenshin OST", 1),
+            t("/Music/Rurouni Kenshin OST/02.mp3", "The Yellow Monkey", "Rurouni Kenshin OST", 2),
+            t("/Music/Rurouni Kenshin OST/03.mp3", "Curio", "Rurouni Kenshin OST", 3),
+            t("/Music/Rurouni Kenshin OST/04.mp3", "T.M. Revolution", "Rurouni Kenshin OST", 4),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1, "compilation folds into one album");
+        assert_eq!(albums[0].artist, "Various Artists");
+        assert_eq!(
+            albums[0].tracks.len(),
+            4,
+            "every track must survive the compilation collapse"
+        );
+    }
+
+    #[test]
+    fn single_level_folder_with_one_artist_is_not_various() {
+        // Same shape as the OST case, but every track is the same artist —
+        // the all-tracks-same-folder guard must NOT trip Various Artists.
+        let mf = Some("/Music");
+        let tracks = vec![
+            t("/Music/Live Bootleg/01.mp3", "Soundgarden", "Live Bootleg", 1),
+            t("/Music/Live Bootleg/02.mp3", "Soundgarden", "Live Bootleg", 2),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].artist, "Soundgarden");
+    }
+
+    #[test]
+    fn artist_subfolder_protects_album_from_various_misdetection() {
+        // Artist/Album/track shape: even if for some reason multiple
+        // performers showed up in the same album subfolder (collab record),
+        // we must NOT relabel it Various — the folder structure says it is
+        // a single release.
+        let mf = Some("/Music");
+        let tracks = vec![
+            t("/Music/Daft Punk/Random Access Memories/01.mp3", "Daft Punk", "RAM", 1),
+            t(
+                "/Music/Daft Punk/Random Access Memories/02.mp3",
+                "Daft Punk feat. Pharrell",
+                "RAM",
+                2,
+            ),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1);
+        assert_ne!(
+            albums[0].artist, "Various Artists",
+            "two-level folder must override per-track artist disagreement"
+        );
     }
 }

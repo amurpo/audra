@@ -21,10 +21,11 @@ use crate::i18n::gettext;
 use crate::library::db::Database;
 use crate::library::metadata::{self, CoverCandidate};
 use crate::ui::albums_view::CARD_SIZE;
+use crate::ui::artists_view::AVATAR_SIZE;
+use crate::ui::image_apply::{apply_image, ImageTarget};
 use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels};
 
 const THUMB: i32 = 168;
-const AVATAR_SIZE: i32 = 120;
 
 /// Apply chosen bytes to the target widget on the UI thread; `None` clears it.
 type ApplyFn = Rc<dyn Fn(Option<&[u8]>)>;
@@ -38,31 +39,6 @@ type CandidatesFn = Arc<dyn Fn(&str) -> Vec<CoverCandidate> + Send + Sync>;
 /// original bytes to store verbatim if the user picks it.
 type ScaledCandidate = (String, Vec<u8>, i32, bool, Vec<u8>);
 
-fn apply_album_cover(stack: &Stack, picture: &Picture, data: Option<&[u8]>) {
-    match data {
-        Some(d) => {
-            if let Some((px, rs, alpha)) = scale_to_pixels(d, CARD_SIZE) {
-                let tex = pixels_to_texture(px, rs, alpha, CARD_SIZE);
-                picture.set_paintable(Some(&tex));
-                stack.set_visible_child_name("art");
-            }
-        }
-        None => stack.set_visible_child_name("placeholder"),
-    }
-}
-
-fn apply_artist_photo(avatar: &adw::Avatar, data: Option<&[u8]>) {
-    match data {
-        Some(d) => {
-            if let Some((px, rs, alpha)) = scale_to_pixels(d, AVATAR_SIZE) {
-                let tex = pixels_to_texture(px, rs, alpha, AVATAR_SIZE);
-                avatar.set_custom_image(Some(&tex));
-            }
-        }
-        None => avatar.set_custom_image(None::<&gtk4::gdk::Texture>),
-    }
-}
-
 /// Add a right-click gesture to an album card opening the cover menu.
 pub fn install_album_cover_gesture(
     child: &gtk4::FlowBoxChild,
@@ -73,7 +49,8 @@ pub fn install_album_cover_gesture(
     stack: Stack,
     picture: Picture,
 ) {
-    let apply: ApplyFn = Rc::new(move |d| apply_album_cover(&stack, &picture, d));
+    let target = ImageTarget::AlbumCover { picture, stack };
+    let apply: ApplyFn = Rc::new(move |d| apply_image(target.clone(), d, CARD_SIZE));
 
     let persist: PersistFn = {
         let (db, a, al) = (Arc::clone(&db), artist.clone(), album.clone());
@@ -117,7 +94,8 @@ pub fn install_artist_photo_gesture(
     artist: String,
     avatar: adw::Avatar,
 ) {
-    let apply: ApplyFn = Rc::new(move |d| apply_artist_photo(&avatar, d));
+    let target = ImageTarget::ArtistPhoto { avatar };
+    let apply: ApplyFn = Rc::new(move |d| apply_image(target.clone(), d, AVATAR_SIZE));
 
     let persist: PersistFn = {
         let a = artist.clone();
@@ -179,6 +157,7 @@ fn show_menu(
     candidates: CandidatesFn,
 ) {
     let pop = gtk4::Popover::new();
+    pop.add_css_class("audra-shaded");
     pop.set_parent(parent);
     pop.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
     pop.connect_closed(|p| p.unparent());
@@ -313,7 +292,9 @@ fn open_picker(
     persist: PersistFn,
     candidates: CandidatesFn,
 ) {
+    let _ = parent;
     let dialog = adw::Dialog::new();
+    dialog.add_css_class("audra-shaded");
     dialog.set_title(&title);
     dialog.set_content_width(560);
     dialog.set_content_height(540);
@@ -441,18 +422,35 @@ fn open_picker(
                             pic.set_content_fit(ContentFit::Cover);
                             pic.set_size_request(THUMB, THUMB);
                             pic.set_overflow(gtk4::Overflow::Hidden);
+                            pic.set_halign(Align::Center);
+                            pic.set_hexpand(false);
 
                             let caption = Label::new(Some(&source));
                             caption.add_css_class("caption");
                             caption.add_css_class("dim-label");
-                            caption.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                            // Wrap to a second line instead of truncating:
+                            // "Incrustada en el archivo" or other long
+                            // source names fit without forcing the cell
+                            // wider than the thumbnail.
+                            caption.set_wrap(true);
+                            caption.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+                            caption.set_lines(2);
+                            caption.set_justify(gtk4::Justification::Center);
+                            caption.set_max_width_chars(16);
+                            caption.set_halign(Align::Center);
+                            caption.set_hexpand(false);
 
                             let cell = GtkBox::new(Orientation::Vertical, 4);
+                            cell.set_halign(Align::Center);
+                            cell.set_hexpand(false);
+                            cell.set_size_request(THUMB, -1);
                             cell.append(&pic);
                             cell.append(&caption);
 
                             let btn = Button::new();
                             btn.add_css_class("flat");
+                            btn.set_halign(Align::Center);
+                            btn.set_hexpand(false);
                             btn.set_child(Some(&cell));
                             btn.connect_clicked(clone!(
                                 #[strong]
@@ -467,7 +465,19 @@ fn open_picker(
                                     dialog.close();
                                 }
                             ));
-                            grid.insert(&btn, -1);
+
+                            // Wrap explicitly: the auto-generated FlowBoxChild
+                            // defaults to halign=Fill, so with set_homogeneous
+                            // the cell stretches to width/N and the button
+                            // highlight runs wide when there are only 1–2
+                            // candidates. An explicit child with halign=Center
+                            // pins each slot to the thumbnail's natural width.
+                            let fb_child = gtk4::FlowBoxChild::new();
+                            fb_child.set_halign(Align::Center);
+                            fb_child.set_valign(Align::Start);
+                            fb_child.set_hexpand(false);
+                            fb_child.set_child(Some(&btn));
+                            grid.insert(&fb_child, -1);
                         }
 
                         if finished.load(Ordering::Relaxed) {

@@ -2,8 +2,8 @@ use crate::i18n::{gettext, ngettext};
 use crate::library::db::Database;
 use crate::library::{Album, Artist, Track};
 use crate::ui::albums_view::{make_album_card, make_album_detail_page, CARD_SIZE};
+use crate::ui::image_apply::{apply_image, ImageTarget};
 use crate::ui::image_loader::{self, FetchOutcome, ImagePipelineConfig};
-use crate::ui::image_utils::{pixels_to_texture, scale_to_pixels};
 use crate::ui::now_playing::NowPlaying;
 use crate::ui::widgets::{content_clamp, page_title_row, play_all_button};
 use adw::prelude::*;
@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-const AVATAR_SIZE: i32 = 152;
+pub const AVATAR_SIZE: i32 = 152;
 
 type PlayCallback = Box<dyn Fn(Vec<Track>, usize)>;
 type AvatarMap = Rc<RefCell<HashMap<String, adw::Avatar>>>;
@@ -79,11 +79,40 @@ impl ArtistsView {
                 let idx = child.index() as usize;
                 let artist_name = artists_c.borrow().get(idx).map(|a| a.name.clone());
                 if let Some(name) = artist_name {
+                    // Two kinds of hits:
+                    //   * Direct: album.artist == name → keep the whole album.
+                    //   * Compilation: album.artist != name but some tracks
+                    //     do match (Various Artists / OSTs) → keep only the
+                    //     artist's tracks under that album, with the original
+                    //     album name preserved so the cover still resolves.
+                    // Both comparisons are case-insensitive so tags like
+                    // "Comes With The Fall" vs "Comes With the Fall" resolve
+                    // to the same canonical artist entry.
+                    let name_lower = name.to_lowercase();
                     let mut artist_albums: Vec<Album> = albums_c
                         .borrow()
                         .iter()
-                        .filter(|a| a.artist == name)
-                        .cloned()
+                        .filter_map(|a| {
+                            if a.artist.to_lowercase() == name_lower {
+                                return Some(a.clone());
+                            }
+                            let tracks: Vec<crate::library::Track> = a
+                                .tracks
+                                .iter()
+                                .filter(|t| t.display_artist().to_lowercase() == name_lower)
+                                .cloned()
+                                .collect();
+                            if tracks.is_empty() {
+                                None
+                            } else {
+                                Some(Album {
+                                    name: a.name.clone(),
+                                    artist: a.artist.clone(),
+                                    tracks,
+                                    cover: a.cover.clone(),
+                                })
+                            }
+                        })
                         .collect();
 
                     {
@@ -320,11 +349,14 @@ fn make_artist_detail_page(
 fn make_artist_album_card(album: &Album, db: Arc<Mutex<Database>>) -> FlowBoxChild {
     let (child, stack, picture) = make_album_card(album, false);
     if let Some(ref data) = album.cover {
-        if let Some((pixels, rowstride, has_alpha)) = scale_to_pixels(data.as_slice(), CARD_SIZE) {
-            let texture = pixels_to_texture(pixels, rowstride, has_alpha, CARD_SIZE);
-            picture.set_paintable(Some(&texture));
-            stack.set_visible_child_name("art");
-        }
+        apply_image(
+            ImageTarget::AlbumCover {
+                picture: picture.clone(),
+                stack: stack.clone(),
+            },
+            Some(data.as_slice()),
+            CARD_SIZE,
+        );
     }
 
     // Right-click on the album card opens the cover picker, the same way the

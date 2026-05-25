@@ -9,7 +9,9 @@ use crate::library::{art, Track};
 use crate::player::mpris::{Mpris, MprisCommand};
 use crate::player::{Player, PlayerState};
 use crate::scrobbler::LastFmClient;
+use crate::ui::dominant_color;
 use crate::ui::player_bar::PlayerBar;
+use crate::ui::theme;
 
 /// Shared, mutable slot for the OS media controls. Starts empty and gets
 /// populated by `main_window` once the window is realized — on Windows
@@ -60,6 +62,23 @@ pub struct ScrobbleTracker {
 /// the file's embedded art. An explicit empty record means the user
 /// removed the cover on purpose, so we return `None` and let the bar fall
 /// back to the placeholder instead of resurrecting the embedded art.
+/// Update the player bar cover and (asynchronously) the dynamic window
+/// tint derived from it. `None` reverts the tint so the window returns to
+/// the theme's default background.
+fn apply_cover_and_tint(bar: &PlayerBar, cover: Option<Vec<u8>>) {
+    bar.update_cover(cover.as_deref());
+    let Some(bytes) = cover else {
+        theme::update_dynamic_tint(None);
+        return;
+    };
+    std::thread::spawn(move || {
+        let rgb = dominant_color::extract(&bytes);
+        glib::idle_add_once(move || {
+            theme::update_dynamic_tint(rgb);
+        });
+    });
+}
+
 fn resolve_cover(db: &Arc<Mutex<Database>>, track: &Track) -> Option<Vec<u8>> {
     let artist = track.artist.clone().unwrap_or_default();
     let album = track.album.clone().unwrap_or_default();
@@ -104,7 +123,7 @@ pub fn make_play_callback(
             bar.update_track(Some(track));
             bar.set_playing(true);
             let cover = resolve_cover(&db, track);
-            bar.update_cover(cover.as_deref());
+            apply_cover_and_tint(&bar, cover);
         }
     }
 }
@@ -138,7 +157,7 @@ pub fn wire_transport_controls(
                 ht(Some(track));
                 bar_ref.update_track(Some(track));
                 bar_ref.set_playing(true);
-                bar_ref.update_cover(resolve_cover(&db_c, track).as_deref());
+                apply_cover_and_tint(&bar_ref, resolve_cover(&db_c, track));
             }
         });
     }
@@ -155,7 +174,7 @@ pub fn wire_transport_controls(
                 ht(Some(track));
                 bar_ref.update_track(Some(track));
                 bar_ref.set_playing(true);
-                bar_ref.update_cover(resolve_cover(&db_c, track).as_deref());
+                apply_cover_and_tint(&bar_ref, resolve_cover(&db_c, track));
             }
         });
     }
@@ -271,11 +290,12 @@ pub fn start_player_timer(
                 highlight_track(Some(track));
                 let cover = resolve_cover(&db, track);
                 bar.update_track(Some(track));
-                bar.update_cover(cover.as_deref());
+                apply_cover_and_tint(&bar, cover);
                 bar.set_playing(true);
             } else {
                 highlight_track(None);
                 bar.update_track(None);
+                apply_cover_and_tint(&bar, None);
                 bar.set_playing(false);
             }
         } else {
