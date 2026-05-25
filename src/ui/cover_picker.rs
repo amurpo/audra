@@ -420,22 +420,26 @@ fn open_picker(
                             pic.set_content_fit(ContentFit::Cover);
                             pic.set_size_request(THUMB, THUMB);
                             pic.set_overflow(gtk4::Overflow::Hidden);
+                            pic.set_halign(Align::Center);
+                            pic.set_hexpand(false);
 
                             let caption = Label::new(Some(&source));
                             caption.add_css_class("caption");
                             caption.add_css_class("dim-label");
                             caption.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                            caption.set_max_width_chars(1);
+                            caption.set_halign(Align::Center);
+                            caption.set_hexpand(false);
 
                             let cell = GtkBox::new(Orientation::Vertical, 4);
+                            cell.set_halign(Align::Center);
+                            cell.set_hexpand(false);
+                            cell.set_size_request(THUMB, -1);
                             cell.append(&pic);
                             cell.append(&caption);
 
                             let btn = Button::new();
                             btn.add_css_class("flat");
-                            // Keep the hover/active background tight to the
-                            // thumbnail; otherwise the homogeneous FlowBox
-                            // stretches each cell (very visible with only 2
-                            // candidates) and the highlight runs wide.
                             btn.set_halign(Align::Center);
                             btn.set_hexpand(false);
                             btn.set_child(Some(&cell));
@@ -452,7 +456,19 @@ fn open_picker(
                                     dialog.close();
                                 }
                             ));
-                            grid.insert(&btn, -1);
+
+                            // Wrap explicitly: the auto-generated FlowBoxChild
+                            // defaults to halign=Fill, so with set_homogeneous
+                            // the cell stretches to width/N and the button
+                            // highlight runs wide when there are only 1–2
+                            // candidates. An explicit child with halign=Center
+                            // pins each slot to the thumbnail's natural width.
+                            let fb_child = gtk4::FlowBoxChild::new();
+                            fb_child.set_halign(Align::Center);
+                            fb_child.set_valign(Align::Start);
+                            fb_child.set_hexpand(false);
+                            fb_child.set_child(Some(&btn));
+                            grid.insert(&fb_child, -1);
                         }
 
                         if finished.load(Ordering::Relaxed) {
