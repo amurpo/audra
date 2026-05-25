@@ -543,6 +543,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     view_stack.set_margin_bottom(6);
 
     let toolbar_view = adw::ToolbarView::new();
+    toolbar_view.add_css_class("audra-toolbar");
     toolbar_view.add_top_bar(&header);
     toolbar_view.add_top_bar(&search_bar);
     toolbar_view.set_content(Some(&view_stack));

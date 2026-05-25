@@ -41,7 +41,7 @@ pub fn extract(bytes: &[u8]) -> Option<(u8, u8, u8)> {
 
             let max = r.max(g).max(b);
             let min = r.min(g).min(b);
-            if max < 30 || max > 240 {
+            if !(30..=240).contains(&max) {
                 continue;
             }
             if (max - min) < 18 {
