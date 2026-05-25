@@ -187,15 +187,28 @@ overlay-split-view > dimming {
     font-variant-numeric: tabular-nums;
 }
 
-/* --- Track list (unified row used by library + album detail) --- */
-listview.audra-track-list {
+/* --- Track list (unified row used by library + album detail) ---
+ *
+ * The list lives inside `.audra-list-card`, which carries the only solid
+ * background of the stack. Every layer underneath the rows — listview,
+ * scrolledwindow, viewport, and each row — has to be transparent or
+ * libadwaita's default `@view_bg_color` would paint over the card's tint
+ * and the dynamic window background would never show through.
+ */
+.audra-list-card scrolledwindow,
+.audra-list-card scrolledwindow > viewport,
+listview.audra-track-list,
+listview.audra-track-list > row {
     background: transparent;
 }
 /* Soft rounded container that hosts the list. Clipped so the scrollbar
- * stays inside the rounded corners.
+ * stays inside the rounded corners. Uses `@card_shade_color` (the same
+ * libadwaita variable as the header and player bars) so the list filters
+ * the dynamic tint the same way those two surfaces do — keeping the
+ * three shaded surfaces visually coherent across the window.
  */
 .audra-list-card {
-    background-color: alpha(currentColor, 0.04);
+    background-color: @card_shade_color;
     border-radius: 12px;
     margin: 6px 0 12px 0;
 }

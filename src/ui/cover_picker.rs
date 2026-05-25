@@ -157,6 +157,7 @@ fn show_menu(
     candidates: CandidatesFn,
 ) {
     let pop = gtk4::Popover::new();
+    pop.add_css_class("audra-shaded");
     pop.set_parent(parent);
     pop.set_pointing_to(Some(&gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
     pop.connect_closed(|p| p.unparent());
@@ -293,6 +294,7 @@ fn open_picker(
 ) {
     let _ = parent;
     let dialog = adw::Dialog::new();
+    dialog.add_css_class("audra-shaded");
     dialog.set_title(&title);
     dialog.set_content_width(560);
     dialog.set_content_height(540);
@@ -426,8 +428,15 @@ fn open_picker(
                             let caption = Label::new(Some(&source));
                             caption.add_css_class("caption");
                             caption.add_css_class("dim-label");
-                            caption.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-                            caption.set_max_width_chars(1);
+                            // Wrap to a second line instead of truncating:
+                            // "Incrustada en el archivo" or other long
+                            // source names fit without forcing the cell
+                            // wider than the thumbnail.
+                            caption.set_wrap(true);
+                            caption.set_wrap_mode(gtk4::pango::WrapMode::WordChar);
+                            caption.set_lines(2);
+                            caption.set_justify(gtk4::Justification::Center);
+                            caption.set_max_width_chars(16);
                             caption.set_halign(Align::Center);
                             caption.set_hexpand(false);
 

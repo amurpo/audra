@@ -21,7 +21,7 @@ use crate::ui::playback::{
 };
 use crate::ui::player_bar::PlayerBar;
 use crate::ui::reset::show_reset_dialog;
-use crate::ui::theme::{setup_css, update_font};
+use crate::ui::theme::{set_tint_mode, setup_css, update_font, TintMode};
 
 pub(crate) fn reload_all_views(
     db: &Arc<Mutex<Database>>,
@@ -184,6 +184,13 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         .unwrap()
         .get_setting("language")
         .unwrap_or_default();
+    let dyn_color_setting = db
+        .lock()
+        .unwrap()
+        .get_setting("dynamic_color")
+        .unwrap_or_default();
+    let dyn_color_init = TintMode::from_setting(&dyn_color_setting);
+    set_tint_mode(dyn_color_init);
     let saved_vol: f64 = db
         .lock()
         .unwrap()
@@ -241,6 +248,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     menu_btn.add_css_class("flat");
 
     let popover = Popover::new();
+    popover.add_css_class("audra-shaded");
     let pop_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
     pop_box.set_margin_top(4);
     pop_box.set_margin_bottom(4);
@@ -318,6 +326,33 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     rg_row.append(&rg_label);
     rg_row.append(&rg_seg);
 
+    let dc_row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    dc_row.set_margin_top(4);
+    dc_row.set_margin_bottom(4);
+    dc_row.set_margin_start(8);
+    dc_row.set_margin_end(8);
+    let dc_label = gtk4::Label::new(Some(&gettext("Dynamic color")));
+    dc_label.set_xalign(0.0);
+    dc_label.add_css_class("caption");
+    dc_label.add_css_class("dim-label");
+    let dc_btn_off = gtk4::ToggleButton::with_label(&gettext("Off"));
+    let dc_btn_partial = gtk4::ToggleButton::with_label(&gettext("Partial"));
+    let dc_btn_full = gtk4::ToggleButton::with_label(&gettext("Full"));
+    dc_btn_partial.set_group(Some(&dc_btn_off));
+    dc_btn_full.set_group(Some(&dc_btn_off));
+    match dyn_color_init {
+        TintMode::Off => dc_btn_off.set_active(true),
+        TintMode::Partial => dc_btn_partial.set_active(true),
+        TintMode::Full => dc_btn_full.set_active(true),
+    }
+    let dc_seg = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    dc_seg.add_css_class("linked");
+    dc_seg.append(&dc_btn_off);
+    dc_seg.append(&dc_btn_partial);
+    dc_seg.append(&dc_btn_full);
+    dc_row.append(&dc_label);
+    dc_row.append(&dc_seg);
+
     let pop_sep3 = gtk4::Separator::new(gtk4::Orientation::Horizontal);
     pop_sep3.set_margin_top(14);
     pop_sep3.set_margin_bottom(3);
@@ -381,6 +416,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     pop_box.append(&pop_sep2);
     pop_box.append(&font_row);
     pop_box.append(&rg_row);
+    pop_box.append(&dc_row);
     pop_box.append(&lang_row);
     pop_box.append(&pop_sep3);
     pop_box.append(&item_reset);
@@ -686,6 +722,38 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
+    let apply_tint_mode = |db: &Arc<Mutex<Database>>, mode: TintMode| {
+        let _ = db.lock().unwrap().set_setting("dynamic_color", mode.as_setting());
+        set_tint_mode(mode);
+    };
+    dc_btn_off.connect_toggled(clone!(
+        #[strong]
+        db,
+        move |btn| {
+            if btn.is_active() {
+                apply_tint_mode(&db, TintMode::Off);
+            }
+        }
+    ));
+    dc_btn_partial.connect_toggled(clone!(
+        #[strong]
+        db,
+        move |btn| {
+            if btn.is_active() {
+                apply_tint_mode(&db, TintMode::Partial);
+            }
+        }
+    ));
+    dc_btn_full.connect_toggled(clone!(
+        #[strong]
+        db,
+        move |btn| {
+            if btn.is_active() {
+                apply_tint_mode(&db, TintMode::Full);
+            }
+        }
+    ));
+
     let apply_language: Rc<dyn Fn(Option<&'static str>)> = Rc::new({
         let player = Rc::clone(&player);
         let db = Arc::clone(&db);
@@ -797,6 +865,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                 .issue_url("https://github.com/amurpo/audra/issues")
                 .translator_credits(gettext("translator-credits"))
                 .build();
+            about.add_css_class("audra-shaded");
             about.present(Some(&window));
         }
     ));
