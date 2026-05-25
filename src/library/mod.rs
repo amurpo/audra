@@ -40,8 +40,8 @@ pub fn group_into_artists(albums: &[Album]) -> Vec<Artist> {
     // key: lowercase artist name for case-insensitive dedup
     // value: (album_keys, total_tracks, name_freq) — name_freq picks the
     // display name: the variant that appears on the most tracks wins.
-    let mut map: HashMap<String, (HashSet<String>, usize, HashMap<String, usize>)> =
-        HashMap::new();
+    type ArtistAgg = (HashSet<String>, usize, HashMap<String, usize>);
+    let mut map: HashMap<String, ArtistAgg> = HashMap::new();
     for album in albums {
         let album_key = format!("{}|{}", album.artist, album.name);
         // Count per-artist track contributions to this album in one pass so
