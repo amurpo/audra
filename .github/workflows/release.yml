@@ -1,5 +1,4 @@
 name: Release
-
 on:
   push:
     branches:
@@ -10,7 +9,6 @@ on:
       - 'LICENSE*'
       - '.gitignore'
       - 'docs/**'
-
 jobs:
   version:
     runs-on: ubuntu-latest
@@ -26,21 +24,18 @@ jobs:
   test:
     uses: ./.github/workflows/test.yml
     secrets: inherit
-
   build-fedora:
     needs: [version, test]
     uses: ./.github/workflows/build-fedora.yml
     with:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
-
   build-windows:
     needs: [version, test]
     uses: ./.github/workflows/build-windows.yml
     with:
       ver: ${{ needs.version.outputs.ver }}
     secrets: inherit
-
   build-deb:
     needs: [version, test]
     uses: ./.github/workflows/build-deb.yml
@@ -60,7 +55,6 @@ jobs:
         with:
           path: dist/
           merge-multiple: true
-
       - name: Crear Release en GitHub
         uses: softprops/action-gh-release@v3
         with:
