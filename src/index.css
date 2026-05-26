@@ -1,0 +1,200 @@
+@import "tailwindcss";
+
+@source "../index.html";
+@source "../src/**/*.{js,ts,jsx,tsx}";
+
+@theme {
+  --font-sans: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    system-ui, sans-serif;
+
+  --color-audra-dark: #191c1f;
+  --color-audra-white: #ffffff;
+  --color-audra-border: #2a2f37;
+  --color-audra-border-hover: #4a5263;
+  --color-audra-blue: #4f55f1;
+  --color-audra-blue-hover: rgba(79, 85, 241, 0.1);
+  --color-audra-code: #60a5fa;
+  --color-audra-nav: rgba(25, 28, 31, 0.95);
+
+  --max-width-page: 75rem;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    @apply min-h-full;
+  }
+
+  body {
+    @apply bg-audra-dark font-sans text-audra-white antialiased;
+    line-height: 1.5;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--color-audra-dark);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-audra-blue);
+    border-radius: 4px;
+  }
+}
+
+@layer components {
+  .page-container {
+    @apply mx-auto w-full max-w-page px-6;
+  }
+
+  .heading-1 {
+    @apply text-5xl font-bold leading-tight tracking-tight md:text-7xl;
+    letter-spacing: -0.02em;
+  }
+
+  .heading-2 {
+    @apply text-3xl font-bold leading-snug md:text-4xl;
+  }
+
+  .heading-3 {
+    @apply text-xl font-semibold leading-snug;
+  }
+
+  .heading-3-lg {
+    @apply text-2xl font-semibold leading-snug;
+  }
+
+  .body-large {
+    @apply text-lg font-normal leading-normal;
+  }
+
+  .body-text {
+    @apply text-base font-normal leading-normal;
+  }
+
+  .body-small {
+    @apply text-sm font-normal;
+    line-height: 1.6;
+  }
+
+  .btn {
+    @apply inline-flex cursor-pointer items-center justify-center rounded-lg border-0 px-8 py-4 text-base font-medium leading-normal no-underline;
+  }
+
+  .btn:focus-visible {
+    @apply outline-2 outline-offset-2 outline-audra-blue;
+  }
+
+  .btn-primary {
+    @apply bg-audra-blue text-audra-white hover:opacity-85;
+  }
+
+  .btn-secondary {
+    @apply border border-audra-blue bg-transparent text-audra-blue hover:bg-audra-blue-hover;
+  }
+
+  .card {
+    @apply rounded-lg border border-audra-border bg-audra-dark p-6 hover:border-audra-border-hover;
+  }
+
+  .code-block {
+    @apply overflow-x-auto rounded-lg bg-black/40 p-4 font-mono text-sm;
+    line-height: 1.6;
+  }
+
+  .code-block code {
+    @apply text-audra-code;
+  }
+
+  .site-nav {
+    @apply sticky top-0 z-50 border-b border-audra-border py-4 backdrop-blur-sm;
+    background-color: var(--color-audra-nav);
+  }
+
+  .site-logo {
+    @apply inline-flex items-center gap-2.5 text-audra-white no-underline;
+  }
+
+  .site-logo:focus-visible {
+    @apply rounded outline-2 outline-offset-4 outline-audra-blue;
+  }
+
+  .site-logo-mark {
+    @apply block shrink-0;
+  }
+
+  .site-logo-wordmark {
+    @apply text-2xl leading-none font-bold tracking-tighter;
+  }
+
+  .section-divider {
+    @apply border-b border-audra-border;
+  }
+
+  .section-spacing {
+    @apply py-24;
+  }
+
+  .section-spacing-hero {
+    @apply py-24 md:py-32;
+  }
+
+  .hero-section {
+    @apply relative overflow-hidden bg-cover bg-center bg-no-repeat;
+  }
+
+  .hero-overlay {
+    @apply absolute inset-0 bg-audra-dark/85;
+  }
+
+  .hero-content {
+    @apply relative z-10;
+  }
+
+  .step-badge {
+    @apply flex size-12 shrink-0 items-center justify-center rounded-lg bg-audra-blue text-lg font-bold text-audra-white;
+  }
+
+  .footer-link {
+    @apply text-audra-white no-underline opacity-60 hover:opacity-100;
+  }
+
+  .footer-link:focus-visible {
+    @apply opacity-100 outline-2 outline-offset-2 outline-audra-blue;
+  }
+
+  .lang-switch {
+    @apply inline-flex rounded-lg border border-audra-border p-0.5;
+  }
+
+  .lang-switch-btn {
+    @apply cursor-pointer rounded-md border-0 bg-transparent px-3 py-1.5 text-sm font-medium text-audra-white opacity-60;
+  }
+
+  .lang-switch-btn[aria-pressed="true"] {
+    @apply bg-audra-blue text-audra-white opacity-100;
+  }
+
+  .lang-switch-btn:hover:not([aria-pressed="true"]) {
+    @apply opacity-85;
+  }
+
+  .lang-switch-btn:focus-visible {
+    @apply outline-2 outline-offset-1 outline-audra-blue;
+  }
+
+  .skip-link {
+    @apply absolute -left-[9999px] top-0 z-100 rounded-br-lg bg-audra-blue px-6 py-3 font-medium text-audra-white no-underline;
+  }
+
+  .skip-link:focus {
+    @apply left-0;
+  }
+
+  .app-screenshot {
+    @apply w-full rounded-lg border border-audra-border;
+  }
+}

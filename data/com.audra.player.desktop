@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=Audra
-Comment=Reproductor de música
-Exec=audra
-Icon=com.audra.player
-Terminal=false
-Type=Application
-Categories=Audio;Music;Player;GTK;
-StartupWMClass=com.audra.player

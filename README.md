@@ -119,3 +119,19 @@ The package is written to `target/debpkg/audra_<version>_amd64.deb`.
 ## License
 
 GPL-3.0-or-later — see [LICENSE](LICENSE).
+
+## Website
+
+The landing page is a Vite + React app with English and Spanish support.
+
+```bash
+npm install
+npm run dev          # local development at http://localhost:5173
+npm run build:pages  # production build for GitHub Pages (/audra/ base path)
+npm run preview:pages
+npm run deploy       # build and push dist/ to gh-pages branch
+```
+
+GitHub Actions (`.github/workflows/deploy-pages.yml`) builds minified assets and deploys to GitHub Pages on pushes to `main` or `web`. Enable **Settings → Pages → GitHub Actions** in the repository once.
+
+Live site: [https://amurpo.github.io/audra/](https://amurpo.github.io/audra/)
