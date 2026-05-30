@@ -1,6 +1,6 @@
 [package]
 name = "audra"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 license = "GPL-3.0-or-later"
 
@@ -11,6 +11,9 @@ libadwaita = { version = "0.7", features = ["v1_6"] }
 glib = "0.20"
 gio = "0.20"
 gdk-pixbuf = "0.20"
+# Album-art palette extraction (median cut). Same crate Amberol uses for its
+# dynamic background; see the attribution in src/ui/theme.rs.
+color-thief = "0.2"
 
 # Audio
 rodio = { version = "0.20", features = ["mp3", "flac", "vorbis", "wav"] }

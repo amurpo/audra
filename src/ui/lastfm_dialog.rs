@@ -248,9 +248,8 @@ pub fn show_lastfm_dialog(
             let token = match pending_token.borrow().clone() {
                 Some(t) => t,
                 None => {
-                    wait_error_label.set_text(&gettext(
-                        "No pending token. Please authorize again.",
-                    ));
+                    wait_error_label
+                        .set_text(&gettext("No pending token. Please authorize again."));
                     return;
                 }
             };

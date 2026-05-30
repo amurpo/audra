@@ -72,9 +72,9 @@ fn apply_cover_and_tint(bar: &PlayerBar, cover: Option<Vec<u8>>) {
         return;
     };
     std::thread::spawn(move || {
-        let rgb = dominant_color::extract(&bytes);
+        let palette = dominant_color::palette(&bytes, 5);
         glib::idle_add_once(move || {
-            theme::update_dynamic_tint(rgb);
+            theme::update_dynamic_tint(palette);
         });
     });
 }

@@ -724,7 +724,10 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     ));
 
     let apply_tint_mode = |db: &Arc<Mutex<Database>>, mode: TintMode| {
-        let _ = db.lock().unwrap().set_setting("dynamic_color", mode.as_setting());
+        let _ = db
+            .lock()
+            .unwrap()
+            .set_setting("dynamic_color", mode.as_setting());
         set_tint_mode(mode);
     };
     dc_btn_off.connect_toggled(clone!(
@@ -963,22 +966,19 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             let win_weak = window.downgrade();
             let cell = Rc::clone(&mpris_cell);
             let tx = mpris_tx.clone();
-            glib::timeout_add_local_once(
-                std::time::Duration::from_millis(300),
-                move || {
-                    if cell.borrow().is_some() {
-                        return;
-                    }
-                    let Some(win) = win_weak.upgrade() else {
-                        return;
-                    };
-                    if let Some(m) = crate::player::mpris::Mpris::new(&win, tx) {
-                        *cell.borrow_mut() = Some(m);
-                    } else {
-                        log::warn!("mpris/smtc: media controls unavailable");
-                    }
-                },
-            );
+            glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
+                if cell.borrow().is_some() {
+                    return;
+                }
+                let Some(win) = win_weak.upgrade() else {
+                    return;
+                };
+                if let Some(m) = crate::player::mpris::Mpris::new(&win, tx) {
+                    *cell.borrow_mut() = Some(m);
+                } else {
+                    log::warn!("mpris/smtc: media controls unavailable");
+                }
+            });
         });
     }
 
