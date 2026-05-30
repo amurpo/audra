@@ -43,7 +43,7 @@ impl TintMode {
 thread_local! {
     static PROVIDER: RefCell<Option<gtk4::CssProvider>> = const { RefCell::new(None) };
     static USE_JOST: RefCell<bool> = const { RefCell::new(false) };
-    static TINT_RGB: RefCell<Option<(u8, u8, u8)>> = const { RefCell::new(None) };
+    static TINT_PALETTE: RefCell<Option<Vec<(u8, u8, u8)>>> = const { RefCell::new(None) };
     static TINT_MODE: RefCell<TintMode> = const { RefCell::new(TintMode::Partial) };
 }
 
@@ -66,22 +66,48 @@ fn cap_luminance(rgb: (u8, u8, u8), max_y: f32) -> (u8, u8, u8) {
     )
 }
 
-/// Build a CSS snippet that tints the window background with the album's
-/// dominant color. The color is capped at Y=100 first so the tint stays
-/// readable under the white foreground text; alpha 0.88 then lets the
-/// theme's `@window_bg_color` peek through just enough to soften the
-/// edges without washing the hue out.
-/// Approximate the perceived background color of the tinted window
-/// itself (without the `@card_shade_color` overlay) so we can paint it
-/// as a SOLID base on the floating popover surface. GTK then layers the
-/// real `@card_shade_color` on top via `background-image`, reproducing
-/// the exact composition the header / player bar / list card show.
-fn tinted_window_solid(rgb: (u8, u8, u8)) -> (u8, u8, u8) {
-    const ALPHA: f32 = 0.88;
-    const WIN_BG: f32 = 36.0;
-    let (r, g, b) = rgb;
-    let mix = |c: u8| (c as f32 * ALPHA + WIN_BG * (1.0 - ALPHA)).round() as u8;
-    (mix(r), mix(g), mix(b))
+/// Multiply the HSL saturation of `rgb` by `factor` (clamped to [0,1]),
+/// preserving hue and lightness. The dominant-color extractor averages a
+/// quantised histogram bucket, which tends to mute the result toward grey;
+/// boosting chroma here makes the tint read as the cover's real color
+/// instead of a washed-out tone — without ever touching opacity.
+fn boost_saturation(rgb: (u8, u8, u8), factor: f32) -> (u8, u8, u8) {
+    let r = rgb.0 as f32 / 255.0;
+    let g = rgb.1 as f32 / 255.0;
+    let b = rgb.2 as f32 / 255.0;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    let d = max - min;
+    if d == 0.0 {
+        return rgb; // achromatic: nothing to saturate
+    }
+    let s = if l > 0.5 {
+        d / (2.0 - max - min)
+    } else {
+        d / (max + min)
+    };
+    let s = (s * factor).clamp(0.0, 1.0);
+    let h = (if max == r {
+        ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    }) / 6.0;
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h * 6.0).rem_euclid(2.0) - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r1, g1, b1) = match (h * 6.0) as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let to_u8 = |v: f32| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    (to_u8(r1), to_u8(g1), to_u8(b1))
 }
 
 /// Player-bar control overrides that only make sense when a dynamic tint
@@ -105,24 +131,52 @@ const PLAYER_CONTROL_NEUTRAL_CSS: &str = "
 }
 ";
 
-fn dynamic_tint_css(rgb: (u8, u8, u8), mode: TintMode) -> String {
-    if mode == TintMode::Off {
+/// The multi-color "aurora" background is adapted from Amberol
+/// (GPL-3.0-or-later), © Emmanuele Bassi — specifically the stacked diagonal
+/// gradients in its `src/gtk/style.css`. Amberol paints one `linear-gradient`
+/// per palette color, each fading from 55% to transparent toward a different
+/// corner, so the cover's colors blend in the corners. We reproduce that, but
+/// always over an OPAQUE `background-color` base: the alpha lives only between
+/// layers, never against the window surface, so the desktop can't bleed
+/// through (the bug the first translucent version had).
+fn dynamic_tint_css(palette: &[(u8, u8, u8)], mode: TintMode) -> String {
+    if mode == TintMode::Off || palette.is_empty() {
         return String::new();
     }
-    let (r, g, b) = cap_luminance(rgb, 140.0);
-    let (pr, pg, pb) = tinted_window_solid((r, g, b));
+    // Boost chroma so the layers read as the cover's real colors, and cap
+    // luminance at Y=150 so white text stays legible even where layers stack.
+    let colors: Vec<(u8, u8, u8)> = palette
+        .iter()
+        .take(3)
+        .map(|&c| cap_luminance(boost_saturation(c, 1.3), 150.0))
+        .collect();
+    // Opaque, dark-tinted base from the dominant color (Y=45). Everything else
+    // is layered on top of this, so there is never real transparency.
+    let (kr, kg, kb) = cap_luminance(boost_saturation(palette[0], 1.3), 45.0);
+    // One diagonal gradient per color, angles ~110° apart (Amberol's 127/217/336).
+    const ANGLES: [u16; 3] = [127, 217, 336];
+    let layers = colors
+        .iter()
+        .enumerate()
+        .map(|(i, &(r, g, b))| {
+            let a = ANGLES[i];
+            format!("linear-gradient({a}deg, rgba({r},{g},{b},0.55), rgba({r},{g},{b},0) 70.71%)")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     // libadwaita applies different classes to its `dialog` node:
     //   AdwDialog       → `dialog.background`
     //   AdwAboutDialog  → `dialog.about`
     // Their default bg rule is `dialog-host > dialog.background sheet`
     // (specificity 0,1,3). Matching with `dialog-host > dialog.audra-shaded
     // sheet` lands at the same specificity and wins by source order,
-    // covering both subclasses with one selector.
+    // covering both subclasses with one selector. Popovers/dialogs get the
+    // solid base + @card_shade_color overlay (no gradient) so they stay calm.
     let bg = format!(
-        "window {{ background-image: linear-gradient(rgba({r},{g},{b},0.88), rgba({r},{g},{b},0.88)); }}\n\
+        "window {{ background-color: rgb({kr},{kg},{kb}); background-image: {layers}; transition: background-image 250ms ease; }}\n\
          popover.audra-shaded > contents,\
          dialog-host > dialog.audra-shaded sheet {{\
-             background-color: rgb({pr},{pg},{pb});\
+             background-color: rgb({kr},{kg},{kb});\
              background-image: linear-gradient(@card_shade_color, @card_shade_color);\
          }}\n"
     );
@@ -133,9 +187,9 @@ fn dynamic_tint_css(rgb: (u8, u8, u8), mode: TintMode) -> String {
     }
     // Full: redefine libadwaita's accent so suggested-action buttons,
     // .accent toggles, switches, progress bars, etc. follow the cover.
-    // The accent is capped at Y=40 — much darker than the Y=140 bg — so
-    // it contrasts against the tinted window instead of disappearing.
-    let (ar, ag, ab) = cap_luminance(rgb, 40.0);
+    // The accent is capped at Y=40 — much darker than the bg — so it
+    // contrasts against the tinted window instead of disappearing.
+    let (ar, ag, ab) = cap_luminance(boost_saturation(palette[0], 1.3), 40.0);
     // Special-case the "Play all" button (lives directly on the tinted
     // window, so a dark accent looks muddy) with `@card_shade_color` to
     // match the surrounding bars/cards. The player-bar controls get
@@ -155,9 +209,11 @@ fn build_css() -> String {
         css.push_str(JOST_FONT_CSS);
     }
     let mode = TINT_MODE.with(|c| *c.borrow());
-    if let Some(rgb) = TINT_RGB.with(|c| *c.borrow()) {
-        css.push_str(&dynamic_tint_css(rgb, mode));
-    }
+    TINT_PALETTE.with(|c| {
+        if let Some(palette) = c.borrow().as_ref() {
+            css.push_str(&dynamic_tint_css(palette, mode));
+        }
+    });
     css
 }
 
@@ -222,10 +278,11 @@ pub fn update_font(use_jost: bool) {
     reload();
 }
 
-/// Set or clear the dynamic background tint. `None` reverts the window to
-/// the theme's default background. Must run on the GTK main thread.
-pub fn update_dynamic_tint(rgb: Option<(u8, u8, u8)>) {
-    TINT_RGB.with(|c| *c.borrow_mut() = rgb);
+/// Set or clear the dynamic background palette (dominant color first). `None`
+/// reverts the window to the theme's default background. Must run on the GTK
+/// main thread.
+pub fn update_dynamic_tint(palette: Option<Vec<(u8, u8, u8)>>) {
+    TINT_PALETTE.with(|c| *c.borrow_mut() = palette);
     reload();
 }
 

@@ -128,6 +128,12 @@ bash packaging/build-deb.sh
 
 The package is written to `target/debpkg/audra_<version>_amd64.deb`.
 
+## Credits
+
+The dynamic, album-art-based background (stacked diagonal color gradients
+extracted from the cover) is adapted from [Amberol](https://gitlab.gnome.org/World/amberol)
+by Emmanuele Bassi, also licensed GPL-3.0-or-later. Thank you.
+
 ## License
 
 GPL-3.0-or-later — see [LICENSE](LICENSE).

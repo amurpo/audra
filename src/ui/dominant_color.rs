@@ -1,68 +1,47 @@
-//! Pick a representative color from a cover image.
-//!
-//! Histogram in 4 bits per channel (4096 buckets) over a 32x32 thumbnail,
-//! skipping near-black, near-white and low-saturation pixels so backgrounds
-//! and letterboxing don't dominate. Returns the average of the bucket with
-//! the highest count.
+//! Extract a representative color palette from a cover image, most dominant
+//! color first, using the `color_thief` median-cut quantizer — the same
+//! approach Amberol uses for its dynamic background.
 
+use color_thief::ColorFormat;
 use gdk_pixbuf::{InterpType, PixbufLoader};
 use gtk4::prelude::*;
 
-const THUMB: i32 = 32;
-const BUCKET_BITS: u8 = 4;
-const BUCKETS_PER_CH: usize = 1 << BUCKET_BITS;
-const TOTAL_BUCKETS: usize = BUCKETS_PER_CH * BUCKETS_PER_CH * BUCKETS_PER_CH;
+/// Thumbnail edge for palette extraction. Big enough that median cut has
+/// enough samples to separate distinct colors, small enough to stay cheap.
+const PALETTE_THUMB: i32 = 96;
 
-pub fn extract(bytes: &[u8]) -> Option<(u8, u8, u8)> {
+/// Extract up to `max_colors` representative colors from the cover, most
+/// dominant first, using the `color_thief` median-cut quantizer (the same
+/// approach Amberol uses for its dynamic background). Returns `None` when the
+/// image can't be decoded or no color is found.
+pub fn palette(bytes: &[u8], max_colors: u8) -> Option<Vec<(u8, u8, u8)>> {
     let loader = PixbufLoader::new();
     loader.write(bytes).ok()?;
     loader.close().ok()?;
     let src = loader.pixbuf()?;
-    let thumb = src.scale_simple(THUMB, THUMB, InterpType::Bilinear)?;
-    let raw = thumb.read_pixel_bytes();
-    let pixels: &[u8] = raw.as_ref();
+    let thumb = src.scale_simple(PALETTE_THUMB, PALETTE_THUMB, InterpType::Bilinear)?;
     let channels = if thumb.has_alpha() { 4 } else { 3 };
     let rowstride = thumb.rowstride() as usize;
-    let shift = 8 - BUCKET_BITS;
-
-    let mut counts = vec![0u32; TOTAL_BUCKETS];
-    let mut sums = vec![(0u64, 0u64, 0u64); TOTAL_BUCKETS];
-
-    for y in 0..THUMB as usize {
-        let row_start = y * rowstride;
-        for x in 0..THUMB as usize {
-            let i = row_start + x * channels;
-            if i + 2 >= pixels.len() {
-                continue;
-            }
-            let r = pixels[i];
-            let g = pixels[i + 1];
-            let b = pixels[i + 2];
-
-            let max = r.max(g).max(b);
-            let min = r.min(g).min(b);
-            if !(30..=240).contains(&max) {
-                continue;
-            }
-            if (max - min) < 18 {
-                continue;
-            }
-
-            let br = (r >> shift) as usize;
-            let bg = (g >> shift) as usize;
-            let bb = (b >> shift) as usize;
-            let idx = br * BUCKETS_PER_CH * BUCKETS_PER_CH + bg * BUCKETS_PER_CH + bb;
-            counts[idx] += 1;
-            let (sr, sg, sb) = sums[idx];
-            sums[idx] = (sr + r as u64, sg + g as u64, sb + b as u64);
+    let raw = thumb.read_pixel_bytes();
+    let pixels: &[u8] = raw.as_ref();
+    let w = PALETTE_THUMB as usize * channels;
+    // color_thief expects tightly packed rows; strip any rowstride padding.
+    let mut packed = Vec::with_capacity(PALETTE_THUMB as usize * w);
+    for y in 0..PALETTE_THUMB as usize {
+        let start = y * rowstride;
+        if start + w <= pixels.len() {
+            packed.extend_from_slice(&pixels[start..start + w]);
         }
     }
-
-    let (best_idx, &top) = counts.iter().enumerate().max_by_key(|&(_, c)| *c)?;
-    if top == 0 {
+    let fmt = if channels == 4 {
+        ColorFormat::Rgba
+    } else {
+        ColorFormat::Rgb
+    };
+    // quality 10 = fastest sampling; runs off the main thread anyway.
+    let colors = color_thief::get_palette(&packed, fmt, 10, max_colors.max(2)).ok()?;
+    if colors.is_empty() {
         return None;
     }
-    let (sr, sg, sb) = sums[best_idx];
-    let c = top as u64;
-    Some(((sr / c) as u8, (sg / c) as u8, (sb / c) as u8))
+    Some(colors.into_iter().map(|c| (c.r, c.g, c.b)).collect())
 }

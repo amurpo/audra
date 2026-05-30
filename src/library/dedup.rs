@@ -660,11 +660,19 @@ mod tests {
         // INFIX tracks on a V Gundam OST have album_artist=千住明 (composer) but
         // artist=INFIX (performer). The artist view must show INFIX, not 千住明.
         let mf = Some("/Music");
-        let mut track = t("/Music/INFIX/V Gundam Score I/1.mp3", "INFIX", "V Gundam Score I", 1);
+        let mut track = t(
+            "/Music/INFIX/V Gundam Score I/1.mp3",
+            "INFIX",
+            "V Gundam Score I",
+            1,
+        );
         track.album_artist = Some("千住明".to_string());
         let albums = group_albums(&[track], mf);
         assert_eq!(albums.len(), 1);
-        assert_eq!(albums[0].artist, "INFIX", "album_artist must not override artist label");
+        assert_eq!(
+            albums[0].artist, "INFIX",
+            "album_artist must not override artist label"
+        );
     }
 
     #[test]
@@ -721,10 +729,30 @@ mod tests {
         // performers as the bucket's artist.
         let mf = Some("/Music");
         let tracks = vec![
-            t("/Music/Rurouni Kenshin OST/01.mp3", "Judy and Mary", "Rurouni Kenshin OST", 1),
-            t("/Music/Rurouni Kenshin OST/02.mp3", "The Yellow Monkey", "Rurouni Kenshin OST", 2),
-            t("/Music/Rurouni Kenshin OST/03.mp3", "Curio", "Rurouni Kenshin OST", 3),
-            t("/Music/Rurouni Kenshin OST/04.mp3", "T.M. Revolution", "Rurouni Kenshin OST", 4),
+            t(
+                "/Music/Rurouni Kenshin OST/01.mp3",
+                "Judy and Mary",
+                "Rurouni Kenshin OST",
+                1,
+            ),
+            t(
+                "/Music/Rurouni Kenshin OST/02.mp3",
+                "The Yellow Monkey",
+                "Rurouni Kenshin OST",
+                2,
+            ),
+            t(
+                "/Music/Rurouni Kenshin OST/03.mp3",
+                "Curio",
+                "Rurouni Kenshin OST",
+                3,
+            ),
+            t(
+                "/Music/Rurouni Kenshin OST/04.mp3",
+                "T.M. Revolution",
+                "Rurouni Kenshin OST",
+                4,
+            ),
         ];
         let albums = group_albums(&tracks, mf);
         assert_eq!(albums.len(), 1, "compilation folds into one album");
@@ -742,8 +770,18 @@ mod tests {
         // the all-tracks-same-folder guard must NOT trip Various Artists.
         let mf = Some("/Music");
         let tracks = vec![
-            t("/Music/Live Bootleg/01.mp3", "Soundgarden", "Live Bootleg", 1),
-            t("/Music/Live Bootleg/02.mp3", "Soundgarden", "Live Bootleg", 2),
+            t(
+                "/Music/Live Bootleg/01.mp3",
+                "Soundgarden",
+                "Live Bootleg",
+                1,
+            ),
+            t(
+                "/Music/Live Bootleg/02.mp3",
+                "Soundgarden",
+                "Live Bootleg",
+                2,
+            ),
         ];
         let albums = group_albums(&tracks, mf);
         assert_eq!(albums.len(), 1);
@@ -758,7 +796,12 @@ mod tests {
         // a single release.
         let mf = Some("/Music");
         let tracks = vec![
-            t("/Music/Daft Punk/Random Access Memories/01.mp3", "Daft Punk", "RAM", 1),
+            t(
+                "/Music/Daft Punk/Random Access Memories/01.mp3",
+                "Daft Punk",
+                "RAM",
+                1,
+            ),
             t(
                 "/Music/Daft Punk/Random Access Memories/02.mp3",
                 "Daft Punk feat. Pharrell",

@@ -52,7 +52,9 @@ pub fn group_into_artists(albums: &[Album]) -> Vec<Artist> {
         }
         for (artist, count) in per_artist {
             let key = artist.to_lowercase();
-            let entry = map.entry(key).or_insert_with(|| (HashSet::new(), 0, HashMap::new()));
+            let entry = map
+                .entry(key)
+                .or_insert_with(|| (HashSet::new(), 0, HashMap::new()));
             entry.0.insert(album_key.clone());
             entry.1 += count;
             *entry.2.entry(artist).or_insert(0) += count;
@@ -272,7 +274,10 @@ mod tests {
         let albums = group_into_albums(&tracks, mf);
         let artists = group_into_artists(&albums);
         let names: std::collections::HashSet<_> = artists.iter().map(|a| a.name.as_str()).collect();
-        assert!(names.contains("Curio"), "Curio must appear (was hidden before)");
+        assert!(
+            names.contains("Curio"),
+            "Curio must appear (was hidden before)"
+        );
         assert!(names.contains("Judy and Mary"));
         assert!(names.contains("T.M. Revolution"));
         // The compilation umbrella label must NOT itself show up as an
