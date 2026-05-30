@@ -66,6 +66,23 @@ fn cap_luminance(rgb: (u8, u8, u8), max_y: f32) -> (u8, u8, u8) {
     )
 }
 
+/// Mix `rgb` toward white until its perceptual luminance (BT.709) reaches at
+/// least `min_y`, preserving hue. Colors already brighter than `min_y` pass
+/// through untouched. Used for the progress / volume fills: a dark cover would
+/// otherwise yield a fill too dark to read against the player bar, but going
+/// fully neutral (white) throws away the dynamic color — lifting toward white
+/// keeps the hue while guaranteeing it stands out.
+fn lighten_to(rgb: (u8, u8, u8), min_y: f32) -> (u8, u8, u8) {
+    let (r, g, b) = rgb;
+    let y = 0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32;
+    if y >= min_y {
+        return rgb;
+    }
+    let t = (min_y - y) / (255.0 - y);
+    let mix = |c: u8| (c as f32 + (255.0 - c as f32) * t).round() as u8;
+    (mix(r), mix(g), mix(b))
+}
+
 /// Multiply the HSL saturation of `rgb` by `factor` (clamped to [0,1]),
 /// preserving hue and lightness. The dominant-color extractor averages a
 /// quantised histogram bucket, which tends to mute the result toward grey;
@@ -117,6 +134,8 @@ fn boost_saturation(rgb: (u8, u8, u8), factor: f32) -> (u8, u8, u8) {
 /// Neutralising those buttons against `@window_fg_color` keeps the
 /// player controls stable regardless of which cover is playing. In Off
 /// mode this block is not emitted, so libadwaita's system accent runs.
+/// The progress / volume fills are handled separately (see `dynamic_tint_css`)
+/// because they look better keeping the cover color than going neutral.
 const PLAYER_CONTROL_NEUTRAL_CSS: &str = "
 .audra-player-bar button.suggested-action {
     background-color: alpha(@window_fg_color, 0.14);
@@ -192,13 +211,21 @@ fn dynamic_tint_css(palette: &[(u8, u8, u8)], mode: TintMode) -> String {
     let (ar, ag, ab) = cap_luminance(boost_saturation(palette[0], 1.3), 40.0);
     // Special-case the "Play all" button (lives directly on the tinted
     // window, so a dark accent looks muddy) with `@card_shade_color` to
-    // match the surrounding bars/cards. The player-bar controls get
+    // match the surrounding bars/cards. The player-bar buttons get
     // neutralised against `@window_fg_color` so they stay stable across
     // covers instead of jumping with each track's accent.
+    //
+    // The progress / volume fills DO keep the cover color, but lifted toward
+    // white to Y=170 so they read against the (darkened-cover) player bar even
+    // when the cover is dark. The Y=40 accent above is too dark for these.
+    let (fr, fg, fb) = lighten_to(boost_saturation(palette[0], 1.3), 170.0);
     format!(
         "@define-color accent_bg_color rgb({ar},{ag},{ab});\n\
          @define-color accent_color rgb({ar},{ag},{ab});\n\
          button.audra-play-all {{ background-color: @card_shade_color; color: @window_fg_color; }}\n\
+         .audra-player-bar progressbar > trough > progress {{ background-color: rgb({fr},{fg},{fb}); }}\n\
+         .audra-player-bar scale > trough > highlight {{ background-color: rgb({fr},{fg},{fb}); }}\n\
+         .audra-player-bar scale > trough > slider {{ background-color: rgb({fr},{fg},{fb}); }}\n\
          {bg}{PLAYER_CONTROL_NEUTRAL_CSS}"
     )
 }
