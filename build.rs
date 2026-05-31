@@ -27,7 +27,11 @@ fn compile_po(lang: &str, out_dir: &str) {
 fn main() {
     println!("cargo:rustc-link-lib=fontconfig");
     println!("cargo:rerun-if-env-changed=LASTFM_PROXY_URL");
-    println!("cargo:rerun-if-changed=data/icons/remix");
+
+    // The bundled Remix SVGs are only embedded on macOS (see src/ui/icons.rs).
+    if env::var("CARGO_CFG_TARGET_OS").unwrap() == "macos" {
+        println!("cargo:rerun-if-changed=data/icons/remix");
+    }
 
     let out_dir = env::var("OUT_DIR").unwrap();
 

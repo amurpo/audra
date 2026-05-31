@@ -32,10 +32,6 @@ serde_json = "1"
 # Internationalization
 gettext-rs = { version = "0.7", features = ["gettext-system"] }
 
-# UI icons (Remix SVG → GdkTexture; cross-platform, no GtkIconTheme SVG)
-resvg = "0.44"
-usvg = "0.44"
-
 # Utilities
 md5 = "0.7"
 walkdir = "2"
@@ -50,6 +46,13 @@ souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"
 # Windows only: needed to fetch the native HWND for the SMTC media controls.
 [target.'cfg(windows)'.dependencies]
 gdk4-win32 = "0.9"
+
+# macOS only: the host has no GtkIconTheme with the symbolic icons Audra uses,
+# so we bundle Remix SVGs and rasterize them with resvg. Other platforms use
+# native themed icons by name (see src/ui/icons.rs) and don't need this.
+[target.'cfg(target_os = "macos")'.dependencies]
+resvg = "0.44"
+usvg = "0.44"
 
 [build-dependencies]
 winres = "0.1"
