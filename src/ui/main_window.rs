@@ -512,11 +512,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let view_stack = adw::ViewStack::new();
     view_stack.add_titled(&albums_view.root, Some("albums"), &gettext("Albums"));
     view_stack.add_titled(&artists_view.root, Some("artists"), &gettext("Artists"));
-    view_stack.add_titled(
-        &lib_view.borrow().root,
-        Some("tracks"),
-        &gettext("Songs"),
-    );
+    view_stack.add_titled(&lib_view.borrow().root, Some("tracks"), &gettext("Songs"));
     view_stack.set_visible_child_name("albums");
 
     let view_switcher = crate::ui::widgets::view_switcher_bar(

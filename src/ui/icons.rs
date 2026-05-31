@@ -75,7 +75,12 @@ pub fn foreground_color(widget: &impl IsA<gtk4::Widget>) -> RGBA {
 /// icon tint on macOS. On other platforms the tint is ignored and the native
 /// symbolic icon is recolored by CSS, so the argument is unused there.
 pub fn error_color(_widget: &impl IsA<gtk4::Widget>) -> RGBA {
-    RGBA::new(0xe0 as f32 / 255.0, 0x1b as f32 / 255.0, 0x24 as f32 / 255.0, 1.0)
+    RGBA::new(
+        0xe0 as f32 / 255.0,
+        0x1b as f32 / 255.0,
+        0x24 as f32 / 255.0,
+        1.0,
+    )
 }
 
 /// Flat button carrying `icon`, used for toolbar/transport controls.
@@ -107,7 +112,7 @@ pub fn icon_button(icon: Icon, size: i32, tooltip: Option<&str>) -> (Button, Ima
 #[cfg(target_os = "macos")]
 mod backend {
     use super::Icon;
-    use gtk4::gdk::{RGBA, Texture};
+    use gtk4::gdk::{Texture, RGBA};
     use gtk4::prelude::*;
     use gtk4::{Image, Settings};
     use libadwaita as adw;

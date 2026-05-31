@@ -94,33 +94,18 @@ impl PlayerBar {
         let controls = Box::new(Orientation::Horizontal, 2);
         controls.set_halign(Align::Center);
 
-        let btn_shuffle = icons::flat_icon_button(
-            Icon::Shuffle,
-            CTRL_ICON_SIZE,
-            Some(&gettext("Shuffle")),
-        );
-        let btn_prev = icons::flat_icon_button(
-            Icon::SkipBack,
-            CTRL_ICON_SIZE,
-            Some(&gettext("Previous")),
-        );
-        let (btn_play_pause, play_pause_icon) = icons::icon_button(
-            Icon::Play,
-            PLAY_ICON_SIZE,
-            Some(&gettext("Play / Pause")),
-        );
+        let btn_shuffle =
+            icons::flat_icon_button(Icon::Shuffle, CTRL_ICON_SIZE, Some(&gettext("Shuffle")));
+        let btn_prev =
+            icons::flat_icon_button(Icon::SkipBack, CTRL_ICON_SIZE, Some(&gettext("Previous")));
+        let (btn_play_pause, play_pause_icon) =
+            icons::icon_button(Icon::Play, PLAY_ICON_SIZE, Some(&gettext("Play / Pause")));
         btn_play_pause.add_css_class("circular");
         btn_play_pause.add_css_class("suggested-action");
-        let btn_next = icons::flat_icon_button(
-            Icon::SkipForward,
-            CTRL_ICON_SIZE,
-            Some(&gettext("Next")),
-        );
-        let btn_loop = icons::flat_icon_button(
-            Icon::Repeat,
-            CTRL_ICON_SIZE,
-            Some(&gettext("Repeat")),
-        );
+        let btn_next =
+            icons::flat_icon_button(Icon::SkipForward, CTRL_ICON_SIZE, Some(&gettext("Next")));
+        let btn_loop =
+            icons::flat_icon_button(Icon::Repeat, CTRL_ICON_SIZE, Some(&gettext("Repeat")));
 
         controls.append(&btn_shuffle);
         controls.append(&btn_prev);

@@ -8,9 +8,9 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use crate::i18n::gettext;
-use crate::ui::icons::{self, Icon};
 use crate::library::db::Database;
 use crate::scrobbler::LastFmClient;
+use crate::ui::icons::{self, Icon};
 
 fn open_url(url: &str) -> std::io::Result<()> {
     // Only ever hand the OS handler an http/https URL. Anything else (file://,
