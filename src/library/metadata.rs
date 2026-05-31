@@ -277,14 +277,6 @@ pub fn fetch_artist_photo_candidates(artist: &str) -> Vec<CoverCandidate> {
             });
         }
     }
-    if let Some(url) = itunes_album_art(&client, artist) {
-        if let Some(data) = download(&client, &url) {
-            out.push(CoverCandidate {
-                source: "iTunes".to_string(),
-                data,
-            });
-        }
-    }
     out
 }
 
@@ -316,7 +308,10 @@ fn deezer_artist_photos(client: &reqwest::blocking::Client, artist: &str) -> Vec
         .unwrap_or_default()
 }
 
-/// Fetch an artist photo: Deezer → TheAudioDB → iTunes (album art fallback).
+/// Fetch an artist photo: Deezer → TheAudioDB. No iTunes fallback: iTunes only
+/// has album art, so using it as an artist photo produced jarring artist/album
+/// hybrids (an artist avatar showing one of their album covers). An artist with
+/// no real photo on either source simply keeps the initials avatar.
 pub fn fetch_artist_photo(artist: &str) -> Option<Vec<u8>> {
     let path = artist_cache_path(artist);
     if path.exists() {
@@ -325,9 +320,8 @@ pub fn fetch_artist_photo(artist: &str) -> Option<Vec<u8>> {
 
     let client = http_client(10)?;
 
-    let img_url = deezer_artist_photo(&client, artist)
-        .or_else(|| audiodb_artist_photo(&client, artist))
-        .or_else(|| itunes_album_art(&client, artist))?;
+    let img_url =
+        deezer_artist_photo(&client, artist).or_else(|| audiodb_artist_photo(&client, artist))?;
 
     let data = download(&client, &img_url)?;
     write_cache(&path, &data);
@@ -371,30 +365,4 @@ fn audiodb_artist_photo(client: &reqwest::blocking::Client, artist: &str) -> Opt
         .filter(|a| !a.is_empty())
         .and_then(|a| a[0]["strArtistThumb"].as_str())
         .map(|s| s.to_string())
-}
-
-// Last resort: latest album artwork from iTunes (music-specific, no API key required).
-fn itunes_album_art(client: &reqwest::blocking::Client, artist: &str) -> Option<String> {
-    let resp: serde_json::Value = client
-        .get("https://itunes.apple.com/search")
-        .query(&[
-            ("term", artist),
-            ("media", "music"),
-            ("entity", "musicAlbum"),
-            ("limit", "1"),
-        ])
-        .send()
-        .ok()?
-        .json()
-        .ok()?;
-
-    let url = resp["results"]
-        .as_array()
-        .filter(|a| !a.is_empty())
-        .and_then(|a| a[0]["artworkUrl100"].as_str())
-        .or_else(|| {
-            log::debug!("metadata: iTunes sin resultado para '{}'", artist);
-            None
-        })?;
-    Some(url.replace("100x100bb", "600x600bb"))
 }
