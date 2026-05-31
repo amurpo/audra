@@ -27,6 +27,7 @@ fn compile_po(lang: &str, out_dir: &str) {
 fn main() {
     println!("cargo:rustc-link-lib=fontconfig");
     println!("cargo:rerun-if-env-changed=LASTFM_PROXY_URL");
+    println!("cargo:rerun-if-changed=data/icons/remix");
 
     let out_dir = env::var("OUT_DIR").unwrap();
 

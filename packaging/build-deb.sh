@@ -48,7 +48,7 @@ Maintainer: Daniel Avila
 Section: sound
 Priority: optional
 Homepage: https://github.com/amurpo/audra
-Depends: libgtk-4-1, libadwaita-1-0, libasound2t64, adwaita-icon-theme
+Depends: libgtk-4-1, libadwaita-1-0, libasound2t64
 Description: Native music player for Linux with Last.fm scrobbling
  Audra is a native music player for Linux (GTK4/libadwaita)
  with Last.fm integration and automatic scrobbling.

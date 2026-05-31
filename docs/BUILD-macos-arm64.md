@@ -137,6 +137,14 @@ Run from Terminal to see `RUST_LOG` / GTK messages:
 RUST_LOG=audra=debug bash packaging/run-macos.sh
 ```
 
+### Toolbar icons are missing
+
+UI icons are bundled Remix SVGs rasterized with `resvg` at runtime (not the macOS
+icon theme). If controls look blank, rebuild after pulling the latest sources and
+run via `bash packaging/run-macos.sh` so Homebrew GTK libraries load correctly.
+The Albums / Artists / Songs header tabs use the same bundled icons via a custom
+switcher, not `AdwViewSwitcher`.
+
 ## CI note
 
 Linux CI (Fedora container) remains the canonical build pipeline. macOS arm64 builds are validated locally with `packaging/verify-macos-build.sh`; add a `macos-latest` workflow later if you want automated macOS binaries.

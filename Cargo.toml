@@ -32,6 +32,10 @@ serde_json = "1"
 # Internationalization
 gettext-rs = { version = "0.7", features = ["gettext-system"] }
 
+# UI icons (Remix SVG → GdkTexture; cross-platform, no GtkIconTheme SVG)
+resvg = "0.44"
+usvg = "0.44"
+
 # Utilities
 md5 = "0.7"
 walkdir = "2"

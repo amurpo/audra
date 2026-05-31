@@ -155,6 +155,10 @@ The dynamic, album-art-based background (stacked diagonal color gradients
 extracted from the cover) is adapted from [Amberol](https://gitlab.gnome.org/World/amberol)
 by Emmanuele Bassi, also licensed GPL-3.0-or-later. Thank you.
 
+UI icons are from [Remix Icon](https://remixicon.com), bundled as SVG under
+`data/icons/remix/`. See [licenses/REMIX-ICON.txt](licenses/REMIX-ICON.txt) and
+[data/icons/remix/LICENSE](data/icons/remix/LICENSE) (Remix Icon License v1.0).
+
 ## License
 
 GPL-3.0-or-later — see [LICENSE](LICENSE).
