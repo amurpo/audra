@@ -63,9 +63,14 @@ pub fn group_into_artists(albums: &[Album]) -> Vec<Artist> {
     let mut artists: Vec<Artist> = map
         .into_iter()
         .map(|(_, (album_keys, track_count, name_freq))| {
+            // Tie break on the smallest name (lexicographic) so the chosen
+            // display name is deterministic across runs. A bare `max_by_key`
+            // over a HashMap returns an arbitrary tied variant each launch,
+            // which flipped the name and orphaned the artist's cached photo
+            // (keyed on the exact name).
             let name = name_freq
                 .into_iter()
-                .max_by_key(|(_, c)| *c)
+                .max_by(|(n1, c1), (n2, c2)| c1.cmp(c2).then_with(|| n2.cmp(n1)))
                 .map(|(n, _)| n)
                 .unwrap_or_default();
             Artist {

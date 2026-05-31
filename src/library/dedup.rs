@@ -142,6 +142,13 @@ fn rel_dirs(path: &str, music_folder: Option<&str>) -> Option<Vec<String>> {
 
 /// Most frequent original spelling among `values`, keyed by their normalized
 /// form. Returns `None` when every value normalizes to empty.
+///
+/// Ties break on the smallest label (lexicographic) so the winner is
+/// **deterministic across runs**. `HashMap` iteration order is randomized per
+/// process, so a bare `max_by_key` returned an arbitrary one of the tied
+/// labels each launch — that flip-flopped the canonical artist/album label,
+/// and since cover/photo caches key on the exact label, a user-picked image
+/// silently stopped resolving on restart and got re-fetched.
 fn dominant<'a, I: Iterator<Item = &'a str>>(values: I) -> Option<String> {
     let mut counts: HashMap<String, (usize, String)> = HashMap::new();
     for v in values {
@@ -153,7 +160,7 @@ fn dominant<'a, I: Iterator<Item = &'a str>>(values: I) -> Option<String> {
     }
     counts
         .into_values()
-        .max_by_key(|(c, _)| *c)
+        .max_by(|(c1, l1), (c2, l2)| c1.cmp(c2).then_with(|| l2.cmp(l1)))
         .map(|(_, label)| label)
 }
 
