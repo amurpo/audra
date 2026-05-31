@@ -294,6 +294,24 @@ mod tests {
     }
 
     #[test]
+    fn group_into_artists_breaks_name_ties_deterministically() {
+        // Same performer spelled two ways that fold to one artist (case-only
+        // difference), tied on track count. The displayed name must be
+        // deterministic — the smallest spelling — so the artist-photo cache
+        // key (md5 of the name) stays stable across restarts instead of
+        // flip-flopping with HashMap iteration order and orphaning the photo.
+        let tracks = vec![
+            track(Some("Beatles"), Some("Abbey Road"), Some(1)),
+            track(Some("beatles"), Some("Let It Be"), Some(1)),
+        ];
+        let albums = group_into_albums(&tracks, None);
+        let artists = group_into_artists(&albums);
+        assert_eq!(artists.len(), 1, "case-only variants fold to one artist");
+        // 'B' (0x42) < 'b' (0x62), so "Beatles" is the stable winner.
+        assert_eq!(artists[0].name, "Beatles");
+    }
+
+    #[test]
     fn group_into_artists_uses_track_artist_not_album_artist() {
         // Regression guard for commit 95f22ca: when album_artist holds the
         // composer (e.g. 千住明) and artist holds the actual performer

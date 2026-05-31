@@ -448,6 +448,34 @@ mod tests {
     }
 
     #[test]
+    fn dominant_label_breaks_frequency_ties_deterministically() {
+        // Two artist-tag spellings tie on frequency inside one folder. The
+        // canonical artist label must be stable across runs — the smallest
+        // spelling — not an arbitrary HashMap-iteration pick. A flip-flopping
+        // label silently orphaned user-picked covers/photos on restart, since
+        // those caches key on the exact label.
+        let mf = Some("/Music");
+        let tracks = vec![
+            t(
+                "/Music/Beatles/Abbey Road/1.mp3",
+                "The Beatles",
+                "Abbey Road",
+                1,
+            ),
+            t(
+                "/Music/Beatles/Abbey Road/2.mp3",
+                "Beatles",
+                "Abbey Road",
+                2,
+            ),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1);
+        // "Beatles" < "The Beatles" lexicographically, so it always wins.
+        assert_eq!(albums[0].artist, "Beatles");
+    }
+
+    #[test]
     fn normalize_folds_case_space_and_punctuation() {
         assert_eq!(
             normalize("Return Of The Killer A's"),
