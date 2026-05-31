@@ -162,7 +162,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // register that dir with the icon theme. This is a no-op on systems where
     // the icon is already installed (the theme finds it there first).
     register_app_icon();
-
     let use_system_font = db.lock().unwrap().get_setting("use_system_font").as_deref() == Some("1");
     let replaygain_setting = db
         .lock()
@@ -243,7 +242,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     header.add_css_class("audra-header-bar");
 
     let menu_btn = MenuButton::new();
-    menu_btn.set_icon_name("folder-music-symbolic");
+    let menu_icon = crate::ui::icons::image(crate::ui::icons::Icon::FolderMusic, 20);
+    menu_btn.set_child(Some(&menu_icon));
     menu_btn.set_tooltip_text(Some(&gettext("Library")));
     menu_btn.add_css_class("flat");
 
@@ -265,8 +265,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     item_scan.set_hexpand(true);
     item_scan.set_halign(gtk4::Align::Fill);
 
-    let item_refresh = Button::new();
-    item_refresh.set_icon_name("view-refresh-symbolic");
+    let item_refresh =
+        crate::ui::icons::flat_icon_button(crate::ui::icons::Icon::Refresh, 20, None);
     item_refresh.add_css_class("flat");
     item_refresh.set_tooltip_text(Some(&gettext("Refresh collection")));
 
@@ -394,8 +394,19 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     item_reset.set_halign(gtk4::Align::Fill);
     item_reset.set_margin_top(3);
     let reset_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-    let reset_icon = gtk4::Image::from_icon_name("user-trash-symbolic");
+    let reset_icon = crate::ui::icons::image(crate::ui::icons::Icon::DeleteBin, 16);
     reset_icon.add_css_class("menu-destructive");
+    {
+        let reset_icon = reset_icon.clone();
+        reset_icon.connect_realize(move |img| {
+            crate::ui::icons::set_image_icon(
+                img,
+                crate::ui::icons::Icon::DeleteBin,
+                16,
+                &crate::ui::icons::error_color(img),
+            );
+        });
+    }
     let reset_lbl = gtk4::Label::new(Some(&gettext("Reset library…")));
     reset_lbl.add_css_class("menu-destructive");
     reset_box.append(&reset_icon);
@@ -427,7 +438,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     header.pack_start(&menu_btn);
 
     let btn_search = ToggleButton::new();
-    btn_search.set_icon_name("system-search-symbolic");
+    let search_icon = crate::ui::icons::image(crate::ui::icons::Icon::Search, 20);
+    btn_search.set_child(Some(&search_icon));
     btn_search.set_tooltip_text(Some(&gettext("Search")));
     btn_search.add_css_class("flat");
     header.pack_end(&btn_search);
@@ -498,24 +510,31 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     // --- ViewStack ---
     let view_stack = adw::ViewStack::new();
-    {
-        let page = view_stack.add_titled(&albums_view.root, Some("albums"), &gettext("Albums"));
-        page.set_icon_name(Some("media-optical-symbolic"));
-    }
-    {
-        let page = view_stack.add_titled(&artists_view.root, Some("artists"), &gettext("Artists"));
-        page.set_icon_name(Some("system-users-symbolic"));
-    }
-    {
-        let page =
-            view_stack.add_titled(&lib_view.borrow().root, Some("tracks"), &gettext("Songs"));
-        page.set_icon_name(Some("view-list-symbolic"));
-    }
+    view_stack.add_titled(&albums_view.root, Some("albums"), &gettext("Albums"));
+    view_stack.add_titled(&artists_view.root, Some("artists"), &gettext("Artists"));
+    view_stack.add_titled(&lib_view.borrow().root, Some("tracks"), &gettext("Songs"));
     view_stack.set_visible_child_name("albums");
 
-    let view_switcher = adw::ViewSwitcher::new();
-    view_switcher.set_stack(Some(&view_stack));
-    view_switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
+    let view_switcher = crate::ui::widgets::view_switcher_bar(
+        &view_stack,
+        &[
+            crate::ui::widgets::ViewTab {
+                stack_name: "albums",
+                icon: crate::ui::icons::Icon::Album,
+                label: gettext("Albums"),
+            },
+            crate::ui::widgets::ViewTab {
+                stack_name: "artists",
+                icon: crate::ui::icons::Icon::Group,
+                label: gettext("Artists"),
+            },
+            crate::ui::widgets::ViewTab {
+                stack_name: "tracks",
+                icon: crate::ui::icons::Icon::ListUnordered,
+                label: gettext("Songs"),
+            },
+        ],
+    );
     header.set_title_widget(Some(&view_switcher));
 
     // --- Barra de búsqueda ---
@@ -869,6 +888,10 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                 .issue_url("https://github.com/amurpo/audra/issues")
                 .translator_credits(gettext("translator-credits"))
                 .build();
+            about.add_credit_section(
+                Some("Remix Icon"),
+                &["https://remixicon.com — Remix Icon License v1.0"],
+            );
             about.add_css_class("audra-shaded");
             about.present(Some(&window));
         }

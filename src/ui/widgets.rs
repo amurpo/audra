@@ -1,10 +1,100 @@
 //! Small reusable widget builders, shared across views to keep the look
 //! consistent without duplicating GTK plumbing.
+use glib::clone;
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Button, Image, Label, Orientation};
+use gtk4::{Align, Box as GtkBox, Button, Label, Orientation, ToggleButton};
 use libadwaita as adw;
+use std::rc::Rc;
 
 use crate::i18n::gettext;
+use crate::ui::icons::{self, Icon};
+
+const VIEW_TAB_ICON_SIZE: i32 = 16;
+
+/// One tab in [`view_switcher_bar`].
+pub struct ViewTab {
+    pub stack_name: &'static str,
+    pub icon: Icon,
+    pub label: String,
+}
+
+/// Header tabs for an [`adw::ViewStack`], with bundled Remix icons (no
+/// `GtkIconTheme` — required for macOS and consistent with the rest of Audra).
+pub fn view_switcher_bar(stack: &adw::ViewStack, tabs: &[ViewTab]) -> GtkBox {
+    let bar = GtkBox::new(Orientation::Horizontal, 0);
+    bar.add_css_class("linked");
+    bar.add_css_class("audra-view-switcher");
+    bar.set_halign(Align::Center);
+
+    let current = stack
+        .visible_child_name()
+        .map(|n| n.to_string())
+        .unwrap_or_default();
+
+    let mut group_leader: Option<ToggleButton> = None;
+    let mut btn_list = Vec::new();
+
+    for tab in tabs {
+        let btn = ToggleButton::new();
+        if let Some(leader) = &group_leader {
+            btn.set_group(Some(leader));
+        } else {
+            group_leader = Some(btn.clone());
+        }
+        btn.set_active(tab.stack_name == current);
+        btn.add_css_class("flat");
+
+        let row = GtkBox::new(Orientation::Horizontal, 6);
+        row.set_valign(Align::Center);
+        row.append(&icons::image(tab.icon, VIEW_TAB_ICON_SIZE));
+        row.append(&Label::new(Some(&tab.label)));
+        btn.set_child(Some(&row));
+
+        let stack = stack.clone();
+        let name = tab.stack_name;
+        btn.connect_toggled(clone!(
+            #[weak]
+            stack,
+            move |b| {
+                if b.is_active() {
+                    stack.set_visible_child_name(name);
+                }
+            }
+        ));
+
+        bar.append(&btn);
+        btn_list.push(btn);
+    }
+    let buttons = Rc::new(btn_list);
+
+    let tabs_static: Vec<(&'static str, usize)> = tabs
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.stack_name, i))
+        .collect();
+    stack.connect_visible_child_name_notify(clone!(
+        #[weak]
+        stack,
+        #[weak]
+        buttons,
+        move |_| {
+            let Some(name) = stack.visible_child_name() else {
+                return;
+            };
+            let name = name.as_str();
+            for (tab_name, idx) in &tabs_static {
+                if *tab_name == name {
+                    if let Some(btn) = buttons.get(*idx) {
+                        btn.set_active(true);
+                    }
+                    break;
+                }
+            }
+        }
+    ));
+
+    bar
+}
 
 /// `adw::Clamp` with Audra's standard content-width parameters. Single point
 /// of truth for "how wide is the useful content column"; changing the
@@ -59,7 +149,7 @@ pub fn page_title_row(text: &str, navigable: bool) -> GtkBox {
     row.set_margin_start(4);
     row.set_margin_end(4);
 
-    let btn_back = Button::from_icon_name("go-previous-symbolic");
+    let btn_back = icons::flat_icon_button(Icon::ArrowLeft, 20, None);
     btn_back.add_css_class("flat");
     btn_back.add_css_class("circular");
     btn_back.set_valign(Align::Center);
@@ -108,7 +198,7 @@ pub fn play_all_button(label: &str) -> Button {
     let row = GtkBox::new(Orientation::Horizontal, 8);
     row.set_valign(Align::Center);
 
-    let icon = Image::from_icon_name("media-playback-start-symbolic");
+    let icon = icons::image(Icon::Play, 16);
     let lbl = Label::new(Some(label));
 
     row.append(&icon);

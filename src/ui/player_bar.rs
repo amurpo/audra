@@ -1,5 +1,6 @@
 use crate::i18n::gettext;
 use crate::library::{fmt_duration, Track};
+use crate::ui::icons::{self, Icon};
 use crate::ui::image_apply::{apply_image, ImageTarget};
 use gtk4::prelude::*;
 use gtk4::{
@@ -8,6 +9,8 @@ use gtk4::{
 };
 
 const COVER_SIZE: i32 = 88;
+const CTRL_ICON_SIZE: i32 = 20;
+const PLAY_ICON_SIZE: i32 = 24;
 
 pub struct PlayerBar {
     pub root: Box,
@@ -26,6 +29,7 @@ pub struct PlayerBar {
     pub vol_scale: Scale,
     cover_img: Image,
     cover_stack: Stack,
+    play_pause_icon: Image,
 }
 
 impl PlayerBar {
@@ -90,26 +94,18 @@ impl PlayerBar {
         let controls = Box::new(Orientation::Horizontal, 2);
         controls.set_halign(Align::Center);
 
-        let btn_shuffle = Button::from_icon_name("media-playlist-shuffle-symbolic");
-        btn_shuffle.add_css_class("flat");
-        btn_shuffle.set_tooltip_text(Some(&gettext("Shuffle")));
-
-        let btn_prev = Button::from_icon_name("media-skip-backward-symbolic");
-        btn_prev.add_css_class("flat");
-        btn_prev.set_tooltip_text(Some(&gettext("Previous")));
-
-        let btn_play_pause = Button::from_icon_name("media-playback-start-symbolic");
+        let btn_shuffle =
+            icons::flat_icon_button(Icon::Shuffle, CTRL_ICON_SIZE, Some(&gettext("Shuffle")));
+        let btn_prev =
+            icons::flat_icon_button(Icon::SkipBack, CTRL_ICON_SIZE, Some(&gettext("Previous")));
+        let (btn_play_pause, play_pause_icon) =
+            icons::icon_button(Icon::Play, PLAY_ICON_SIZE, Some(&gettext("Play / Pause")));
         btn_play_pause.add_css_class("circular");
         btn_play_pause.add_css_class("suggested-action");
-        btn_play_pause.set_tooltip_text(Some(&gettext("Play / Pause")));
-
-        let btn_next = Button::from_icon_name("media-skip-forward-symbolic");
-        btn_next.add_css_class("flat");
-        btn_next.set_tooltip_text(Some(&gettext("Next")));
-
-        let btn_loop = Button::from_icon_name("media-playlist-repeat-symbolic");
-        btn_loop.add_css_class("flat");
-        btn_loop.set_tooltip_text(Some(&gettext("Repeat")));
+        let btn_next =
+            icons::flat_icon_button(Icon::SkipForward, CTRL_ICON_SIZE, Some(&gettext("Next")));
+        let btn_loop =
+            icons::flat_icon_button(Icon::Repeat, CTRL_ICON_SIZE, Some(&gettext("Repeat")));
 
         controls.append(&btn_shuffle);
         controls.append(&btn_prev);
@@ -146,7 +142,7 @@ impl PlayerBar {
         vol_box.set_valign(Align::Center);
         vol_box.set_hexpand(false);
 
-        let vol_icon = Image::from_icon_name("audio-volume-high-symbolic");
+        let vol_icon = icons::image(Icon::VolumeUp, CTRL_ICON_SIZE);
         vol_icon.add_css_class("dim-label");
 
         // Step 0.01 (1%) for keyboard / scroll input; the previous 0.05
@@ -236,6 +232,7 @@ impl PlayerBar {
             lbl_volume,
             cover_img,
             cover_stack,
+            play_pause_icon,
         }
     }
 
@@ -280,11 +277,12 @@ impl PlayerBar {
     }
 
     pub fn set_playing(&self, playing: bool) {
-        let icon = if playing {
-            "media-playback-pause-symbolic"
-        } else {
-            "media-playback-start-symbolic"
-        };
-        self.btn_play_pause.set_icon_name(icon);
+        let icon = if playing { Icon::Pause } else { Icon::Play };
+        icons::set_image_icon(
+            &self.play_pause_icon,
+            icon,
+            PLAY_ICON_SIZE,
+            &icons::foreground_color(&self.play_pause_icon),
+        );
     }
 }

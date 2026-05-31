@@ -109,6 +109,11 @@ toolbarview .top-bar headerbar.audra-header-bar {
     background-color: @card_shade_color;
 }
 
+/* Custom Albums / Artists / Songs switcher (bundled icons, not GtkIconTheme). */
+.audra-view-switcher button {
+    padding: 6px 10px;
+}
+
 /* Kill the 3 px padding-top that GTK's `box.collapse-spacing` adds above
  * the headerbar. That gap is transparent by default and exposes the raw
  * window tint without the @card_shade_color overlay — producing the thin

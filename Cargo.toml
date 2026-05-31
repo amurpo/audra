@@ -47,5 +47,12 @@ souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"
 [target.'cfg(windows)'.dependencies]
 gdk4-win32 = "0.9"
 
+# macOS only: the host has no GtkIconTheme with the symbolic icons Audra uses,
+# so we bundle Remix SVGs and rasterize them with resvg. Other platforms use
+# native themed icons by name (see src/ui/icons.rs) and don't need this.
+[target.'cfg(target_os = "macos")'.dependencies]
+resvg = "0.44"
+usvg = "0.44"
+
 [build-dependencies]
 winres = "0.1"
