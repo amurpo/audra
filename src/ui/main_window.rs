@@ -4,6 +4,7 @@ use gtk4::prelude::*;
 use gtk4::{gio, Button, FileDialog, MenuButton, Popover, SearchBar, SearchEntry, ToggleButton};
 use libadwaita as adw;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -17,20 +18,31 @@ use crate::ui::lastfm_dialog::show_lastfm_dialog;
 use crate::ui::library_view::LibraryView;
 use crate::ui::now_playing::NowPlaying;
 use crate::ui::playback::{
-    make_play_callback, start_player_timer, wire_mpris, wire_transport_controls, ScrobbleTracker,
+    make_play_callback, start_player_timer, wire_mpris, wire_transport_controls, CoverIndex,
+    ScrobbleTracker,
 };
 use crate::ui::player_bar::PlayerBar;
 use crate::ui::reset::show_reset_dialog;
 use crate::ui::theme::{set_tint_mode, setup_css, update_font, TintMode};
 
-pub(crate) fn reload_all_views(
-    db: &Arc<Mutex<Database>>,
-    lib_view: &Rc<RefCell<LibraryView>>,
-    albums_view: &Rc<AlbumsView>,
-    artists_view: &Rc<ArtistsView>,
-) {
+/// The library views plus the DB handle and the shared cover index — the
+/// bundle of state the scan/reload paths always pass around together. Grouping
+/// them keeps `reload_all_views`, `start_scan` and `show_reset_dialog` to a
+/// short, readable parameter list instead of a half-dozen positional handles.
+/// All fields are cheap `Rc`/`Arc` clones, so passing the struct by value is
+/// just reference-count bumps.
+#[derive(Clone)]
+pub(crate) struct Views {
+    pub db: Arc<Mutex<Database>>,
+    pub lib: Rc<RefCell<LibraryView>>,
+    pub albums: Rc<AlbumsView>,
+    pub artists: Rc<ArtistsView>,
+    pub cover_index: CoverIndex,
+}
+
+pub(crate) fn reload_all_views(views: &Views) {
     let (all, music_folder) = {
-        let g = db.lock().unwrap();
+        let g = views.db.lock().unwrap();
         (
             g.all_tracks().unwrap_or_default(),
             g.get_setting("music_folder"),
@@ -38,17 +50,28 @@ pub(crate) fn reload_all_views(
     };
     let albums = library::group_into_albums(&all, music_folder.as_deref());
     let artists = library::group_into_artists(&albums);
-    lib_view.borrow_mut().load_tracks(all);
-    albums_view.load_albums(albums.clone(), Arc::clone(db));
-    artists_view.load_artists(artists, albums);
+    // Index every track path to its album's canonical (artist, album) so the
+    // player resolves covers under the same key the Albums view and the cover
+    // store use — see `CoverIndex`.
+    {
+        let mut idx = views.cover_index.borrow_mut();
+        idx.clear();
+        for a in &albums {
+            for t in &a.tracks {
+                idx.insert(t.path.clone(), (a.artist.clone(), a.name.clone()));
+            }
+        }
+    }
+    views.lib.borrow_mut().load_tracks(all);
+    views
+        .albums
+        .load_albums(albums.clone(), Arc::clone(&views.db));
+    views.artists.load_artists(artists, albums);
 }
 
 pub(crate) fn start_scan(
     folder_path: String,
-    db: Arc<Mutex<Database>>,
-    lib_view: Rc<RefCell<LibraryView>>,
-    albums_view: Rc<AlbumsView>,
-    artists_view: Rc<ArtistsView>,
+    views: Views,
     loading_box: gtk4::Box,
     spinner: gtk4::Spinner,
 ) {
@@ -59,7 +82,7 @@ pub(crate) fn start_scan(
     // freezes on a large library. The UI thread only refreshes the views
     // once the worker signals it is done.
     let scan_path = folder_path;
-    let db_worker = Arc::clone(&db);
+    let db_worker = Arc::clone(&views.db);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let tracks = scanner::scan_folder(&scan_path);
@@ -84,7 +107,7 @@ pub(crate) fn start_scan(
         use std::sync::mpsc::TryRecvError;
         match rx.try_recv() {
             Ok(()) => {
-                reload_all_views(&db, &lib_view, &albums_view, &artists_view);
+                reload_all_views(&views);
                 loading_box.set_visible(false);
                 spinner.stop();
                 glib::ControlFlow::Break
@@ -505,8 +528,24 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         })
     };
 
+    // path → canonical (artist, album), shared with the player so cover
+    // lookups at play time hit the same key the Albums view uses. Rebuilt by
+    // every `reload_all_views` (initial load and rescans).
+    let cover_index: CoverIndex = Rc::new(RefCell::new(HashMap::new()));
+
+    // Bundle the views + DB + cover index so the scan/reload paths take one
+    // handle instead of a long parameter list. Individual handles stay in
+    // scope for the rest of the wiring below.
+    let views = Views {
+        db: Arc::clone(&db),
+        lib: Rc::clone(&lib_view),
+        albums: Rc::clone(&albums_view),
+        artists: Rc::clone(&artists_view),
+        cover_index: Rc::clone(&cover_index),
+    };
+
     // --- Carga inicial ---
-    reload_all_views(&db, &lib_view, &albums_view, &artists_view);
+    reload_all_views(&views);
 
     // --- ViewStack ---
     let view_stack = adw::ViewStack::new();
@@ -609,13 +648,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         #[strong]
         window,
         #[strong]
-        db,
-        #[strong]
-        lib_view,
-        #[strong]
-        albums_view,
-        #[strong]
-        artists_view,
+        views,
         #[weak]
         popover,
         #[weak]
@@ -630,13 +663,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                 gio::Cancellable::NONE,
                 clone!(
                     #[strong]
-                    db,
-                    #[strong]
-                    lib_view,
-                    #[strong]
-                    albums_view,
-                    #[strong]
-                    artists_view,
+                    views,
                     #[weak]
                     scan_loading_box,
                     #[weak]
@@ -646,10 +673,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                             if let Some(path) = file.path() {
                                 start_scan(
                                     path.to_string_lossy().to_string(),
-                                    Arc::clone(&db),
-                                    Rc::clone(&lib_view),
-                                    Rc::clone(&albums_view),
-                                    Rc::clone(&artists_view),
+                                    views.clone(),
                                     scan_loading_box,
                                     scan_spinner,
                                 );
@@ -663,13 +687,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     item_refresh.connect_clicked(clone!(
         #[strong]
-        db,
-        #[strong]
-        lib_view,
-        #[strong]
-        albums_view,
-        #[strong]
-        artists_view,
+        views,
         #[weak]
         popover,
         #[weak]
@@ -678,16 +696,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         scan_spinner,
         move |_| {
             popover.popdown();
-            if let Some(folder) = db.lock().unwrap().get_setting("music_folder") {
-                start_scan(
-                    folder,
-                    Arc::clone(&db),
-                    Rc::clone(&lib_view),
-                    Rc::clone(&albums_view),
-                    Rc::clone(&artists_view),
-                    scan_loading_box,
-                    scan_spinner,
-                );
+            if let Some(folder) = views.db.lock().unwrap().get_setting("music_folder") {
+                start_scan(folder, views.clone(), scan_loading_box, scan_spinner);
             }
         }
     ));
@@ -842,13 +852,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         #[strong]
         window,
         #[strong]
-        db,
-        #[strong]
-        lib_view,
-        #[strong]
-        albums_view,
-        #[strong]
-        artists_view,
+        views,
         #[strong]
         scan_loading_box,
         #[strong]
@@ -859,10 +863,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             popover.popdown();
             show_reset_dialog(
                 &window,
-                Arc::clone(&db),
-                Rc::clone(&lib_view),
-                Rc::clone(&albums_view),
-                Rc::clone(&artists_view),
+                views.clone(),
                 scan_loading_box.clone(),
                 scan_spinner.clone(),
             );
@@ -903,6 +904,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
+        Rc::clone(&cover_index),
     ));
     artists_view.set_on_play(make_play_callback(
         Rc::clone(&player),
@@ -910,6 +912,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
+        Rc::clone(&cover_index),
     ));
     lib_view.borrow().set_on_play_all(make_play_callback(
         Rc::clone(&player),
@@ -917,6 +920,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
+        Rc::clone(&cover_index),
     ));
     {
         let play_cb = make_play_callback(
@@ -925,6 +929,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             Arc::clone(&db),
             Rc::clone(&notify_now_playing),
             Rc::clone(&highlight_track),
+            Rc::clone(&cover_index),
         );
         lib_view.borrow().set_on_activate(play_cb);
     }
@@ -935,6 +940,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
+        Rc::clone(&cover_index),
     );
 
     // Apply saved volume (explicitly set player + label before triggering the scale signal)
@@ -1038,5 +1044,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Rc::clone(&highlight_track),
         window.downgrade(),
         mpris_cell,
+        Rc::clone(&cover_index),
     );
 }

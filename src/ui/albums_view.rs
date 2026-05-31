@@ -107,7 +107,7 @@ impl AlbumsView {
         }
         self.covers.borrow_mut().clear();
 
-        let mut need_fetch: Vec<(String, String, String)> = Vec::new();
+        let mut need_fetch: Vec<(String, String, Vec<String>)> = Vec::new();
 
         for album in &albums {
             let key = format!("{}|{}", album.artist, album.name);
@@ -124,7 +124,7 @@ impl AlbumsView {
                 Arc::clone(&db),
                 album.artist.clone(),
                 album.name.clone(),
-                track_path.clone(),
+                track_path,
                 stack.clone(),
                 picture.clone(),
             );
@@ -134,7 +134,10 @@ impl AlbumsView {
                 .insert(key.clone(), (stack, picture));
             self.flow.append(&card);
 
-            need_fetch.push((album.artist.clone(), album.name.clone(), track_path));
+            // Hand the cover fetcher *every* track path so it can scan past
+            // artless leading tracks to the one that embeds the album art.
+            let track_paths: Vec<String> = album.tracks.iter().map(|t| t.path.clone()).collect();
+            need_fetch.push((album.artist.clone(), album.name.clone(), track_paths));
         }
 
         *self.albums_data.borrow_mut() = albums;
@@ -170,7 +173,11 @@ impl AlbumsView {
 
     /// Drive the shared two-pass image pipeline for album covers.
     /// Fast lane: DB cache + embedded ID3 art. Slow lane: Last.fm.
-    fn start_cover_fetch(&self, albums: Vec<(String, String, String)>, db: Arc<Mutex<Database>>) {
+    fn start_cover_fetch(
+        &self,
+        albums: Vec<(String, String, Vec<String>)>,
+        db: Arc<Mutex<Database>>,
+    ) {
         let covers = Rc::clone(&self.covers);
         let db_fast = Arc::clone(&db);
         let db_slow = Arc::clone(&db);
@@ -182,8 +189,8 @@ impl AlbumsView {
                 poll_ms: 300,
                 slow_delay_ms: 1100,
             },
-            move |item: &(String, String, String)| {
-                let (artist, album_name, track_path) = item;
+            move |item: &(String, String, Vec<String>)| {
+                let (artist, album_name, track_paths) = item;
                 // Stored cover wins. Empty bytes = user removed it on purpose:
                 // skip outright so the slow lane does not refetch it.
                 if let Some(bytes) = db_fast.lock().unwrap().get_cover(artist, album_name) {
@@ -192,17 +199,23 @@ impl AlbumsView {
                     }
                     return FetchOutcome::Got(bytes);
                 }
-                // Embedded ID3/Vorbis art.
-                if let Some(bytes) = crate::library::art::read_cover_art(track_path) {
-                    let _ = db_fast
-                        .lock()
-                        .unwrap()
-                        .set_cover(artist, album_name, &bytes);
-                    return FetchOutcome::Got(bytes);
+                // Embedded ID3/Vorbis art. Inconsistently-tagged rips often
+                // leave their first tracks artless, so scan the album's tracks
+                // until one carries cover art instead of giving up on the
+                // first — otherwise the whole album (and every song played
+                // from it) stays coverless even though siblings embed the art.
+                for path in track_paths {
+                    if let Some(bytes) = crate::library::art::read_cover_art(path) {
+                        let _ = db_fast
+                            .lock()
+                            .unwrap()
+                            .set_cover(artist, album_name, &bytes);
+                        return FetchOutcome::Got(bytes);
+                    }
                 }
                 FetchOutcome::Miss
             },
-            Some(Box::new(move |item: &(String, String, String)| {
+            Some(Box::new(move |item: &(String, String, Vec<String>)| {
                 let (artist, album_name, _) = item;
                 let res = crate::library::metadata::fetch_album_cover(artist, album_name);
                 if let Some(ref bytes) = res {
@@ -210,7 +223,7 @@ impl AlbumsView {
                 }
                 res
             })),
-            move |item: &(String, String, String), texture| {
+            move |item: &(String, String, Vec<String>), texture| {
                 let key = format!("{}|{}", item.0, item.1);
                 if let Some((stack, picture)) = covers.borrow().get(&key) {
                     picture.set_paintable(Some(&texture));
