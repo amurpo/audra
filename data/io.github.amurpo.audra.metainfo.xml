@@ -51,6 +51,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.2.4" date="2026-06-03">
+      <description>
+        <p>Track lists gain a per-row play/pause icon and hover affordance, with a clearer now-playing row highlight. Adds the Remix icon set and macOS (Apple Silicon) support, plus album-art and library fixes.</p>
+      </description>
+    </release>
     <release version="0.2.3" date="2026-05-30">
       <description>
         <p>Dynamic album-art background: the window now blends several colors extracted from the cover, inspired by Amberol.</p>
