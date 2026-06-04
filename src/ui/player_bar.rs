@@ -13,14 +13,10 @@ use gtk4::{
 
 const COVER_SIZE: i32 = 88;
 const CTRL_ICON_SIZE: i32 = 20;
-const PLAY_ICON_SIZE: i32 = 24;
-/// Pixels the ▶ glyph is nudged right so it reads as centered in the round
-/// button: a play triangle's visual center sits left of its geometric one, and
-/// at 24px that gap is visible. ⏸ is symmetric, so `set_playing` clears it.
-/// The shift stays within the button's min-size, so the circle isn't deformed.
-/// TODO: drop this optical fudge once we ship a pre-centered play/pause icon
-/// (own SVG / icon set) instead of the themed symbolic ones — see docs/TODO.md.
-const PLAY_GLYPH_NUDGE: i32 = 3;
+// 16px is the themed symbol's native design size: the round play button reads
+// crisp and centered there. Scaling it up (was 24) bloated the circle and
+// exaggerated the play triangle's optical off-center.
+const PLAY_ICON_SIZE: i32 = 16;
 
 pub struct PlayerBar {
     pub root: Box,
@@ -116,12 +112,10 @@ impl PlayerBar {
             icons::icon_button(Icon::Play, PLAY_ICON_SIZE, Some(&gettext("Play / Pause")));
         btn_play_pause.add_css_class("circular");
         btn_play_pause.add_css_class("suggested-action");
-        // Optically center the play triangle in the round button; `set_playing`
-        // resets the nudge for the symmetric pause glyph. Center alignment makes
-        // the margin a clean shift instead of just narrowing a stretched image.
+        // Center the themed glyph in the round button. No optical nudge: like
+        // GNOME Music, we use the theme's media-playback symbols as-is.
         play_pause_icon.set_halign(Align::Center);
         play_pause_icon.set_valign(Align::Center);
-        play_pause_icon.set_margin_start(PLAY_GLYPH_NUDGE);
         let btn_next =
             icons::flat_icon_button(Icon::SkipForward, CTRL_ICON_SIZE, Some(&gettext("Next")));
         let btn_loop =
@@ -305,9 +299,6 @@ impl PlayerBar {
             PLAY_ICON_SIZE,
             &icons::foreground_color(&self.play_pause_icon),
         );
-        // ⏸ is symmetric (centered); ▶ needs the optical nudge.
-        self.play_pause_icon
-            .set_margin_start(if playing { 0 } else { PLAY_GLYPH_NUDGE });
         // Broadcast so list rows flip their active-row ⏸ / ▶ icon in sync.
         self.now_playing.set_playing(playing);
     }
