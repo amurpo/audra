@@ -494,7 +494,14 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let lib_view = Rc::new(RefCell::new(LibraryView::new(Rc::clone(&now_playing))));
     let albums_view = Rc::new(AlbumsView::new(Rc::clone(&now_playing)));
     let artists_view = Rc::new(ArtistsView::new(Arc::clone(&db), Rc::clone(&now_playing)));
-    let bar = Rc::new(PlayerBar::new());
+    let bar = Rc::new(PlayerBar::new(Rc::clone(&now_playing)));
+
+    // A track row's play/pause icon toggles playback through the exact same
+    // button MPRIS and the keyboard use, so there's one play/pause code path.
+    {
+        let bar_c = Rc::clone(&bar);
+        now_playing.set_toggle_handler(move || bar_c.btn_play_pause.emit_clicked());
+    }
 
     // --- Helpers de scrobble y highlight ---
     let scrobble_tracker = Rc::new(RefCell::new(ScrobbleTracker::default()));

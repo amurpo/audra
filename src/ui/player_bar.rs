@@ -1,7 +1,10 @@
+use std::rc::Rc;
+
 use crate::i18n::gettext;
 use crate::library::{fmt_duration, Track};
 use crate::ui::icons::{self, Icon};
 use crate::ui::image_apply::{apply_image, ImageTarget};
+use crate::ui::now_playing::NowPlaying;
 use gtk4::prelude::*;
 use gtk4::{
     Align, Box, Button, CenterBox, GestureClick, Image, Label, Orientation, ProgressBar, Scale,
@@ -11,6 +14,13 @@ use gtk4::{
 const COVER_SIZE: i32 = 88;
 const CTRL_ICON_SIZE: i32 = 20;
 const PLAY_ICON_SIZE: i32 = 24;
+/// Pixels the ▶ glyph is nudged right so it reads as centered in the round
+/// button: a play triangle's visual center sits left of its geometric one, and
+/// at 24px that gap is visible. ⏸ is symmetric, so `set_playing` clears it.
+/// The shift stays within the button's min-size, so the circle isn't deformed.
+/// TODO: drop this optical fudge once we ship a pre-centered play/pause icon
+/// (own SVG / icon set) instead of the themed symbolic ones — see docs/TODO.md.
+const PLAY_GLYPH_NUDGE: i32 = 3;
 
 pub struct PlayerBar {
     pub root: Box,
@@ -30,10 +40,14 @@ pub struct PlayerBar {
     cover_img: Image,
     cover_stack: Stack,
     play_pause_icon: Image,
+    /// Shared "what's playing" bus. `set_playing` pushes the play/paused state
+    /// here so every track list flips its active-row icon in sync — this is the
+    /// single point where that state is broadcast.
+    now_playing: Rc<NowPlaying>,
 }
 
 impl PlayerBar {
-    pub fn new() -> Self {
+    pub fn new(now_playing: Rc<NowPlaying>) -> Self {
         let root = Box::new(Orientation::Vertical, 0);
         root.set_vexpand(false);
         root.add_css_class("audra-player-bar");
@@ -102,6 +116,12 @@ impl PlayerBar {
             icons::icon_button(Icon::Play, PLAY_ICON_SIZE, Some(&gettext("Play / Pause")));
         btn_play_pause.add_css_class("circular");
         btn_play_pause.add_css_class("suggested-action");
+        // Optically center the play triangle in the round button; `set_playing`
+        // resets the nudge for the symmetric pause glyph. Center alignment makes
+        // the margin a clean shift instead of just narrowing a stretched image.
+        play_pause_icon.set_halign(Align::Center);
+        play_pause_icon.set_valign(Align::Center);
+        play_pause_icon.set_margin_start(PLAY_GLYPH_NUDGE);
         let btn_next =
             icons::flat_icon_button(Icon::SkipForward, CTRL_ICON_SIZE, Some(&gettext("Next")));
         let btn_loop =
@@ -233,6 +253,7 @@ impl PlayerBar {
             cover_img,
             cover_stack,
             play_pause_icon,
+            now_playing,
         }
     }
 
@@ -284,5 +305,10 @@ impl PlayerBar {
             PLAY_ICON_SIZE,
             &icons::foreground_color(&self.play_pause_icon),
         );
+        // ⏸ is symmetric (centered); ▶ needs the optical nudge.
+        self.play_pause_icon
+            .set_margin_start(if playing { 0 } else { PLAY_GLYPH_NUDGE });
+        // Broadcast so list rows flip their active-row ⏸ / ▶ icon in sync.
+        self.now_playing.set_playing(playing);
     }
 }
