@@ -244,11 +244,24 @@ fn build_css() -> String {
         css.push_str(JOST_FONT_CSS);
     }
     let mode = TINT_MODE.with(|c| *c.borrow());
-    TINT_PALETTE.with(|c| {
-        if let Some(palette) = c.borrow().as_ref() {
-            css.push_str(&dynamic_tint_css(palette, mode));
-        }
+    let tint = TINT_PALETTE.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|palette| dynamic_tint_css(palette, mode))
+            .unwrap_or_default()
     });
+    if tint.is_empty() {
+        // No active tint (Off mode, or no cover extracted yet). Reset the window
+        // background EXPLICITLY instead of just dropping the rule: the tinted
+        // `window` rule sets `background-image` with a transition, and GTK keeps
+        // that last gradient applied when the rule merely disappears from the
+        // reloaded provider — so the previous cover's color would linger after
+        // switching dynamic color off. Forcing it back to the theme default
+        // clears it. (`@window_bg_color` is always defined by libadwaita.)
+        css.push_str("window { background-color: @window_bg_color; background-image: none; }\n");
+    } else {
+        css.push_str(&tint);
+    }
     css
 }
 
