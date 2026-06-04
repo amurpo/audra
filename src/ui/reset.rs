@@ -1,26 +1,17 @@
 use adw::prelude::*;
 use glib::clone;
 use libadwaita as adw;
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 
 use crate::i18n::gettext;
-use crate::library::{self, db::Database};
-use crate::ui::albums_view::AlbumsView;
-use crate::ui::artists_view::ArtistsView;
-use crate::ui::library_view::LibraryView;
-use crate::ui::main_window::{reload_all_views, start_scan};
+use crate::library;
+use crate::ui::main_window::{reload_all_views, start_scan, Views};
 
 /// Confirm and, on acceptance, wipe the scanned library and cover caches,
 /// then rescan the configured folder. Music files, the selected folder and
 /// the Last.fm session are never touched.
 pub fn show_reset_dialog(
     window: &adw::ApplicationWindow,
-    db: Arc<Mutex<Database>>,
-    lib_view: Rc<RefCell<LibraryView>>,
-    albums_view: Rc<AlbumsView>,
-    artists_view: Rc<ArtistsView>,
+    views: Views,
     loading_box: gtk4::Box,
     spinner: gtk4::Spinner,
 ) {
@@ -41,13 +32,7 @@ pub fn show_reset_dialog(
         None,
         clone!(
             #[strong]
-            db,
-            #[strong]
-            lib_view,
-            #[strong]
-            albums_view,
-            #[strong]
-            artists_view,
+            views,
             #[strong]
             loading_box,
             #[strong]
@@ -57,22 +42,14 @@ pub fn show_reset_dialog(
                     return;
                 }
                 {
-                    let _ = db.lock().unwrap().clear_library();
+                    let _ = views.db.lock().unwrap().clear_library();
                 }
                 library::metadata::clear_cover_cache();
-                let folder = db.lock().unwrap().get_setting("music_folder");
+                let folder = views.db.lock().unwrap().get_setting("music_folder");
                 if let Some(folder) = folder {
-                    start_scan(
-                        folder,
-                        Arc::clone(&db),
-                        Rc::clone(&lib_view),
-                        Rc::clone(&albums_view),
-                        Rc::clone(&artists_view),
-                        loading_box.clone(),
-                        spinner.clone(),
-                    );
+                    start_scan(folder, views.clone(), loading_box.clone(), spinner.clone());
                 } else {
-                    reload_all_views(&db, &lib_view, &albums_view, &artists_view);
+                    reload_all_views(&views);
                 }
             }
         ),

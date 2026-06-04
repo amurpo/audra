@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use crate::i18n::gettext;
 use crate::library::db::Database;
 use crate::scrobbler::LastFmClient;
+use crate::ui::icons::{self, Icon};
 
 fn open_url(url: &str) -> std::io::Result<()> {
     // Only ever hand the OS handler an http/https URL. Anything else (file://,
@@ -69,7 +70,7 @@ pub fn show_lastfm_dialog(
     auth_box.set_margin_end(24);
 
     let auth_status = adw::StatusPage::new();
-    auth_status.set_icon_name(Some("avatar-default-symbolic"));
+    icons::set_status_page_icon(&auth_status, Icon::User, 96);
     auth_status.set_title(&gettext("Connect to Last.fm"));
     auth_status.set_description(Some(&gettext(
         "Authorize Audra on your Last.fm account to track your listens.",
@@ -99,7 +100,7 @@ pub fn show_lastfm_dialog(
     wait_box.set_margin_end(24);
 
     let wait_status = adw::StatusPage::new();
-    wait_status.set_icon_name(Some("network-transmit-receive-symbolic"));
+    icons::set_status_page_icon(&wait_status, Icon::Loader, 96);
     wait_status.set_title(&gettext("Waiting for authorization"));
     wait_status.set_description(Some(&gettext(
         "Complete authorization in the browser and then click «I already authorized».",
@@ -134,7 +135,7 @@ pub fn show_lastfm_dialog(
     ok_box.set_margin_end(24);
 
     let ok_status = adw::StatusPage::new();
-    ok_status.set_icon_name(Some("emblem-ok-symbolic"));
+    icons::set_status_page_icon(&ok_status, Icon::CheckCircle, 96);
     ok_status.set_title(&gettext("Connected to Last.fm"));
     ok_status.set_vexpand(true);
 

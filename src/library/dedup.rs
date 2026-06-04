@@ -142,6 +142,13 @@ fn rel_dirs(path: &str, music_folder: Option<&str>) -> Option<Vec<String>> {
 
 /// Most frequent original spelling among `values`, keyed by their normalized
 /// form. Returns `None` when every value normalizes to empty.
+///
+/// Ties break on the smallest label (lexicographic) so the winner is
+/// **deterministic across runs**. `HashMap` iteration order is randomized per
+/// process, so a bare `max_by_key` returned an arbitrary one of the tied
+/// labels each launch — that flip-flopped the canonical artist/album label,
+/// and since cover/photo caches key on the exact label, a user-picked image
+/// silently stopped resolving on restart and got re-fetched.
 fn dominant<'a, I: Iterator<Item = &'a str>>(values: I) -> Option<String> {
     let mut counts: HashMap<String, (usize, String)> = HashMap::new();
     for v in values {
@@ -153,7 +160,7 @@ fn dominant<'a, I: Iterator<Item = &'a str>>(values: I) -> Option<String> {
     }
     counts
         .into_values()
-        .max_by_key(|(c, _)| *c)
+        .max_by(|(c1, l1), (c2, l2)| c1.cmp(c2).then_with(|| l2.cmp(l1)))
         .map(|(_, label)| label)
 }
 
@@ -438,6 +445,34 @@ mod tests {
         // pair so their covers converge instead of being lost.
         let canon: std::collections::HashSet<_> = map.values().collect();
         assert_eq!(canon.len(), 1);
+    }
+
+    #[test]
+    fn dominant_label_breaks_frequency_ties_deterministically() {
+        // Two artist-tag spellings tie on frequency inside one folder. The
+        // canonical artist label must be stable across runs — the smallest
+        // spelling — not an arbitrary HashMap-iteration pick. A flip-flopping
+        // label silently orphaned user-picked covers/photos on restart, since
+        // those caches key on the exact label.
+        let mf = Some("/Music");
+        let tracks = vec![
+            t(
+                "/Music/Beatles/Abbey Road/1.mp3",
+                "The Beatles",
+                "Abbey Road",
+                1,
+            ),
+            t(
+                "/Music/Beatles/Abbey Road/2.mp3",
+                "Beatles",
+                "Abbey Road",
+                2,
+            ),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1);
+        // "Beatles" < "The Beatles" lexicographically, so it always wins.
+        assert_eq!(albums[0].artist, "Beatles");
     }
 
     #[test]

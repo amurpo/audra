@@ -1,6 +1,7 @@
 use gtk4::prelude::*;
 use libadwaita as adw;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -79,9 +80,27 @@ fn apply_cover_and_tint(bar: &PlayerBar, cover: Option<Vec<u8>>) {
     });
 }
 
-fn resolve_cover(db: &Arc<Mutex<Database>>, track: &Track) -> Option<Vec<u8>> {
-    let artist = track.artist.clone().unwrap_or_default();
-    let album = track.album.clone().unwrap_or_default();
+/// Maps every track path to its *canonical* `(artist, album)` — the exact key
+/// the Albums view and the cover store use. Rebuilt on every library reload.
+///
+/// Covers are stored per canonical album (the deduplicated, dominant label),
+/// but a track's own `artist`/`album` tags can differ from that label on
+/// inconsistently tagged OSTs and compilations. Keying the lookup on the raw
+/// per-track tags therefore missed for those tracks, so they fell back to
+/// per-file embedded art — and showed the placeholder when the file had none.
+/// Resolving through the canonical key keeps every track of an album on that
+/// album's cover. See `library::dedup` for how the canonical label is derived.
+pub type CoverIndex = Rc<RefCell<HashMap<String, (String, String)>>>;
+
+fn resolve_cover(index: &CoverIndex, db: &Arc<Mutex<Database>>, track: &Track) -> Option<Vec<u8>> {
+    // Canonical album key; fall back to the track's raw tags when the path is
+    // not indexed yet (e.g. a reload has not run for this track).
+    let (artist, album) = index.borrow().get(&track.path).cloned().unwrap_or_else(|| {
+        (
+            track.artist.clone().unwrap_or_default(),
+            track.album.clone().unwrap_or_default(),
+        )
+    });
     match db.lock().unwrap().get_cover(&artist, &album) {
         Some(bytes) if bytes.is_empty() => None,
         Some(bytes) => Some(bytes),
@@ -95,6 +114,7 @@ pub fn make_play_callback(
     db: Arc<Mutex<Database>>,
     notify_now_playing: Rc<dyn Fn(&Track)>,
     highlight_track: HighlightCb,
+    cover_index: CoverIndex,
 ) -> impl Fn(Vec<Track>, usize) {
     move |tracks, start_idx| {
         if tracks.is_empty() {
@@ -122,7 +142,7 @@ pub fn make_play_callback(
             highlight_track(Some(track));
             bar.update_track(Some(track));
             bar.set_playing(true);
-            let cover = resolve_cover(&db, track);
+            let cover = resolve_cover(&cover_index, &db, track);
             apply_cover_and_tint(&bar, cover);
         }
     }
@@ -134,6 +154,7 @@ pub fn wire_transport_controls(
     db: Arc<Mutex<Database>>,
     notify_now_playing: Rc<dyn Fn(&Track)>,
     highlight_track: HighlightCb,
+    cover_index: CoverIndex,
 ) {
     {
         let player = Rc::clone(player);
@@ -150,6 +171,7 @@ pub fn wire_transport_controls(
         let nnp = Rc::clone(&notify_now_playing);
         let ht = Rc::clone(&highlight_track);
         let db_c = Arc::clone(&db);
+        let idx_c = Rc::clone(&cover_index);
         bar.btn_next.connect_clicked(move |_| {
             let mut p = player.borrow_mut();
             if let Ok(Some(track)) = p.next() {
@@ -157,7 +179,7 @@ pub fn wire_transport_controls(
                 ht(Some(track));
                 bar_ref.update_track(Some(track));
                 bar_ref.set_playing(true);
-                apply_cover_and_tint(&bar_ref, resolve_cover(&db_c, track));
+                apply_cover_and_tint(&bar_ref, resolve_cover(&idx_c, &db_c, track));
             }
         });
     }
@@ -167,6 +189,7 @@ pub fn wire_transport_controls(
         let nnp = Rc::clone(&notify_now_playing);
         let ht = Rc::clone(&highlight_track);
         let db_c = Arc::clone(&db);
+        let idx_c = Rc::clone(&cover_index);
         bar.btn_prev.connect_clicked(move |_| {
             let mut p = player.borrow_mut();
             if let Ok(Some(track)) = p.previous() {
@@ -174,7 +197,7 @@ pub fn wire_transport_controls(
                 ht(Some(track));
                 bar_ref.update_track(Some(track));
                 bar_ref.set_playing(true);
-                apply_cover_and_tint(&bar_ref, resolve_cover(&db_c, track));
+                apply_cover_and_tint(&bar_ref, resolve_cover(&idx_c, &db_c, track));
             }
         });
     }
@@ -245,6 +268,7 @@ pub fn start_player_timer(
     highlight_track: HighlightCb,
     window: glib::WeakRef<adw::ApplicationWindow>,
     mpris: MprisHandle,
+    cover_index: CoverIndex,
 ) {
     let mut mpris_last: Option<String> = None;
     glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
@@ -268,7 +292,7 @@ pub fn start_player_timer(
                 m.set_playback(&p.state, pos);
                 if cur_path != mpris_last {
                     mpris_last = cur_path;
-                    let cover = track.and_then(|t| resolve_cover(&db, t));
+                    let cover = track.and_then(|t| resolve_cover(&cover_index, &db, t));
                     m.update_track(track, cover.as_deref());
                 }
             }
@@ -288,7 +312,7 @@ pub fn start_player_timer(
             if let Ok(Some(track)) = result {
                 notify_now_playing(track);
                 highlight_track(Some(track));
-                let cover = resolve_cover(&db, track);
+                let cover = resolve_cover(&cover_index, &db, track);
                 bar.update_track(Some(track));
                 apply_cover_and_tint(&bar, cover);
                 bar.set_playing(true);
@@ -344,4 +368,71 @@ pub fn start_player_timer(
         }
         glib::ControlFlow::Continue
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(path: &str, artist: &str, album: &str) -> Track {
+        Track {
+            id: None,
+            path: path.to_string(),
+            title: Some("T".into()),
+            artist: Some(artist.to_string()),
+            album: Some(album.to_string()),
+            track_num: Some(1),
+            duration_secs: Some(180),
+            disc_num: None,
+            album_artist: None,
+        }
+    }
+
+    fn db() -> Arc<Mutex<Database>> {
+        Arc::new(Mutex::new(Database::open(":memory:").unwrap()))
+    }
+
+    #[test]
+    fn resolves_through_canonical_key_when_raw_tags_differ() {
+        // The bug: a cover stored under the album's canonical (artist, album)
+        // was missed for tracks whose own tags differed from that label. The
+        // index must redirect such a track to its album's cover.
+        let db = db();
+        db.lock()
+            .unwrap()
+            .set_cover("Lorien Testard", "OST (Act II)", &[1, 2, 3])
+            .unwrap();
+        let index: CoverIndex = Rc::new(RefCell::new(HashMap::new()));
+        index.borrow_mut().insert(
+            "/m/dualliste.mp3".into(),
+            ("Lorien Testard".into(), "OST (Act II)".into()),
+        );
+        // Raw tags (duo performer) deliberately do NOT match the stored key,
+        // and the file does not exist so the embedded-art fallback yields None.
+        let t = track("/m/dualliste.mp3", "Lorien Testard & Alice", "OST (Act II)");
+        assert_eq!(resolve_cover(&index, &db, &t), Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn falls_back_to_raw_tags_when_path_not_indexed() {
+        let db = db();
+        db.lock().unwrap().set_cover("A", "B", &[9]).unwrap();
+        let index: CoverIndex = Rc::new(RefCell::new(HashMap::new()));
+        let t = track("/m/unindexed.mp3", "A", "B");
+        assert_eq!(resolve_cover(&index, &db, &t), Some(vec![9]));
+    }
+
+    #[test]
+    fn empty_cover_marker_returns_none() {
+        // An empty BLOB means the user removed the cover on purpose; never
+        // resurrect embedded art for it.
+        let db = db();
+        db.lock().unwrap().set_cover("A", "B", &[]).unwrap();
+        let index: CoverIndex = Rc::new(RefCell::new(HashMap::new()));
+        index
+            .borrow_mut()
+            .insert("/m/x.mp3".into(), ("A".into(), "B".into()));
+        let t = track("/m/x.mp3", "raw", "raw");
+        assert_eq!(resolve_cover(&index, &db, &t), None);
+    }
 }

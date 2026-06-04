@@ -19,14 +19,19 @@ use std::rc::{Rc, Weak};
 
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Label, ListItem, ListView, Orientation, Overlay, ScrolledWindow,
-    SignalListItemFactory, SingleSelection, StringList,
+    Align, Box as GtkBox, Button, EventControllerMotion, Image, Label, ListItem, ListView,
+    Orientation, Overlay, ScrolledWindow, SignalListItemFactory, SingleSelection, StringList,
 };
 
 use crate::i18n::{gettext, ngettext};
 use crate::library::Track;
+use crate::ui::icons::{self, Icon};
 use crate::ui::now_playing::NowPlaying;
 use crate::ui::widgets::{content_clamp, play_all_button};
+
+/// Size (px) of the per-row play/pause icon that stands in for the track
+/// number while a row is active or hovered.
+const ICON_SIZE: i32 = 16;
 
 /// Visual configuration for a single instance of [`TrackList`].
 ///
@@ -86,54 +91,149 @@ pub struct TrackList {
 impl TrackList {
     pub fn new(cfg: TrackListConfig, now_playing: Rc<NowPlaying>) -> Rc<Self> {
         let displayed: Rc<RefCell<Vec<Track>>> = Rc::new(RefCell::new(Vec::new()));
+        // Declared up here (instead of next to `this`) so the per-row icon click
+        // handler built in `connect_setup` can capture it.
+        let on_activate: ActivateCb = Rc::new(RefCell::new(None));
         let model = StringList::new(&[]);
         let selection = SingleSelection::new(Some(model.clone()));
         let factory = SignalListItemFactory::new();
 
-        factory.connect_setup(move |_, item| {
-            let item = item.downcast_ref::<ListItem>().unwrap();
+        {
+            let now_playing_setup = Rc::clone(&now_playing);
+            let displayed_setup = Rc::clone(&displayed);
+            let on_activate_setup = Rc::clone(&on_activate);
+            factory.connect_setup(move |_, item| {
+                let item = item.downcast_ref::<ListItem>().unwrap();
 
-            let row = GtkBox::new(Orientation::Horizontal, 12);
-            row.add_css_class("audra-track-row");
+                let row = GtkBox::new(Orientation::Horizontal, 12);
+                row.add_css_class("audra-track-row");
 
-            let num = Label::new(None);
-            num.add_css_class("num");
-            num.add_css_class("audra-mono");
-            num.set_xalign(1.0);
-            num.set_valign(Align::Center);
-            num.set_visible(cfg.show_track_number);
-            row.append(&num);
+                // Left slot: the track number and a play/pause icon button
+                // occupy one fixed-width cell so both list layouts line up and
+                // the title never shifts when the icon appears on hover. An
+                // Overlay (number underneath, icon on top) keeps the cell sized
+                // by the number alone — a sibling Box would let the icon's
+                // `hexpand` leak out and stretch the column across the row.
+                let slot = Overlay::new();
+                slot.add_css_class("slot");
+                slot.set_valign(Align::Center);
 
-            let info = GtkBox::new(Orientation::Vertical, 2);
-            info.set_hexpand(true);
-            info.set_valign(Align::Center);
+                let num = Label::new(None);
+                num.add_css_class("num");
+                num.add_css_class("audra-mono");
+                num.set_xalign(1.0);
+                num.set_valign(Align::Center);
+                slot.set_child(Some(&num));
 
-            let title = Label::new(None);
-            title.add_css_class("title");
-            title.set_xalign(0.0);
-            title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-            info.append(&title);
+                let icon_btn = Button::new();
+                icon_btn.add_css_class("flat");
+                icon_btn.add_css_class("row-icon-btn");
+                icon_btn.set_halign(Align::End);
+                icon_btn.set_valign(Align::Center);
+                icon_btn.set_can_focus(false);
+                icon_btn.set_child(Some(&icons::image(Icon::Play, ICON_SIZE)));
+                icon_btn.set_visible(false);
+                slot.add_overlay(&icon_btn);
 
-            let artist = Label::new(None);
-            artist.add_css_class("artist");
-            artist.set_xalign(0.0);
-            artist.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-            artist.set_visible(cfg.show_artist);
-            info.append(&artist);
+                row.append(&slot);
 
-            row.append(&info);
+                let info = GtkBox::new(Orientation::Vertical, 2);
+                info.set_hexpand(true);
+                info.set_valign(Align::Center);
 
-            let dur = Label::new(None);
-            dur.add_css_class("dur");
-            dur.add_css_class("audra-mono");
-            dur.set_valign(Align::Center);
-            dur.set_xalign(1.0);
-            dur.set_width_chars(5);
-            dur.set_visible(cfg.show_duration);
-            row.append(&dur);
+                let title = Label::new(None);
+                title.add_css_class("title");
+                title.set_xalign(0.0);
+                title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                info.append(&title);
 
-            item.set_child(Some(&row));
-        });
+                let artist = Label::new(None);
+                artist.add_css_class("artist");
+                artist.set_xalign(0.0);
+                artist.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                artist.set_visible(cfg.show_artist);
+                info.append(&artist);
+
+                row.append(&info);
+
+                let dur = Label::new(None);
+                dur.add_css_class("dur");
+                dur.add_css_class("audra-mono");
+                dur.set_valign(Align::Center);
+                dur.set_xalign(1.0);
+                dur.set_width_chars(5);
+                dur.set_visible(cfg.show_duration);
+                row.append(&dur);
+
+                item.set_child(Some(&row));
+
+                // Hover swaps the number for a ▶ on non-playing rows. The hover
+                // state lives in a CSS class so the recycling `connect_bind` can
+                // re-derive it. WeakRefs break the ListItem→row→controller→closure
+                // ownership cycle that would otherwise leak every row.
+                let motion = EventControllerMotion::new();
+                {
+                    let row_weak = row.downgrade();
+                    let item_weak = item.downgrade();
+                    let np = Rc::clone(&now_playing_setup);
+                    let disp = Rc::clone(&displayed_setup);
+                    motion.connect_enter(move |_, _, _| {
+                        let (Some(row), Some(item)) = (row_weak.upgrade(), item_weak.upgrade())
+                        else {
+                            return;
+                        };
+                        row.add_css_class("row-hover");
+                        repaint_slot_from_item(&row, &item, &np, &disp, cfg.show_track_number);
+                    });
+                }
+                {
+                    let row_weak = row.downgrade();
+                    let item_weak = item.downgrade();
+                    let np = Rc::clone(&now_playing_setup);
+                    let disp = Rc::clone(&displayed_setup);
+                    motion.connect_leave(move |_| {
+                        let (Some(row), Some(item)) = (row_weak.upgrade(), item_weak.upgrade())
+                        else {
+                            return;
+                        };
+                        row.remove_css_class("row-hover");
+                        repaint_slot_from_item(&row, &item, &np, &disp, cfg.show_track_number);
+                    });
+                }
+                row.add_controller(motion);
+
+                // Single click on the icon: toggle play/pause when it's the active
+                // track, otherwise start it (same as activating the row).
+                {
+                    let item_weak = item.downgrade();
+                    let np = Rc::clone(&now_playing_setup);
+                    let disp = Rc::clone(&displayed_setup);
+                    let on_activate = Rc::clone(&on_activate_setup);
+                    icon_btn.connect_clicked(move |_| {
+                        let Some(item) = item_weak.upgrade() else {
+                            return;
+                        };
+                        let pos = item.position();
+                        if pos == gtk4::INVALID_LIST_POSITION {
+                            return;
+                        }
+                        let pos = pos as usize;
+                        let cloned = {
+                            let tracks = disp.borrow();
+                            let Some(track) = tracks.get(pos) else { return };
+                            if np.current().as_deref() == Some(track.path.as_str()) {
+                                np.request_toggle();
+                                return;
+                            }
+                            tracks.clone()
+                        };
+                        if let Some(cb) = on_activate.borrow().as_ref() {
+                            cb(cloned, pos);
+                        }
+                    });
+                }
+            });
+        }
 
         {
             let displayed_ref = Rc::clone(&displayed);
@@ -147,10 +247,10 @@ impl TrackList {
                 let Some(row) = item.child().and_downcast::<GtkBox>() else {
                     return;
                 };
-                let Some(num_lbl) = row.first_child().and_downcast::<Label>() else {
+                let Some(slot) = row.first_child().and_downcast::<Overlay>() else {
                     return;
                 };
-                let Some(info) = num_lbl.next_sibling().and_downcast::<GtkBox>() else {
+                let Some(info) = slot.next_sibling().and_downcast::<GtkBox>() else {
                     return;
                 };
                 let Some(title_lbl) = info.first_child().and_downcast::<Label>() else {
@@ -163,9 +263,6 @@ impl TrackList {
                     return;
                 };
 
-                if cfg.show_track_number {
-                    num_lbl.set_text(&(pos + 1).to_string());
-                }
                 title_lbl.set_text(&track.display_title());
                 if cfg.show_artist {
                     artist_lbl.set_text(&track.display_artist());
@@ -174,15 +271,13 @@ impl TrackList {
                     dur_lbl.set_text(&track.duration_str());
                 }
 
-                let is_playing = now_playing_ref
-                    .current()
-                    .as_deref()
-                    .is_some_and(|p| p == track.path);
-                if is_playing {
-                    row.add_css_class("playing");
-                } else {
-                    row.remove_css_class("playing");
-                }
+                paint_slot(
+                    &row,
+                    &now_playing_ref,
+                    &track.path,
+                    cfg.show_track_number,
+                    pos + 1,
+                );
             });
         }
 
@@ -282,7 +377,6 @@ impl TrackList {
 
         outer.append(&clamp);
 
-        let on_activate: ActivateCb = Rc::new(RefCell::new(None));
         let this = Rc::new(Self {
             root: outer.upcast(),
             model,
@@ -397,3 +491,81 @@ impl TrackList {
 // Listener cleanup is automatic: when the last `Rc<TrackList>` is dropped the
 // bus's `Weak::upgrade` starts returning `None` and the listener gets removed
 // on the next publish — no explicit unsubscribe needed.
+
+/// Paint the left slot (number ⇄ play/pause icon) for one row, deriving the
+/// state from the [`NowPlaying`] bus and the row's `row-hover` CSS class:
+///
+/// - **active row** → play/pause icon showing the *action* (⏸ while playing,
+///   ▶ while paused), plus the `playing` class for the row highlight;
+/// - **hovered, not active** → ▶ icon (click starts the track);
+/// - **otherwise** → the track number (album view) or nothing (Songs view).
+fn paint_slot(row: &GtkBox, np: &NowPlaying, path: &str, show_num: bool, track_no: usize) {
+    let Some(slot) = row.first_child().and_downcast::<Overlay>() else {
+        return;
+    };
+    let Some(num_lbl) = slot.first_child().and_downcast::<Label>() else {
+        return;
+    };
+    let Some(icon_btn) = num_lbl.next_sibling().and_downcast::<Button>() else {
+        return;
+    };
+    let Some(icon_img) = icon_btn.child().and_downcast::<Image>() else {
+        return;
+    };
+
+    let set_icon = |icon: Icon| {
+        icons::set_image_icon(
+            &icon_img,
+            icon,
+            ICON_SIZE,
+            &icons::foreground_color(&icon_img),
+        );
+    };
+    let is_active = np.current().as_deref() == Some(path);
+
+    if is_active {
+        row.add_css_class("playing");
+        set_icon(if np.is_playing() {
+            Icon::Pause
+        } else {
+            Icon::Play
+        });
+        num_lbl.set_visible(false);
+        icon_btn.set_visible(true);
+    } else {
+        row.remove_css_class("playing");
+        if row.has_css_class("row-hover") {
+            set_icon(Icon::Play);
+            num_lbl.set_visible(false);
+            icon_btn.set_visible(true);
+        } else {
+            let num_text = if show_num {
+                track_no.to_string()
+            } else {
+                String::new()
+            };
+            num_lbl.set_text(&num_text);
+            num_lbl.set_visible(true);
+            icon_btn.set_visible(false);
+        }
+    }
+}
+
+/// Resolve `item`'s track from `displayed` and repaint its slot. Used by the
+/// hover controllers, which only carry the recycled [`ListItem`].
+fn repaint_slot_from_item(
+    row: &GtkBox,
+    item: &ListItem,
+    np: &NowPlaying,
+    displayed: &RefCell<Vec<Track>>,
+    show_num: bool,
+) {
+    let pos = item.position();
+    if pos == gtk4::INVALID_LIST_POSITION {
+        return;
+    }
+    let disp = displayed.borrow();
+    if let Some(track) = disp.get(pos as usize) {
+        paint_slot(row, np, &track.path, show_num, pos as usize + 1);
+    }
+}

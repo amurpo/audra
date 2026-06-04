@@ -218,10 +218,18 @@ fn dynamic_tint_css(palette: &[(u8, u8, u8)], mode: TintMode) -> String {
     // The progress / volume fills DO keep the cover color, but lifted toward
     // white to Y=170 so they read against the (darkened-cover) player bar even
     // when the cover is dark. The Y=40 accent above is too dark for these.
+    //
+    // The same lifted color tints the "now playing" row's highlight band. The
+    // band itself (and the play/pause icon) ship in style.css for *every* tint
+    // mode; here we only recolor it from the system accent to the cover's
+    // palette so the highlight matches the dynamic background. `@accent_color`
+    // and `@accent_bg_color` stay at Y=40 so the buttons/switches that rely on
+    // them are unaffected.
     let (fr, fg, fb) = lighten_to(boost_saturation(palette[0], 1.3), 170.0);
     format!(
         "@define-color accent_bg_color rgb({ar},{ag},{ab});\n\
          @define-color accent_color rgb({ar},{ag},{ab});\n\
+         .audra-track-row.playing {{ background-color: rgba({fr},{fg},{fb},0.22); }}\n\
          button.audra-play-all {{ background-color: @card_shade_color; color: @window_fg_color; }}\n\
          .audra-player-bar progressbar > trough > progress {{ background-color: rgb({fr},{fg},{fb}); }}\n\
          .audra-player-bar scale > trough > highlight {{ background-color: rgb({fr},{fg},{fb}); }}\n\
@@ -236,11 +244,24 @@ fn build_css() -> String {
         css.push_str(JOST_FONT_CSS);
     }
     let mode = TINT_MODE.with(|c| *c.borrow());
-    TINT_PALETTE.with(|c| {
-        if let Some(palette) = c.borrow().as_ref() {
-            css.push_str(&dynamic_tint_css(palette, mode));
-        }
+    let tint = TINT_PALETTE.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|palette| dynamic_tint_css(palette, mode))
+            .unwrap_or_default()
     });
+    if tint.is_empty() {
+        // No active tint (Off mode, or no cover extracted yet). Reset the window
+        // background EXPLICITLY instead of just dropping the rule: the tinted
+        // `window` rule sets `background-image` with a transition, and GTK keeps
+        // that last gradient applied when the rule merely disappears from the
+        // reloaded provider — so the previous cover's color would linger after
+        // switching dynamic color off. Forcing it back to the theme default
+        // clears it. (`@window_bg_color` is always defined by libadwaita.)
+        css.push_str("window { background-color: @window_bg_color; background-image: none; }\n");
+    } else {
+        css.push_str(&tint);
+    }
     css
 }
 

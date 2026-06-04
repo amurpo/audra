@@ -63,9 +63,14 @@ pub fn group_into_artists(albums: &[Album]) -> Vec<Artist> {
     let mut artists: Vec<Artist> = map
         .into_iter()
         .map(|(_, (album_keys, track_count, name_freq))| {
+            // Tie break on the smallest name (lexicographic) so the chosen
+            // display name is deterministic across runs. A bare `max_by_key`
+            // over a HashMap returns an arbitrary tied variant each launch,
+            // which flipped the name and orphaned the artist's cached photo
+            // (keyed on the exact name).
             let name = name_freq
                 .into_iter()
-                .max_by_key(|(_, c)| *c)
+                .max_by(|(n1, c1), (n2, c2)| c1.cmp(c2).then_with(|| n2.cmp(n1)))
                 .map(|(n, _)| n)
                 .unwrap_or_default();
             Artist {
@@ -286,6 +291,24 @@ mod tests {
             !names.contains("Various Artists"),
             "compilation label should not pollute the Artists list"
         );
+    }
+
+    #[test]
+    fn group_into_artists_breaks_name_ties_deterministically() {
+        // Same performer spelled two ways that fold to one artist (case-only
+        // difference), tied on track count. The displayed name must be
+        // deterministic — the smallest spelling — so the artist-photo cache
+        // key (md5 of the name) stays stable across restarts instead of
+        // flip-flopping with HashMap iteration order and orphaning the photo.
+        let tracks = vec![
+            track(Some("Beatles"), Some("Abbey Road"), Some(1)),
+            track(Some("beatles"), Some("Let It Be"), Some(1)),
+        ];
+        let albums = group_into_albums(&tracks, None);
+        let artists = group_into_artists(&albums);
+        assert_eq!(artists.len(), 1, "case-only variants fold to one artist");
+        // 'B' (0x42) < 'b' (0x62), so "Beatles" is the stable winner.
+        assert_eq!(artists[0].name, "Beatles");
     }
 
     #[test]

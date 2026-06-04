@@ -109,6 +109,11 @@ toolbarview .top-bar headerbar.audra-header-bar {
     background-color: @card_shade_color;
 }
 
+/* Custom Albums / Artists / Songs switcher (bundled icons, not GtkIconTheme). */
+.audra-view-switcher button {
+    padding: 6px 10px;
+}
+
 /* Kill the 3 px padding-top that GTK's `box.collapse-spacing` adds above
  * the headerbar. That gap is transparent by default and exposes the raw
  * window tint without the @card_shade_color overlay — producing the thin
@@ -231,9 +236,27 @@ listview.audra-track-list > row {
      * detail. */
     min-height: 44px;
 }
-.audra-track-row .num {
+/* Fixed-width left cell shared by the track number and the play/pause icon
+ * button, so the Songs list (no number) and album detail (number) line up
+ * identically and the title never shifts when the icon appears on hover. */
+.audra-track-row .slot {
     min-width: 1.8em;
+}
+.audra-track-row .num {
     opacity: 0.55;
+}
+/* Borderless, padding-free icon button that stands in for the number on the
+ * active or hovered row. */
+.audra-track-row button.row-icon-btn {
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+    background: none;
+    box-shadow: none;
+}
+.audra-track-row button.row-icon-btn:hover {
+    background: alpha(currentColor, 0.10);
 }
 .audra-track-row .title {
     font-weight: 500;
@@ -245,9 +268,15 @@ listview.audra-track-list > row {
 .audra-track-row .dur {
     opacity: 0.55;
 }
-.audra-track-row.playing .title,
-.audra-track-row.playing .num {
-    color: @accent_color;
+/* Active ("now playing") row highlight, for every tint mode. A tinted band
+ * behind the whole row makes it stand out at a glance; the title goes bold on
+ * top. Off/Partial use the system accent; the dynamic-tint Full mode overrides
+ * this color with the cover's palette (see `theme.rs`). */
+.audra-track-row.playing {
+    background-color: alpha(@accent_color, 0.14);
+    border-radius: 8px;
+}
+.audra-track-row.playing .title {
     font-weight: bold;
 }
 

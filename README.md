@@ -51,6 +51,15 @@ sudo apt install \
   gettext
 ```
 
+macOS (Apple Silicon, Homebrew):
+
+```bash
+brew install gtk4 libadwaita gettext pkg-config
+export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:/opt/homebrew/share/pkgconfig"
+```
+
+See [docs/BUILD-macos-arm64.md](docs/BUILD-macos-arm64.md) for the full macOS arm64 build, run, and verify steps.
+
 ## Installation
 
 ### RPM (Fedora / RHEL)
@@ -72,6 +81,8 @@ cargo build --release
 ```
 
 The binary will be at `target/release/audra`.
+
+On macOS (arm64), use `bash packaging/build-macos.sh` and `bash packaging/verify-macos-build.sh` to build and test; run with `bash packaging/run-macos.sh` so Homebrew GTK libraries are found.
 
 To build with Last.fm integration, export the proxy URL before building:
 
@@ -128,11 +139,25 @@ bash packaging/build-deb.sh
 
 The package is written to `target/debpkg/audra_<version>_amd64.deb`.
 
+## Building on macOS (Apple Silicon)
+
+```bash
+bash packaging/build-macos.sh
+bash packaging/verify-macos-build.sh   # build + arm64 check + cargo test
+bash packaging/run-macos.sh            # launch with Homebrew libs on the loader path
+```
+
+Details: [docs/BUILD-macos-arm64.md](docs/BUILD-macos-arm64.md).
+
 ## Credits
 
 The dynamic, album-art-based background (stacked diagonal color gradients
 extracted from the cover) is adapted from [Amberol](https://gitlab.gnome.org/World/amberol)
 by Emmanuele Bassi, also licensed GPL-3.0-or-later. Thank you.
+
+UI icons are from [Remix Icon](https://remixicon.com), bundled as SVG under
+`data/icons/remix/`. See [licenses/REMIX-ICON.txt](licenses/REMIX-ICON.txt) and
+[data/icons/remix/LICENSE](data/icons/remix/LICENSE) (Remix Icon License v1.0).
 
 ## License
 

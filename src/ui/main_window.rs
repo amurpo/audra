@@ -4,6 +4,7 @@ use gtk4::prelude::*;
 use gtk4::{gio, Button, FileDialog, MenuButton, Popover, SearchBar, SearchEntry, ToggleButton};
 use libadwaita as adw;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -17,20 +18,31 @@ use crate::ui::lastfm_dialog::show_lastfm_dialog;
 use crate::ui::library_view::LibraryView;
 use crate::ui::now_playing::NowPlaying;
 use crate::ui::playback::{
-    make_play_callback, start_player_timer, wire_mpris, wire_transport_controls, ScrobbleTracker,
+    make_play_callback, start_player_timer, wire_mpris, wire_transport_controls, CoverIndex,
+    ScrobbleTracker,
 };
 use crate::ui::player_bar::PlayerBar;
 use crate::ui::reset::show_reset_dialog;
 use crate::ui::theme::{set_tint_mode, setup_css, update_font, TintMode};
 
-pub(crate) fn reload_all_views(
-    db: &Arc<Mutex<Database>>,
-    lib_view: &Rc<RefCell<LibraryView>>,
-    albums_view: &Rc<AlbumsView>,
-    artists_view: &Rc<ArtistsView>,
-) {
+/// The library views plus the DB handle and the shared cover index — the
+/// bundle of state the scan/reload paths always pass around together. Grouping
+/// them keeps `reload_all_views`, `start_scan` and `show_reset_dialog` to a
+/// short, readable parameter list instead of a half-dozen positional handles.
+/// All fields are cheap `Rc`/`Arc` clones, so passing the struct by value is
+/// just reference-count bumps.
+#[derive(Clone)]
+pub(crate) struct Views {
+    pub db: Arc<Mutex<Database>>,
+    pub lib: Rc<RefCell<LibraryView>>,
+    pub albums: Rc<AlbumsView>,
+    pub artists: Rc<ArtistsView>,
+    pub cover_index: CoverIndex,
+}
+
+pub(crate) fn reload_all_views(views: &Views) {
     let (all, music_folder) = {
-        let g = db.lock().unwrap();
+        let g = views.db.lock().unwrap();
         (
             g.all_tracks().unwrap_or_default(),
             g.get_setting("music_folder"),
@@ -38,17 +50,28 @@ pub(crate) fn reload_all_views(
     };
     let albums = library::group_into_albums(&all, music_folder.as_deref());
     let artists = library::group_into_artists(&albums);
-    lib_view.borrow_mut().load_tracks(all);
-    albums_view.load_albums(albums.clone(), Arc::clone(db));
-    artists_view.load_artists(artists, albums);
+    // Index every track path to its album's canonical (artist, album) so the
+    // player resolves covers under the same key the Albums view and the cover
+    // store use — see `CoverIndex`.
+    {
+        let mut idx = views.cover_index.borrow_mut();
+        idx.clear();
+        for a in &albums {
+            for t in &a.tracks {
+                idx.insert(t.path.clone(), (a.artist.clone(), a.name.clone()));
+            }
+        }
+    }
+    views.lib.borrow_mut().load_tracks(all);
+    views
+        .albums
+        .load_albums(albums.clone(), Arc::clone(&views.db));
+    views.artists.load_artists(artists, albums);
 }
 
 pub(crate) fn start_scan(
     folder_path: String,
-    db: Arc<Mutex<Database>>,
-    lib_view: Rc<RefCell<LibraryView>>,
-    albums_view: Rc<AlbumsView>,
-    artists_view: Rc<ArtistsView>,
+    views: Views,
     loading_box: gtk4::Box,
     spinner: gtk4::Spinner,
 ) {
@@ -59,7 +82,7 @@ pub(crate) fn start_scan(
     // freezes on a large library. The UI thread only refreshes the views
     // once the worker signals it is done.
     let scan_path = folder_path;
-    let db_worker = Arc::clone(&db);
+    let db_worker = Arc::clone(&views.db);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let tracks = scanner::scan_folder(&scan_path);
@@ -84,7 +107,7 @@ pub(crate) fn start_scan(
         use std::sync::mpsc::TryRecvError;
         match rx.try_recv() {
             Ok(()) => {
-                reload_all_views(&db, &lib_view, &albums_view, &artists_view);
+                reload_all_views(&views);
                 loading_box.set_visible(false);
                 spinner.stop();
                 glib::ControlFlow::Break
@@ -162,7 +185,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // register that dir with the icon theme. This is a no-op on systems where
     // the icon is already installed (the theme finds it there first).
     register_app_icon();
-
     let use_system_font = db.lock().unwrap().get_setting("use_system_font").as_deref() == Some("1");
     let replaygain_setting = db
         .lock()
@@ -243,7 +265,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     header.add_css_class("audra-header-bar");
 
     let menu_btn = MenuButton::new();
-    menu_btn.set_icon_name("folder-music-symbolic");
+    let menu_icon = crate::ui::icons::image(crate::ui::icons::Icon::FolderMusic, 20);
+    menu_btn.set_child(Some(&menu_icon));
     menu_btn.set_tooltip_text(Some(&gettext("Library")));
     menu_btn.add_css_class("flat");
 
@@ -265,8 +288,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     item_scan.set_hexpand(true);
     item_scan.set_halign(gtk4::Align::Fill);
 
-    let item_refresh = Button::new();
-    item_refresh.set_icon_name("view-refresh-symbolic");
+    let item_refresh =
+        crate::ui::icons::flat_icon_button(crate::ui::icons::Icon::Refresh, 20, None);
     item_refresh.add_css_class("flat");
     item_refresh.set_tooltip_text(Some(&gettext("Refresh collection")));
 
@@ -394,8 +417,19 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     item_reset.set_halign(gtk4::Align::Fill);
     item_reset.set_margin_top(3);
     let reset_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-    let reset_icon = gtk4::Image::from_icon_name("user-trash-symbolic");
+    let reset_icon = crate::ui::icons::image(crate::ui::icons::Icon::DeleteBin, 16);
     reset_icon.add_css_class("menu-destructive");
+    {
+        let reset_icon = reset_icon.clone();
+        reset_icon.connect_realize(move |img| {
+            crate::ui::icons::set_image_icon(
+                img,
+                crate::ui::icons::Icon::DeleteBin,
+                16,
+                &crate::ui::icons::error_color(img),
+            );
+        });
+    }
     let reset_lbl = gtk4::Label::new(Some(&gettext("Reset library…")));
     reset_lbl.add_css_class("menu-destructive");
     reset_box.append(&reset_icon);
@@ -427,7 +461,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     header.pack_start(&menu_btn);
 
     let btn_search = ToggleButton::new();
-    btn_search.set_icon_name("system-search-symbolic");
+    let search_icon = crate::ui::icons::image(crate::ui::icons::Icon::Search, 20);
+    btn_search.set_child(Some(&search_icon));
     btn_search.set_tooltip_text(Some(&gettext("Search")));
     btn_search.add_css_class("flat");
     header.pack_end(&btn_search);
@@ -459,7 +494,14 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let lib_view = Rc::new(RefCell::new(LibraryView::new(Rc::clone(&now_playing))));
     let albums_view = Rc::new(AlbumsView::new(Rc::clone(&now_playing)));
     let artists_view = Rc::new(ArtistsView::new(Arc::clone(&db), Rc::clone(&now_playing)));
-    let bar = Rc::new(PlayerBar::new());
+    let bar = Rc::new(PlayerBar::new(Rc::clone(&now_playing)));
+
+    // A track row's play/pause icon toggles playback through the exact same
+    // button MPRIS and the keyboard use, so there's one play/pause code path.
+    {
+        let bar_c = Rc::clone(&bar);
+        now_playing.set_toggle_handler(move || bar_c.btn_play_pause.emit_clicked());
+    }
 
     // --- Helpers de scrobble y highlight ---
     let scrobble_tracker = Rc::new(RefCell::new(ScrobbleTracker::default()));
@@ -493,29 +535,52 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         })
     };
 
+    // path → canonical (artist, album), shared with the player so cover
+    // lookups at play time hit the same key the Albums view uses. Rebuilt by
+    // every `reload_all_views` (initial load and rescans).
+    let cover_index: CoverIndex = Rc::new(RefCell::new(HashMap::new()));
+
+    // Bundle the views + DB + cover index so the scan/reload paths take one
+    // handle instead of a long parameter list. Individual handles stay in
+    // scope for the rest of the wiring below.
+    let views = Views {
+        db: Arc::clone(&db),
+        lib: Rc::clone(&lib_view),
+        albums: Rc::clone(&albums_view),
+        artists: Rc::clone(&artists_view),
+        cover_index: Rc::clone(&cover_index),
+    };
+
     // --- Carga inicial ---
-    reload_all_views(&db, &lib_view, &albums_view, &artists_view);
+    reload_all_views(&views);
 
     // --- ViewStack ---
     let view_stack = adw::ViewStack::new();
-    {
-        let page = view_stack.add_titled(&albums_view.root, Some("albums"), &gettext("Albums"));
-        page.set_icon_name(Some("media-optical-symbolic"));
-    }
-    {
-        let page = view_stack.add_titled(&artists_view.root, Some("artists"), &gettext("Artists"));
-        page.set_icon_name(Some("system-users-symbolic"));
-    }
-    {
-        let page =
-            view_stack.add_titled(&lib_view.borrow().root, Some("tracks"), &gettext("Songs"));
-        page.set_icon_name(Some("view-list-symbolic"));
-    }
+    view_stack.add_titled(&albums_view.root, Some("albums"), &gettext("Albums"));
+    view_stack.add_titled(&artists_view.root, Some("artists"), &gettext("Artists"));
+    view_stack.add_titled(&lib_view.borrow().root, Some("tracks"), &gettext("Songs"));
     view_stack.set_visible_child_name("albums");
 
-    let view_switcher = adw::ViewSwitcher::new();
-    view_switcher.set_stack(Some(&view_stack));
-    view_switcher.set_policy(adw::ViewSwitcherPolicy::Wide);
+    let view_switcher = crate::ui::widgets::view_switcher_bar(
+        &view_stack,
+        &[
+            crate::ui::widgets::ViewTab {
+                stack_name: "albums",
+                icon: crate::ui::icons::Icon::Album,
+                label: gettext("Albums"),
+            },
+            crate::ui::widgets::ViewTab {
+                stack_name: "artists",
+                icon: crate::ui::icons::Icon::Group,
+                label: gettext("Artists"),
+            },
+            crate::ui::widgets::ViewTab {
+                stack_name: "tracks",
+                icon: crate::ui::icons::Icon::ListUnordered,
+                label: gettext("Songs"),
+            },
+        ],
+    );
     header.set_title_widget(Some(&view_switcher));
 
     // --- Barra de búsqueda ---
@@ -590,13 +655,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         #[strong]
         window,
         #[strong]
-        db,
-        #[strong]
-        lib_view,
-        #[strong]
-        albums_view,
-        #[strong]
-        artists_view,
+        views,
         #[weak]
         popover,
         #[weak]
@@ -611,13 +670,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                 gio::Cancellable::NONE,
                 clone!(
                     #[strong]
-                    db,
-                    #[strong]
-                    lib_view,
-                    #[strong]
-                    albums_view,
-                    #[strong]
-                    artists_view,
+                    views,
                     #[weak]
                     scan_loading_box,
                     #[weak]
@@ -627,10 +680,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                             if let Some(path) = file.path() {
                                 start_scan(
                                     path.to_string_lossy().to_string(),
-                                    Arc::clone(&db),
-                                    Rc::clone(&lib_view),
-                                    Rc::clone(&albums_view),
-                                    Rc::clone(&artists_view),
+                                    views.clone(),
                                     scan_loading_box,
                                     scan_spinner,
                                 );
@@ -644,13 +694,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     item_refresh.connect_clicked(clone!(
         #[strong]
-        db,
-        #[strong]
-        lib_view,
-        #[strong]
-        albums_view,
-        #[strong]
-        artists_view,
+        views,
         #[weak]
         popover,
         #[weak]
@@ -659,16 +703,8 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         scan_spinner,
         move |_| {
             popover.popdown();
-            if let Some(folder) = db.lock().unwrap().get_setting("music_folder") {
-                start_scan(
-                    folder,
-                    Arc::clone(&db),
-                    Rc::clone(&lib_view),
-                    Rc::clone(&albums_view),
-                    Rc::clone(&artists_view),
-                    scan_loading_box,
-                    scan_spinner,
-                );
+            if let Some(folder) = views.db.lock().unwrap().get_setting("music_folder") {
+                start_scan(folder, views.clone(), scan_loading_box, scan_spinner);
             }
         }
     ));
@@ -823,13 +859,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         #[strong]
         window,
         #[strong]
-        db,
-        #[strong]
-        lib_view,
-        #[strong]
-        albums_view,
-        #[strong]
-        artists_view,
+        views,
         #[strong]
         scan_loading_box,
         #[strong]
@@ -840,10 +870,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             popover.popdown();
             show_reset_dialog(
                 &window,
-                Arc::clone(&db),
-                Rc::clone(&lib_view),
-                Rc::clone(&albums_view),
-                Rc::clone(&artists_view),
+                views.clone(),
                 scan_loading_box.clone(),
                 scan_spinner.clone(),
             );
@@ -869,6 +896,10 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                 .issue_url("https://github.com/amurpo/audra/issues")
                 .translator_credits(gettext("translator-credits"))
                 .build();
+            about.add_credit_section(
+                Some("Remix Icon"),
+                &["https://remixicon.com — Remix Icon License v1.0"],
+            );
             about.add_css_class("audra-shaded");
             about.present(Some(&window));
         }
@@ -880,6 +911,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
+        Rc::clone(&cover_index),
     ));
     artists_view.set_on_play(make_play_callback(
         Rc::clone(&player),
@@ -887,6 +919,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
+        Rc::clone(&cover_index),
     ));
     lib_view.borrow().set_on_play_all(make_play_callback(
         Rc::clone(&player),
@@ -894,6 +927,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
+        Rc::clone(&cover_index),
     ));
     {
         let play_cb = make_play_callback(
@@ -902,6 +936,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             Arc::clone(&db),
             Rc::clone(&notify_now_playing),
             Rc::clone(&highlight_track),
+            Rc::clone(&cover_index),
         );
         lib_view.borrow().set_on_activate(play_cb);
     }
@@ -912,6 +947,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Arc::clone(&db),
         Rc::clone(&notify_now_playing),
         Rc::clone(&highlight_track),
+        Rc::clone(&cover_index),
     );
 
     // Apply saved volume (explicitly set player + label before triggering the scale signal)
@@ -1015,5 +1051,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         Rc::clone(&highlight_track),
         window.downgrade(),
         mpris_cell,
+        Rc::clone(&cover_index),
     );
 }
