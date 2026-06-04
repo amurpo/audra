@@ -129,23 +129,26 @@ mod backend {
     impl Icon {
         fn svg_bytes(self) -> &'static [u8] {
             match self {
-                Icon::Shuffle => remix_svg!("shuffle-line"),
-                Icon::SkipBack => remix_svg!("skip-back-line"),
-                Icon::Play => remix_svg!("play-line"),
-                Icon::Pause => remix_svg!("pause-line"),
-                Icon::SkipForward => remix_svg!("skip-forward-line"),
-                Icon::Repeat => remix_svg!("repeat-line"),
-                Icon::VolumeUp => remix_svg!("volume-up-line"),
+                // Filled variants where Remix provides one, so the icons read
+                // solid instead of thin outlines. `arrow-left`, `loader-4` and
+                // `list-unordered` have no -fill, so they stay -line.
+                Icon::Shuffle => remix_svg!("shuffle-fill"),
+                Icon::SkipBack => remix_svg!("skip-back-fill"),
+                Icon::Play => remix_svg!("play-fill"),
+                Icon::Pause => remix_svg!("pause-fill"),
+                Icon::SkipForward => remix_svg!("skip-forward-fill"),
+                Icon::Repeat => remix_svg!("repeat-fill"),
+                Icon::VolumeUp => remix_svg!("volume-up-fill"),
                 Icon::ArrowLeft => remix_svg!("arrow-left-line"),
-                Icon::User => remix_svg!("user-line"),
+                Icon::User => remix_svg!("user-fill"),
                 Icon::Loader => remix_svg!("loader-4-line"),
-                Icon::CheckCircle => remix_svg!("checkbox-circle-line"),
-                Icon::FolderMusic => remix_svg!("folder-music-line"),
-                Icon::Refresh => remix_svg!("refresh-line"),
-                Icon::DeleteBin => remix_svg!("delete-bin-line"),
-                Icon::Search => remix_svg!("search-line"),
-                Icon::Album => remix_svg!("album-line"),
-                Icon::Group => remix_svg!("group-line"),
+                Icon::CheckCircle => remix_svg!("checkbox-circle-fill"),
+                Icon::FolderMusic => remix_svg!("folder-music-fill"),
+                Icon::Refresh => remix_svg!("refresh-fill"),
+                Icon::DeleteBin => remix_svg!("delete-bin-fill"),
+                Icon::Search => remix_svg!("search-fill"),
+                Icon::Album => remix_svg!("album-fill"),
+                Icon::Group => remix_svg!("group-fill"),
                 Icon::ListUnordered => remix_svg!("list-unordered"),
             }
         }
