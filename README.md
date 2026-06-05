@@ -15,6 +15,8 @@ Native music player for Linux, built with GTK4 and libadwaita.
 - MP3, FLAC, OGG and WAV support
 - Shuffle with fixed random order (each song plays once) and track repeat
 - ReplayGain volume normalization (track and album modes)
+- Now-playing highlight with a per-row play/pause control in every track list
+- Dynamic background tinted from the album cover, with Off / Partial / Full modes (adapted from Amberol)
 - MPRIS2 media controls on Linux (play/pause/skip from the desktop shell, lock screen, etc.)
 - Automatic scrobbling and now-playing updates to [Last.fm](https://www.last.fm) with OAuth authentication
 - Artist art and album covers downloaded automatically; right-click any album or artist to pick a custom image or search for one
@@ -155,8 +157,9 @@ The dynamic, album-art-based background (stacked diagonal color gradients
 extracted from the cover) is adapted from [Amberol](https://gitlab.gnome.org/World/amberol)
 by Emmanuele Bassi, also licensed GPL-3.0-or-later. Thank you.
 
-UI icons are from [Remix Icon](https://remixicon.com), bundled as SVG under
-`data/icons/remix/`. See [licenses/REMIX-ICON.txt](licenses/REMIX-ICON.txt) and
+On macOS, UI icons are bundled from [Remix Icon](https://remixicon.com) as SVG
+under `data/icons/remix/`; on Linux the system's symbolic icon theme is used
+instead. See [licenses/REMIX-ICON.txt](licenses/REMIX-ICON.txt) and
 [data/icons/remix/LICENSE](data/icons/remix/LICENSE) (Remix Icon License v1.0).
 
 ## License
