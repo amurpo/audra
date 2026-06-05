@@ -15,7 +15,7 @@
 //! Width: the whole list is wrapped in `adw::Clamp` (max 760 px) so on wide
 //! monitors it doesn't look like a GNOME-Music-style spreadsheet.
 use std::cell::RefCell;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 use gtk4::prelude::*;
 use gtk4::{
@@ -72,6 +72,11 @@ impl TrackListConfig {
 
 type ActivateCb = Rc<RefCell<Option<Rc<dyn Fn(Vec<Track>, usize)>>>>;
 type PlayAllCb = Rc<RefCell<Option<Rc<dyn Fn(Vec<Track>)>>>>;
+
+/// Widget data key used to stash each row's last-bound model position, so the
+/// "now playing" repaint can resolve a realized row back to its track without
+/// holding the recycled [`ListItem`].
+const ROW_POS_KEY: &str = "audra-row-pos";
 
 pub struct TrackList {
     /// The widget to embed in the parent container. Already includes
@@ -247,6 +252,9 @@ impl TrackList {
                 let Some(row) = item.child().and_downcast::<GtkBox>() else {
                     return;
                 };
+                // Stash the bound position so the bus-driven repaint can resolve
+                // this realized row back to its track without the ListItem.
+                unsafe { row.set_data(ROW_POS_KEY, pos) };
                 let Some(slot) = row.first_child().and_downcast::<Overlay>() else {
                     return;
                 };
@@ -403,18 +411,25 @@ impl TrackList {
             });
         }
 
-        // React to "now playing" changes via the bus: refresh the indicator on
-        // visible rows. Listener returns `false` once the TrackList is gone, so
-        // the bus can drop it automatically.
+        // React to "now playing" changes via the bus by repainting the rows in
+        // place. The listener holds only a *widget* WeakRef (plus shared Rc
+        // clones), never the `Rc<TrackList>` — call sites like the album-detail
+        // page drop the `Rc<TrackList>` as soon as they've appended `.root`, so
+        // a `Weak<Self>` listener would die immediately and never fire. Tying the
+        // listener's life to the list widget instead keeps it alive exactly as
+        // long as the row it repaints, and `false` drops it once the widget is
+        // gone (page popped / view rebuilt).
         {
-            let weak: Weak<Self> = Rc::downgrade(&this);
+            let lv_weak = list_view.downgrade();
+            let displayed_c = Rc::clone(&displayed);
+            let np_c = Rc::clone(&now_playing);
+            let show_num = cfg.show_track_number;
             now_playing.subscribe(move |_path| {
-                if let Some(tl) = weak.upgrade() {
-                    tl.refresh_playing_indicator();
-                    true
-                } else {
-                    false
-                }
+                let Some(lv) = lv_weak.upgrade() else {
+                    return false;
+                };
+                repaint_now_playing(&lv, &displayed_c, &np_c, show_num);
+                true
             });
         }
 
@@ -451,19 +466,6 @@ impl TrackList {
         }
     }
 
-    /// Force `connect_bind` to re-run on the visible rows so the `.playing`
-    /// class follows the bus value. `StringList` does not expose
-    /// `items_changed` directly, so we splice the model with itself — the rows
-    /// are recycled (no widget tear-down), only the bind callback re-runs.
-    fn refresh_playing_indicator(&self) {
-        let n = self.model.n_items();
-        if n == 0 {
-            return;
-        }
-        let empty: Vec<&str> = (0..n).map(|_| "").collect();
-        self.model.splice(0, n, &empty);
-    }
-
     fn apply_filter(&self, query: &str) {
         let displayed: Vec<Track> = if query.is_empty() {
             self.full_tracks.borrow().clone()
@@ -488,9 +490,47 @@ impl TrackList {
     }
 }
 
-// Listener cleanup is automatic: when the last `Rc<TrackList>` is dropped the
-// bus's `Weak::upgrade` starts returning `None` and the listener gets removed
-// on the next publish — no explicit unsubscribe needed.
+// Listener cleanup is automatic: when the list widget is destroyed (page
+// popped, view rebuilt) its WeakRef stops upgrading and the listener gets
+// removed on the next publish — no explicit unsubscribe needed.
+
+/// Repaint the now-playing indicator on every realized row of `list_view`, in
+/// place. Driven by the [`NowPlaying`] bus.
+///
+/// We walk the realized rows and re-derive each one's slot directly instead of
+/// splicing the model: a splice would reset the scroll to the top (jarring when
+/// you double-click a track far down the list) and only *schedules* a rebind,
+/// which GTK flushes on the next frame — so on auto-advance, with no pointer
+/// motion to drive a frame, the active row stayed visually "stuck". Painting the
+/// rows here is immediate and scroll-preserving; rows that are still off-screen
+/// get the right state from `connect_bind` when they're scrolled into view.
+fn repaint_now_playing(
+    list_view: &ListView,
+    displayed: &RefCell<Vec<Track>>,
+    np: &NowPlaying,
+    show_num: bool,
+) {
+    let disp = displayed.borrow();
+    let mut child = list_view.first_child();
+    while let Some(item_widget) = child {
+        child = item_widget.next_sibling();
+        let Some(row) = item_widget.first_child().and_downcast::<GtkBox>() else {
+            continue;
+        };
+        if !row.has_css_class("audra-track-row") {
+            continue;
+        }
+        // Position stashed by `connect_bind`; resolves the recycled row back to
+        // its track without holding the ListItem.
+        let Some(pos) = (unsafe { row.data::<usize>(ROW_POS_KEY) }) else {
+            continue;
+        };
+        let pos = unsafe { *pos.as_ref() };
+        if let Some(track) = disp.get(pos) {
+            paint_slot(&row, np, &track.path, show_num, pos + 1);
+        }
+    }
+}
 
 /// Paint the left slot (number ⇄ play/pause icon) for one row, deriving the
 /// state from the [`NowPlaying`] bus and the row's `row-hover` CSS class:
