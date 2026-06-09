@@ -134,6 +134,12 @@ msgstr "Acerca de Audra"
 msgid "Native music player with Last.fm scrobbling"
 msgstr "Reproductor de música nativo con scrobbling de Last.fm"
 
+msgid "Acknowledgments"
+msgstr "Agradecimientos"
+
+msgid "View on GitHub"
+msgstr "Ver en GitHub"
+
 #. Replace with your name(s) when you contribute translations.
 msgid "translator-credits"
 msgstr "Daniel Avila"

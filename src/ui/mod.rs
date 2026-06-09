@@ -13,6 +13,7 @@ pub mod now_playing;
 pub mod playback;
 pub mod player_bar;
 pub mod reset;
+pub mod settings_menu;
 pub mod theme;
 pub mod track_list;
 pub mod widgets;
