@@ -18,8 +18,8 @@ use crate::ui::lastfm_dialog::show_lastfm_dialog;
 use crate::ui::library_view::LibraryView;
 use crate::ui::now_playing::NowPlaying;
 use crate::ui::playback::{
-    make_play_callback, start_player_timer, wire_mpris, wire_transport_controls, CoverIndex,
-    ScrobbleTracker,
+    cover_cache, make_play_callback, start_player_timer, wire_cover_sync, wire_mpris,
+    wire_transport_controls, CoverIndex, PlaybackCtx, ScrobbleTracker,
 };
 use crate::ui::player_bar::PlayerBar;
 use crate::ui::reset::show_reset_dialog;
@@ -907,50 +907,39 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
-    albums_view.set_on_play(make_play_callback(
-        Rc::clone(&player),
-        Rc::clone(&bar),
-        Arc::clone(&db),
-        Rc::clone(&notify_now_playing),
-        Rc::clone(&highlight_track),
-        Rc::clone(&cover_index),
-    ));
-    artists_view.set_on_play(make_play_callback(
-        Rc::clone(&player),
-        Rc::clone(&bar),
-        Arc::clone(&db),
-        Rc::clone(&notify_now_playing),
-        Rc::clone(&highlight_track),
-        Rc::clone(&cover_index),
-    ));
-    lib_view.borrow().set_on_play_all(make_play_callback(
-        Rc::clone(&player),
-        Rc::clone(&bar),
-        Arc::clone(&db),
-        Rc::clone(&notify_now_playing),
-        Rc::clone(&highlight_track),
-        Rc::clone(&cover_index),
-    ));
-    {
-        let play_cb = make_play_callback(
-            Rc::clone(&player),
-            Rc::clone(&bar),
-            Arc::clone(&db),
-            Rc::clone(&notify_now_playing),
-            Rc::clone(&highlight_track),
-            Rc::clone(&cover_index),
-        );
-        lib_view.borrow().set_on_activate(play_cb);
-    }
+    // One shared playback context and ONE play callback instance behind an
+    // `Rc`, handed to every view — instead of building four identical
+    // closures with six captured handles each.
+    let ctx = PlaybackCtx {
+        player: Rc::clone(&player),
+        bar: Rc::clone(&bar),
+        db: Arc::clone(&db),
+        notify_now_playing: Rc::clone(&notify_now_playing),
+        highlight: Rc::clone(&highlight_track),
+        cover_index: Rc::clone(&cover_index),
+        cover_cache: cover_cache(),
+    };
+    let play_cb: Rc<dyn Fn(Vec<crate::library::Track>, usize)> =
+        Rc::new(make_play_callback(ctx.clone()));
 
-    wire_transport_controls(
-        &bar,
-        &player,
-        Arc::clone(&db),
-        Rc::clone(&notify_now_playing),
-        Rc::clone(&highlight_track),
-        Rc::clone(&cover_index),
-    );
+    albums_view.set_on_play({
+        let cb = Rc::clone(&play_cb);
+        move |tracks, idx| cb(tracks, idx)
+    });
+    artists_view.set_on_play({
+        let cb = Rc::clone(&play_cb);
+        move |tracks, idx| cb(tracks, idx)
+    });
+    lib_view.borrow().set_on_play_all({
+        let cb = Rc::clone(&play_cb);
+        move |tracks, idx| cb(tracks, idx)
+    });
+    lib_view.borrow().set_on_activate({
+        let cb = Rc::clone(&play_cb);
+        move |tracks, idx| cb(tracks, idx)
+    });
+
+    wire_transport_controls(&ctx);
 
     // Apply saved volume (explicitly set player + label before triggering the scale signal)
     player.borrow_mut().set_volume(saved_vol as f32);
@@ -973,6 +962,10 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let (mpris_tx, mpris_rx) = std::sync::mpsc::channel();
     let mpris_cell: crate::ui::playback::MprisHandle =
         std::rc::Rc::new(std::cell::RefCell::new(None));
+
+    // Live cover sync: a cover change from the picker repaints the bar, tint
+    // and OS controls immediately when it hits the album that's playing.
+    wire_cover_sync(&ctx, Rc::clone(&mpris_cell));
 
     // Windows SMTC: wire the command-drain timer unconditionally so it is
     // ready before the first event arrives. Sender<T>: Clone lets the
@@ -1044,15 +1037,10 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     }
 
     start_player_timer(
-        Rc::clone(&player),
-        Rc::clone(&bar),
+        ctx,
         Rc::clone(&scrobble_tracker),
         Arc::clone(&lastfm),
-        Arc::clone(&db),
-        Rc::clone(&notify_now_playing),
-        Rc::clone(&highlight_track),
         window.downgrade(),
         mpris_cell,
-        Rc::clone(&cover_index),
     );
 }

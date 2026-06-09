@@ -132,6 +132,14 @@ impl Mpris {
         });
     }
 
+    /// Re-push metadata even though the track path hasn't changed — used when
+    /// the *cover* changed for the currently playing track, which the
+    /// same-path guard in [`update_track`](Self::update_track) would swallow.
+    pub fn refresh_metadata(&mut self, track: Option<&Track>, cover: Option<&[u8]>) {
+        self.last_track = None;
+        self.update_track(track, cover);
+    }
+
     pub fn set_playback(&mut self, state: &PlayerState, position: Duration) {
         let playback = match state {
             PlayerState::Playing => MediaPlayback::Playing {

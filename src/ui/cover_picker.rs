@@ -56,6 +56,10 @@ pub fn install_album_cover_gesture(
         let (db, a, al) = (Arc::clone(&db), artist.clone(), album.clone());
         Arc::new(move |b: &[u8]| {
             let _ = db.lock().unwrap().set_cover(&a, &al, b);
+            // Tell the playback layer: it drops its cached art and, if this
+            // album is the one playing, repaints the bar/tint/OS controls
+            // immediately.
+            crate::ui::playback::notify_cover_changed(&a, &al);
         })
     };
 
