@@ -804,15 +804,25 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         .set_text(&format!("{:.0}%", saved_vol * 100.0));
     bar.vol_scale.set_value(saved_vol);
 
-    // Persist volume changes to DB
+    // Persist volume changes to DB, debounced: value_changed fires for every
+    // pixel of a drag, so each change re-arms a 300 ms timer and only the
+    // final value is written.
+    let vol_save_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
     bar.vol_scale.connect_value_changed(clone!(
         #[strong]
         db,
         move |scale| {
-            let _ = db
-                .lock()
-                .unwrap()
-                .set_setting("volume", &scale.value().to_string());
+            if let Some(prev) = vol_save_timer.borrow_mut().take() {
+                prev.remove();
+            }
+            let value = scale.value();
+            let db = db.clone();
+            let timer = Rc::clone(&vol_save_timer);
+            let id = glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
+                timer.borrow_mut().take();
+                let _ = db.lock().unwrap().set_setting("volume", &value.to_string());
+            });
+            *vol_save_timer.borrow_mut() = Some(id);
         }
     ));
 
