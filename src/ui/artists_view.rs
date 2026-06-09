@@ -76,6 +76,10 @@ impl ArtistsView {
             let now_playing_c = Rc::clone(&now_playing);
 
             flow.connect_child_activated(move |_, child| {
+                // Double-click guard: see the equivalent check in AlbumsView.
+                if nav_c.visible_page().and_then(|p| p.tag()).as_deref() != Some("artists-root") {
+                    return;
+                }
                 let idx = child.index() as usize;
                 let artist_name = artists_c.borrow().get(idx).map(|a| a.name.clone());
                 if let Some(name) = artist_name {
@@ -309,6 +313,10 @@ fn make_artist_detail_page(
         let nav_c = nav.clone();
         let now_playing_c = Rc::clone(&now_playing);
         flow.connect_child_activated(move |_, child| {
+            // Double-click guard: see the equivalent check in AlbumsView.
+            if nav_c.visible_page().and_then(|p| p.tag()).as_deref() != Some("artist-detail") {
+                return;
+            }
             let idx = child.index() as usize;
             if let Some(album) = albums_c.get(idx) {
                 let page =
@@ -342,7 +350,12 @@ fn make_artist_detail_page(
     scroll.set_child(Some(&grid_clamp));
     content.append(&scroll);
 
-    adw::NavigationPage::new(&content, artist_name)
+    let page = adw::NavigationPage::new(&content, artist_name);
+    // Tagged so the album grid above can tell whether this page is still the
+    // visible one before pushing an album detail. Unique in the stack: the
+    // artists-root guard ensures at most one artist detail at a time.
+    page.set_tag(Some("artist-detail"));
+    page
 }
 
 fn make_artist_album_card(album: &Album, db: Arc<Mutex<Database>>) -> FlowBoxChild {

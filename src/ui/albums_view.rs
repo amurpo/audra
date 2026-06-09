@@ -74,6 +74,12 @@ impl AlbumsView {
             let on_play_c = Rc::clone(&on_play);
             let now_playing_c = Rc::clone(&now_playing);
             flow.connect_child_activated(move |_, child| {
+                // A fast double-click activates twice; only push while this
+                // grid is still the visible page, so the second activation
+                // can't stack another copy of the detail page.
+                if nav_c.visible_page().and_then(|p| p.tag()).as_deref() != Some("albums-root") {
+                    return;
+                }
                 let idx = child.index() as usize;
                 let album = albums_c.borrow().get(idx).cloned();
                 if let Some(album) = album {
