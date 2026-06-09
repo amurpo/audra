@@ -95,6 +95,10 @@ pub struct Track {
     pub duration_secs: Option<i64>,
     pub disc_num: Option<i64>,
     pub album_artist: Option<String>,
+    /// File modification time (Unix seconds) captured at scan time. Drives the
+    /// incremental rescan: a file whose on-disk mtime matches the stored one is
+    /// not re-read. `None` for rows written before this column existed.
+    pub mtime: Option<i64>,
 }
 
 impl Track {
@@ -143,6 +147,7 @@ mod tests {
             duration_secs: Some(200),
             disc_num: None,
             album_artist: None,
+            mtime: None,
         }
     }
 
@@ -252,6 +257,7 @@ mod tests {
                 duration_secs: Some(200),
                 disc_num: None,
                 album_artist: None,
+                mtime: None,
             },
             Track {
                 id: None,
@@ -263,6 +269,7 @@ mod tests {
                 duration_secs: Some(200),
                 disc_num: None,
                 album_artist: None,
+                mtime: None,
             },
             Track {
                 id: None,
@@ -274,6 +281,7 @@ mod tests {
                 duration_secs: Some(200),
                 disc_num: None,
                 album_artist: None,
+                mtime: None,
             },
         ];
         let albums = group_into_albums(&tracks, mf);
@@ -327,6 +335,7 @@ mod tests {
             duration_secs: Some(200),
             disc_num: None,
             album_artist: None,
+            mtime: None,
         };
         track.album_artist = Some("千住明".into());
         let albums = group_into_albums(&[track], mf);

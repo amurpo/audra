@@ -189,6 +189,7 @@ mod tests {
             duration_secs: Some(100),
             disc_num: None,
             album_artist: None,
+            mtime: None,
         }
     }
 

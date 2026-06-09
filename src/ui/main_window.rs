@@ -85,16 +85,18 @@ pub(crate) fn start_scan(
     let db_worker = Arc::clone(&views.db);
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let tracks = scanner::scan_folder(&scan_path);
+        // Incremental rescan: files whose stored mtime matches are not
+        // re-read; only new/changed files pay the tag-parsing cost.
+        let known_mtimes = db_worker.lock().unwrap().path_mtimes().unwrap_or_default();
+        let result = scanner::scan_folder(&scan_path, &known_mtimes);
         {
             let db_g = db_worker.lock().unwrap();
-            let _ = db_g.upsert_tracks(&tracks);
+            let _ = db_g.upsert_tracks(&result.tracks);
             let norm_folder: std::path::PathBuf =
                 std::path::Path::new(&scan_path).components().collect();
             let _ = db_g.set_setting("music_folder", &norm_folder.to_string_lossy());
-            let found: Vec<String> = tracks.iter().map(|t| t.path.clone()).collect();
             let removed = db_g
-                .remove_missing_from_folder(&scan_path, &found)
+                .remove_missing_from_folder(&scan_path, &result.found_paths)
                 .unwrap_or(0);
             if removed > 0 {
                 log::info!("sync: eliminados {} registros obsoletos", removed);
