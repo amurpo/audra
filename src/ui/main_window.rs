@@ -86,7 +86,7 @@ pub(crate) fn start_scan(
     // once the worker signals it is done.
     let scan_path = folder_path;
     let db_worker = Arc::clone(&views.db);
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = async_channel::bounded::<()>(1);
     std::thread::spawn(move || {
         // Incremental rescan: files whose stored mtime matches are not
         // re-read; only new/changed files pay the tag-parsing cost.
@@ -105,25 +105,17 @@ pub(crate) fn start_scan(
                 log::info!("sync: eliminados {} registros obsoletos", removed);
             }
         }
-        let _ = tx.send(());
+        let _ = tx.send_blocking(());
     });
 
-    glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-        use std::sync::mpsc::TryRecvError;
-        match rx.try_recv() {
-            Ok(()) => {
-                reload_all_views(&views);
-                loading_box.set_visible(false);
-                spinner.stop();
-                glib::ControlFlow::Break
-            }
-            Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
-            Err(TryRecvError::Disconnected) => {
-                loading_box.set_visible(false);
-                spinner.stop();
-                glib::ControlFlow::Break
-            }
+    // No polling: this future sleeps in the main loop until the worker sends
+    // (or panics, which drops the sender and yields Err).
+    glib::spawn_future_local(async move {
+        if rx.recv().await.is_ok() {
+            reload_all_views(&views);
         }
+        loading_box.set_visible(false);
+        spinner.stop();
     });
 }
 
@@ -824,7 +816,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         }
     ));
 
-    let (mpris_tx, mpris_rx) = std::sync::mpsc::channel();
+    let (mpris_tx, mpris_rx) = async_channel::unbounded();
     let mpris_cell: crate::ui::playback::MprisHandle =
         std::rc::Rc::new(std::cell::RefCell::new(None));
 
@@ -832,7 +824,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // and OS controls immediately when it hits the album that's playing.
     wire_cover_sync(&ctx, Rc::clone(&mpris_cell));
 
-    // Windows SMTC: wire the command-drain timer unconditionally so it is
+    // Windows SMTC: wire the command-drain future unconditionally so it is
     // ready before the first event arrives. Sender<T>: Clone lets the
     // connect_map handler below supply a fresh tx for each attempt without
     // rebinding the receiver.

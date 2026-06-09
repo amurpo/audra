@@ -214,7 +214,6 @@ impl ArtistsView {
             artists,
             ImagePipelineConfig {
                 target_size: AVATAR_SIZE,
-                poll_ms: 400,
                 slow_delay_ms: 0,
             },
             |_artist: &String| FetchOutcome::Miss,

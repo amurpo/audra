@@ -308,6 +308,7 @@ name = "audra"
 version = "0.2.4"
 dependencies = [
  "anyhow",
+ "async-channel",
  "chrono",
  "color-thief",
  "dirs",

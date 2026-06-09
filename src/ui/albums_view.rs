@@ -186,7 +186,6 @@ impl AlbumsView {
             albums,
             ImagePipelineConfig {
                 target_size: CARD_SIZE,
-                poll_ms: 300,
                 slow_delay_ms: 1100,
             },
             move |item: &(String, String, Vec<String>)| {

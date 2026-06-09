@@ -25,16 +25,19 @@ pub type MprisHandle = Rc<RefCell<Option<Mpris>>>;
 /// re-emitting the existing transport buttons — zero duplicated logic, so the
 /// UI handlers stay the single source of truth (DRY/SRP).
 pub fn wire_mpris(
-    rx: std::sync::mpsc::Receiver<MprisCommand>,
+    rx: async_channel::Receiver<MprisCommand>,
     player: Rc<RefCell<Player>>,
     bar: Rc<PlayerBar>,
     window: glib::WeakRef<adw::ApplicationWindow>,
 ) {
-    glib::timeout_add_local(std::time::Duration::from_millis(120), move || {
-        let Some(win) = window.upgrade() else {
-            return glib::ControlFlow::Break;
-        };
-        while let Ok(cmd) = rx.try_recv() {
+    // No polling: the future sleeps until souvlaki's thread sends a command.
+    // It ends when the sender (owned by `Mpris`) is dropped or the window is
+    // gone — e.g. after the window rebuild on a language change.
+    glib::spawn_future_local(async move {
+        while let Ok(cmd) = rx.recv().await {
+            let Some(win) = window.upgrade() else {
+                return;
+            };
             let playing = matches!(player.borrow().state, PlayerState::Playing);
             match cmd {
                 MprisCommand::PlayPause => bar.btn_play_pause.emit_clicked(),
@@ -48,7 +51,6 @@ pub fn wire_mpris(
                 _ => {}
             }
         }
-        glib::ControlFlow::Continue
     });
 }
 
