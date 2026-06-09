@@ -4,6 +4,25 @@ pub enum ReplayGainMode {
     Album,
 }
 
+/// Parse the persisted "replaygain" setting. Anything that is not
+/// "track" / "album" (including the empty default) means off.
+pub fn mode_from_setting(s: &str) -> Option<ReplayGainMode> {
+    match s {
+        "track" => Some(ReplayGainMode::Track),
+        "album" => Some(ReplayGainMode::Album),
+        _ => None,
+    }
+}
+
+/// Inverse of [`mode_from_setting`], for persisting the user's choice.
+pub fn mode_as_setting(mode: Option<ReplayGainMode>) -> &'static str {
+    match mode {
+        Some(ReplayGainMode::Track) => "track",
+        Some(ReplayGainMode::Album) => "album",
+        None => "off",
+    }
+}
+
 pub fn read_gain(path: &str, mode: ReplayGainMode) -> f32 {
     fn read(path: &str, mode: ReplayGainMode) -> Option<f32> {
         use lofty::prelude::*;
@@ -56,6 +75,20 @@ mod tests {
             read_gain("/nonexistent/file.mp3", ReplayGainMode::Album),
             1.0
         );
+    }
+
+    #[test]
+    fn setting_roundtrip_covers_all_modes() {
+        for mode in [
+            None,
+            Some(ReplayGainMode::Track),
+            Some(ReplayGainMode::Album),
+        ] {
+            assert_eq!(mode_from_setting(mode_as_setting(mode)), mode);
+        }
+        // Unknown / legacy values fall back to off.
+        assert_eq!(mode_from_setting(""), None);
+        assert_eq!(mode_from_setting("bogus"), None);
     }
 
     #[test]

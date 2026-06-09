@@ -10,7 +10,10 @@ use std::sync::{Arc, Mutex};
 
 use crate::i18n::gettext;
 use crate::library::{self, db::Database, scanner};
-use crate::player::{replaygain::ReplayGainMode, Player};
+use crate::player::{
+    replaygain::{self, ReplayGainMode},
+    Player,
+};
 use crate::scrobbler::LastFmClient;
 use crate::ui::albums_view::AlbumsView;
 use crate::ui::artists_view::ArtistsView;
@@ -187,40 +190,22 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // register that dir with the icon theme. This is a no-op on systems where
     // the icon is already installed (the theme finds it there first).
     register_app_icon();
-    let use_system_font = db.lock().unwrap().get_setting("use_system_font").as_deref() == Some("1");
-    let replaygain_setting = db
-        .lock()
-        .unwrap()
-        .get_setting("replaygain")
-        .unwrap_or_default();
-    let replaygain_init_idx: u32 = match replaygain_setting.as_str() {
-        "track" => 1,
-        "album" => 2,
-        _ => 0,
+    // Read every persisted setting the window needs in one lock, one pass.
+    let (use_system_font, replaygain_setting, lang_setting, dyn_color_setting, saved_vol) = {
+        let g = db.lock().unwrap();
+        (
+            g.get_setting("use_system_font").as_deref() == Some("1"),
+            g.get_setting("replaygain").unwrap_or_default(),
+            g.get_setting("language").unwrap_or_default(),
+            g.get_setting("dynamic_color").unwrap_or_default(),
+            g.get_setting("volume")
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.5),
+        )
     };
-    let replaygain_init_mode: Option<ReplayGainMode> = match replaygain_setting.as_str() {
-        "track" => Some(ReplayGainMode::Track),
-        "album" => Some(ReplayGainMode::Album),
-        _ => None,
-    };
-    let lang_setting = db
-        .lock()
-        .unwrap()
-        .get_setting("language")
-        .unwrap_or_default();
-    let dyn_color_setting = db
-        .lock()
-        .unwrap()
-        .get_setting("dynamic_color")
-        .unwrap_or_default();
+    let replaygain_init_mode = replaygain::mode_from_setting(&replaygain_setting);
     let dyn_color_init = TintMode::from_setting(&dyn_color_setting);
     set_tint_mode(dyn_color_init);
-    let saved_vol: f64 = db
-        .lock()
-        .unwrap()
-        .get_setting("volume")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0.5);
     setup_css(!use_system_font);
 
     let window = adw::ApplicationWindow::builder()
@@ -233,6 +218,50 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     #[cfg(target_os = "windows")]
     window.set_decorated(false);
+
+    // --- Player ---
+    // Created before the settings popover because the ReplayGain and Language
+    // rows capture it. No audio device (CI/headless, missing ALSA, etc.) is
+    // recoverable enough to keep the rest of the app off the panic path: show
+    // a modal and exit cleanly instead of aborting with a stack trace.
+    let player: Rc<RefCell<Player>> = match Player::new() {
+        Ok(p) => Rc::new(RefCell::new(p)),
+        Err(e) => {
+            show_fatal_error(
+                app,
+                &gettext("Audio output unavailable"),
+                &format!(
+                    "{}\n\n{}",
+                    gettext("Audra could not initialise the audio engine."),
+                    e
+                ),
+            );
+            return;
+        }
+    };
+    player.borrow_mut().replaygain_mode = replaygain_init_mode;
+
+    // Switching language tears the window down and rebuilds it so every
+    // gettext string is re-evaluated; playback is stopped first because the
+    // rebuilt window creates a fresh Player.
+    let apply_language: Rc<dyn Fn(Option<&'static str>)> = Rc::new({
+        let player = Rc::clone(&player);
+        let db = Arc::clone(&db);
+        let app = app.clone();
+        let window = window.downgrade();
+        move |lang: Option<&'static str>| {
+            player.borrow_mut().stop();
+            let _ = db
+                .lock()
+                .unwrap()
+                .set_setting("language", lang.unwrap_or(""));
+            crate::i18n::init(lang);
+            if let Some(w) = window.upgrade() {
+                w.close();
+            }
+            build_window(&app, Arc::clone(&db));
+        }
+    });
 
     // --- Last.fm ---
     let lastfm: Arc<Mutex<Option<LastFmClient>>> = Arc::new(Mutex::new(None));
@@ -324,95 +353,68 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     font_row.append(&font_label);
     font_row.append(&font_switch);
 
-    let rg_row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
-    rg_row.set_margin_top(4);
-    rg_row.set_margin_bottom(4);
-    rg_row.set_margin_start(8);
-    rg_row.set_margin_end(8);
-    let rg_label = gtk4::Label::new(Some(&gettext("ReplayGain")));
-    rg_label.set_xalign(0.0);
-    rg_label.add_css_class("caption");
-    rg_label.add_css_class("dim-label");
-    let rg_btn_off = gtk4::ToggleButton::with_label(&gettext("Off"));
-    let rg_btn_track = gtk4::ToggleButton::with_label(&gettext("Track"));
-    let rg_btn_album = gtk4::ToggleButton::with_label(&gettext("Album"));
-    rg_btn_track.set_group(Some(&rg_btn_off));
-    rg_btn_album.set_group(Some(&rg_btn_off));
-    match replaygain_init_idx {
-        1 => rg_btn_track.set_active(true),
-        2 => rg_btn_album.set_active(true),
-        _ => rg_btn_off.set_active(true),
-    }
-    let rg_seg = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    rg_seg.add_css_class("linked");
-    rg_seg.append(&rg_btn_off);
-    rg_seg.append(&rg_btn_track);
-    rg_seg.append(&rg_btn_album);
-    rg_row.append(&rg_label);
-    rg_row.append(&rg_seg);
+    let rg_row = crate::ui::widgets::segmented_setting_row(
+        &gettext("ReplayGain"),
+        &[
+            (gettext("Off"), None),
+            (gettext("Track"), Some(ReplayGainMode::Track)),
+            (gettext("Album"), Some(ReplayGainMode::Album)),
+        ],
+        replaygain_init_mode,
+        {
+            let db = Arc::clone(&db);
+            let player = Rc::clone(&player);
+            move |mode| {
+                player.borrow_mut().replaygain_mode = mode;
+                let _ = db
+                    .lock()
+                    .unwrap()
+                    .set_setting("replaygain", replaygain::mode_as_setting(mode));
+            }
+        },
+    );
 
-    let dc_row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
-    dc_row.set_margin_top(4);
-    dc_row.set_margin_bottom(4);
-    dc_row.set_margin_start(8);
-    dc_row.set_margin_end(8);
-    let dc_label = gtk4::Label::new(Some(&gettext("Dynamic color")));
-    dc_label.set_xalign(0.0);
-    dc_label.add_css_class("caption");
-    dc_label.add_css_class("dim-label");
-    let dc_btn_off = gtk4::ToggleButton::with_label(&gettext("Off"));
-    let dc_btn_partial = gtk4::ToggleButton::with_label(&gettext("Partial"));
-    let dc_btn_full = gtk4::ToggleButton::with_label(&gettext("Full"));
-    dc_btn_partial.set_group(Some(&dc_btn_off));
-    dc_btn_full.set_group(Some(&dc_btn_off));
-    match dyn_color_init {
-        TintMode::Off => dc_btn_off.set_active(true),
-        TintMode::Partial => dc_btn_partial.set_active(true),
-        TintMode::Full => dc_btn_full.set_active(true),
-    }
-    let dc_seg = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    dc_seg.add_css_class("linked");
-    dc_seg.append(&dc_btn_off);
-    dc_seg.append(&dc_btn_partial);
-    dc_seg.append(&dc_btn_full);
-    dc_row.append(&dc_label);
-    dc_row.append(&dc_seg);
+    let dc_row = crate::ui::widgets::segmented_setting_row(
+        &gettext("Dynamic color"),
+        &[
+            (gettext("Off"), TintMode::Off),
+            (gettext("Partial"), TintMode::Partial),
+            (gettext("Full"), TintMode::Full),
+        ],
+        dyn_color_init,
+        {
+            let db = Arc::clone(&db);
+            move |mode: TintMode| {
+                let _ = db
+                    .lock()
+                    .unwrap()
+                    .set_setting("dynamic_color", mode.as_setting());
+                set_tint_mode(mode);
+            }
+        },
+    );
 
     let pop_sep3 = gtk4::Separator::new(gtk4::Orientation::Horizontal);
     pop_sep3.set_margin_top(14);
     pop_sep3.set_margin_bottom(3);
 
-    let lang_row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
-    lang_row.set_margin_top(4);
-    lang_row.set_margin_bottom(4);
-    lang_row.set_margin_start(8);
-    lang_row.set_margin_end(8);
-    let lang_label = gtk4::Label::new(Some(&gettext("Language")));
-    lang_label.set_xalign(0.0);
-    lang_label.add_css_class("caption");
-    lang_label.add_css_class("dim-label");
-
-    let lang_btn_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    lang_btn_box.add_css_class("linked");
-
-    let btn_lang_auto = ToggleButton::with_label("Auto");
-    let btn_lang_en = ToggleButton::with_label("English");
-    let btn_lang_es = ToggleButton::with_label("Español");
-    btn_lang_en.set_group(Some(&btn_lang_auto));
-    btn_lang_es.set_group(Some(&btn_lang_auto));
-
-    // Set initial state before connecting signals to avoid spurious rebuilds
-    match lang_setting.as_str() {
-        "en" => btn_lang_en.set_active(true),
-        "es" => btn_lang_es.set_active(true),
-        _ => btn_lang_auto.set_active(true),
-    }
-
-    lang_btn_box.append(&btn_lang_auto);
-    lang_btn_box.append(&btn_lang_en);
-    lang_btn_box.append(&btn_lang_es);
-    lang_row.append(&lang_label);
-    lang_row.append(&lang_btn_box);
+    let lang_row = crate::ui::widgets::segmented_setting_row(
+        &gettext("Language"),
+        &[
+            ("Auto".to_string(), None),
+            ("English".to_string(), Some("en")),
+            ("Español".to_string(), Some("es")),
+        ],
+        match lang_setting.as_str() {
+            "en" => Some("en"),
+            "es" => Some("es"),
+            _ => None,
+        },
+        {
+            let apply_language = Rc::clone(&apply_language);
+            move |lang| apply_language(lang)
+        },
+    );
 
     let item_reset = Button::new();
     item_reset.add_css_class("flat");
@@ -469,26 +471,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     btn_search.add_css_class("flat");
     header.pack_end(&btn_search);
 
-    // --- Player, vistas y estado compartido ---
-    // No audio device (CI/headless, missing ALSA, etc.) is recoverable enough
-    // to keep the rest of the app off the panic path: show a modal and exit
-    // cleanly instead of aborting with a stack trace.
-    let player: Rc<RefCell<Player>> = match Player::new() {
-        Ok(p) => Rc::new(RefCell::new(p)),
-        Err(e) => {
-            show_fatal_error(
-                app,
-                &gettext("Audio output unavailable"),
-                &format!(
-                    "{}\n\n{}",
-                    gettext("Audra could not initialise the audio engine."),
-                    e
-                ),
-            );
-            return;
-        }
-    };
-    player.borrow_mut().replaygain_mode = replaygain_init_mode;
+    // --- Vistas y estado compartido ---
     // Single source of truth for "what's currently playing". All track lists
     // subscribe to this bus and update their `.playing` row indicator in sync.
     let now_playing = NowPlaying::new();
@@ -721,124 +704,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
                 .set_setting("use_system_font", if state { "1" } else { "0" });
             update_font(!state);
             glib::Propagation::Proceed
-        }
-    ));
-
-    rg_btn_off.connect_toggled(clone!(
-        #[strong]
-        db,
-        #[strong]
-        player,
-        move |btn| {
-            if btn.is_active() {
-                player.borrow_mut().replaygain_mode = None;
-                let _ = db.lock().unwrap().set_setting("replaygain", "off");
-            }
-        }
-    ));
-    rg_btn_track.connect_toggled(clone!(
-        #[strong]
-        db,
-        #[strong]
-        player,
-        move |btn| {
-            if btn.is_active() {
-                player.borrow_mut().replaygain_mode = Some(ReplayGainMode::Track);
-                let _ = db.lock().unwrap().set_setting("replaygain", "track");
-            }
-        }
-    ));
-    rg_btn_album.connect_toggled(clone!(
-        #[strong]
-        db,
-        #[strong]
-        player,
-        move |btn| {
-            if btn.is_active() {
-                player.borrow_mut().replaygain_mode = Some(ReplayGainMode::Album);
-                let _ = db.lock().unwrap().set_setting("replaygain", "album");
-            }
-        }
-    ));
-
-    let apply_tint_mode = |db: &Arc<Mutex<Database>>, mode: TintMode| {
-        let _ = db
-            .lock()
-            .unwrap()
-            .set_setting("dynamic_color", mode.as_setting());
-        set_tint_mode(mode);
-    };
-    dc_btn_off.connect_toggled(clone!(
-        #[strong]
-        db,
-        move |btn| {
-            if btn.is_active() {
-                apply_tint_mode(&db, TintMode::Off);
-            }
-        }
-    ));
-    dc_btn_partial.connect_toggled(clone!(
-        #[strong]
-        db,
-        move |btn| {
-            if btn.is_active() {
-                apply_tint_mode(&db, TintMode::Partial);
-            }
-        }
-    ));
-    dc_btn_full.connect_toggled(clone!(
-        #[strong]
-        db,
-        move |btn| {
-            if btn.is_active() {
-                apply_tint_mode(&db, TintMode::Full);
-            }
-        }
-    ));
-
-    let apply_language: Rc<dyn Fn(Option<&'static str>)> = Rc::new({
-        let player = Rc::clone(&player);
-        let db = Arc::clone(&db);
-        let app = app.clone();
-        let window = window.downgrade();
-        move |lang: Option<&'static str>| {
-            player.borrow_mut().stop();
-            let _ = db
-                .lock()
-                .unwrap()
-                .set_setting("language", lang.unwrap_or(""));
-            crate::i18n::init(lang);
-            if let Some(w) = window.upgrade() {
-                w.close();
-            }
-            build_window(&app, Arc::clone(&db));
-        }
-    });
-    btn_lang_auto.connect_toggled(clone!(
-        #[strong]
-        apply_language,
-        move |btn| {
-            if btn.is_active() {
-                apply_language(None);
-            }
-        }
-    ));
-    btn_lang_en.connect_toggled(clone!(
-        #[strong]
-        apply_language,
-        move |btn| {
-            if btn.is_active() {
-                apply_language(Some("en"));
-            }
-        }
-    ));
-    btn_lang_es.connect_toggled(clone!(
-        #[strong]
-        apply_language,
-        move |btn| {
-            if btn.is_active() {
-                apply_language(Some("es"));
-            }
         }
     ));
 

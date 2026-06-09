@@ -183,6 +183,60 @@ pub fn page_title_row(text: &str, navigable: bool) -> GtkBox {
     row
 }
 
+/// Settings-popover "segmented" row: a caption label over a linked group of
+/// mutually exclusive toggle buttons (ReplayGain, Dynamic color, Language…).
+/// `options` pairs each button label with the value it represents; the row
+/// marks `initial` active *without* firing `on_change`, then calls
+/// `on_change(value)` whenever the user picks a different segment.
+pub fn segmented_setting_row<T: Copy + PartialEq + 'static>(
+    label: &str,
+    options: &[(String, T)],
+    initial: T,
+    on_change: impl Fn(T) + 'static,
+) -> GtkBox {
+    let row = GtkBox::new(Orientation::Vertical, 4);
+    row.set_margin_top(4);
+    row.set_margin_bottom(4);
+    row.set_margin_start(8);
+    row.set_margin_end(8);
+
+    let lbl = Label::new(Some(label));
+    lbl.set_xalign(0.0);
+    lbl.add_css_class("caption");
+    lbl.add_css_class("dim-label");
+
+    let seg = GtkBox::new(Orientation::Horizontal, 0);
+    seg.add_css_class("linked");
+
+    let on_change = Rc::new(on_change);
+    let mut group_leader: Option<ToggleButton> = None;
+    for (text, value) in options {
+        let btn = ToggleButton::with_label(text);
+        match &group_leader {
+            Some(leader) => btn.set_group(Some(leader)),
+            None => group_leader = Some(btn.clone()),
+        }
+        // Activate the initial segment before connecting the handler, so
+        // building the row never fires on_change (a spurious fire here can
+        // trigger heavy work like a full window rebuild for Language).
+        if *value == initial {
+            btn.set_active(true);
+        }
+        let value = *value;
+        let cb = Rc::clone(&on_change);
+        btn.connect_toggled(move |b| {
+            if b.is_active() {
+                cb(value);
+            }
+        });
+        seg.append(&btn);
+    }
+
+    row.append(&lbl);
+    row.append(&seg);
+    row
+}
+
 /// "Play all" action button: themed accent (follows the system color), with
 /// a play glyph next to the label. No `pill` so the corners are the default
 /// Adwaita radius — compact, recognisable, single definition used by Songs,
