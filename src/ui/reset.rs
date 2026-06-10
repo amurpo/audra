@@ -45,7 +45,7 @@ pub fn show_reset_dialog(
                     let _ = views.db.lock().unwrap().clear_library();
                 }
                 library::metadata::clear_cover_cache();
-                let folder = views.db.lock().unwrap().get_setting("music_folder");
+                let folder = views.db.lock().unwrap().music_folder();
                 if let Some(folder) = folder {
                     start_scan(folder, views.clone(), loading_box.clone(), spinner.clone());
                 } else {

@@ -18,10 +18,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use crate::i18n::gettext;
-use crate::player::{
-    replaygain::{self, ReplayGainMode},
-    Player,
-};
+use crate::player::{replaygain::ReplayGainMode, Player};
 use crate::scrobbler::LastFmClient;
 use crate::ui::lastfm_dialog::show_lastfm_dialog;
 use crate::ui::main_window::{start_scan, Views};
@@ -144,7 +141,7 @@ pub(crate) fn build(ctx: SettingsMenuCtx) -> MenuButton {
         scan_spinner,
         move |_| {
             popover.popdown();
-            if let Some(folder) = views.db.lock().unwrap().get_setting("music_folder") {
+            if let Some(folder) = views.db.lock().unwrap().music_folder() {
                 start_scan(folder, views.clone(), scan_loading_box, scan_spinner);
             }
         }
@@ -194,10 +191,7 @@ pub(crate) fn build(ctx: SettingsMenuCtx) -> MenuButton {
         #[strong]
         db,
         move |_, state| {
-            let _ = db
-                .lock()
-                .unwrap()
-                .set_setting("use_system_font", if state { "1" } else { "0" });
+            let _ = db.lock().unwrap().set_use_system_font(state);
             update_font(!state);
             glib::Propagation::Proceed
         }
@@ -218,10 +212,7 @@ pub(crate) fn build(ctx: SettingsMenuCtx) -> MenuButton {
             let player = Rc::clone(&player);
             move |mode| {
                 player.borrow_mut().replaygain_mode = mode;
-                let _ = db
-                    .lock()
-                    .unwrap()
-                    .set_setting("replaygain", replaygain::mode_as_setting(mode));
+                let _ = db.lock().unwrap().set_replaygain(mode);
             }
         },
     );
@@ -237,10 +228,7 @@ pub(crate) fn build(ctx: SettingsMenuCtx) -> MenuButton {
         {
             let db = Arc::clone(&db);
             move |mode: TintMode| {
-                let _ = db
-                    .lock()
-                    .unwrap()
-                    .set_setting("dynamic_color", mode.as_setting());
+                let _ = db.lock().unwrap().set_dynamic_color(mode);
                 set_tint_mode(mode);
             }
         },

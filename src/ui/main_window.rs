@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::i18n::gettext;
 use crate::library::{self, db::Database, scanner};
-use crate::player::{replaygain, Player};
+use crate::player::Player;
 use crate::scrobbler::LastFmClient;
 use crate::ui::albums_view::AlbumsView;
 use crate::ui::artists_view::ArtistsView;
@@ -21,7 +21,7 @@ use crate::ui::playback::{
     wire_transport_controls, CoverIndex, PlaybackCtx, ScrobbleTracker,
 };
 use crate::ui::player_bar::PlayerBar;
-use crate::ui::theme::{set_tint_mode, setup_css, TintMode};
+use crate::ui::theme::{set_tint_mode, setup_css};
 
 /// The library views plus the DB handle and the shared cover index — the
 /// bundle of state the scan/reload paths always pass around together. Grouping
@@ -41,10 +41,7 @@ pub(crate) struct Views {
 pub(crate) fn reload_all_views(views: &Views) {
     let (all, music_folder) = {
         let g = views.db.lock().unwrap();
-        (
-            g.all_tracks().unwrap_or_default(),
-            g.get_setting("music_folder"),
-        )
+        (g.all_tracks().unwrap_or_default(), g.music_folder())
     };
     let albums = library::group_into_albums(&all, music_folder.as_deref());
     let artists = library::group_into_artists(&albums);
@@ -92,7 +89,7 @@ pub(crate) fn start_scan(
             let _ = db_g.upsert_tracks(&result.tracks);
             let norm_folder: std::path::PathBuf =
                 std::path::Path::new(&scan_path).components().collect();
-            let _ = db_g.set_setting("music_folder", &norm_folder.to_string_lossy());
+            let _ = db_g.set_music_folder(&norm_folder.to_string_lossy());
             let removed = db_g
                 .remove_missing_from_folder(&scan_path, &result.found_paths)
                 .unwrap_or(0);
@@ -178,20 +175,16 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // the icon is already installed (the theme finds it there first).
     register_app_icon();
     // Read every persisted setting the window needs in one lock, one pass.
-    let (use_system_font, replaygain_setting, lang_setting, dyn_color_setting, saved_vol) = {
+    let (use_system_font, replaygain_init_mode, saved_lang, dyn_color_init, saved_vol) = {
         let g = db.lock().unwrap();
         (
-            g.get_setting("use_system_font").as_deref() == Some("1"),
-            g.get_setting("replaygain").unwrap_or_default(),
-            g.get_setting("language").unwrap_or_default(),
-            g.get_setting("dynamic_color").unwrap_or_default(),
-            g.get_setting("volume")
-                .and_then(|s| s.parse::<f64>().ok())
-                .unwrap_or(0.5),
+            g.use_system_font(),
+            g.replaygain(),
+            g.language(),
+            g.dynamic_color(),
+            g.volume(),
         )
     };
-    let replaygain_init_mode = replaygain::mode_from_setting(&replaygain_setting);
-    let dyn_color_init = TintMode::from_setting(&dyn_color_setting);
     set_tint_mode(dyn_color_init);
     setup_css(!use_system_font);
 
@@ -238,10 +231,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         let window = window.downgrade();
         move |lang: Option<&'static str>| {
             player.borrow_mut().stop();
-            let _ = db
-                .lock()
-                .unwrap()
-                .set_setting("language", lang.unwrap_or(""));
+            let _ = db.lock().unwrap().set_language(lang);
             crate::i18n::init(lang);
             if let Some(w) = window.upgrade() {
                 w.close();
@@ -255,10 +245,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     {
         if LastFmClient::is_configured() {
             let db_g = db.lock().unwrap();
-            if let Some(sk) = db_g
-                .get_setting("lastfm_session_key")
-                .filter(|s| !s.is_empty())
-            {
+            if let Some(sk) = db_g.lastfm_session_key() {
                 *lastfm.lock().unwrap() = Some(LastFmClient::new().with_session(&sk));
             }
         }
@@ -455,9 +442,9 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         use_system_font,
         replaygain_init: replaygain_init_mode,
         dyn_color_init,
-        lang_init: match lang_setting.as_str() {
-            "en" => Some("en"),
-            "es" => Some("es"),
+        lang_init: match saved_lang.as_deref() {
+            Some("en") => Some("en"),
+            Some("es") => Some("es"),
             _ => None,
         },
     });
@@ -532,7 +519,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             let timer = Rc::clone(&vol_save_timer);
             let id = glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
                 timer.borrow_mut().take();
-                let _ = db.lock().unwrap().set_setting("volume", &value.to_string());
+                let _ = db.lock().unwrap().set_volume(value);
             });
             *vol_save_timer.borrow_mut() = Some(id);
         }

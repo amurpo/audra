@@ -162,13 +162,10 @@ pub fn show_lastfm_dialog(
 
     {
         let db_g = db.lock().unwrap();
-        let username_val = db_g.get_setting("lastfm_username").unwrap_or_default();
-        let connected = db_g
-            .get_setting("lastfm_session_key")
-            .map(|k| !k.is_empty())
-            .unwrap_or(false);
-        if connected && !username_val.is_empty() {
-            ok_status.set_description(Some(&username_val));
+        let username_val = db_g.lastfm_username();
+        let connected = db_g.lastfm_session_key().is_some();
+        if let Some(username) = username_val.filter(|_| connected) {
+            ok_status.set_description(Some(&username));
             stack.set_visible_child_name("connected");
         } else {
             stack.set_visible_child_name("authorize");
@@ -264,8 +261,7 @@ pub fn show_lastfm_dialog(
                 Ok(r) => {
                     {
                         let db_g = db2.lock().unwrap();
-                        let _ = db_g.set_setting("lastfm_session_key", &r.session_key);
-                        let _ = db_g.set_setting("lastfm_username", &r.username);
+                        let _ = db_g.set_lastfm_session(&r.session_key, &r.username);
                     }
                     let new_client = LastFmClient::new().with_session(&r.session_key);
                     *lastfm2.lock().unwrap() = Some(new_client);
@@ -328,9 +324,7 @@ pub fn show_lastfm_dialog(
         lastfm,
         move |_| {
             {
-                let db_g = db.lock().unwrap();
-                let _ = db_g.delete_setting("lastfm_session_key");
-                let _ = db_g.delete_setting("lastfm_username");
+                let _ = db.lock().unwrap().clear_lastfm_session();
             }
             *lastfm.lock().unwrap() = None;
             stack.set_visible_child_name("authorize");
