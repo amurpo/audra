@@ -196,6 +196,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // register that dir with the icon theme. This is a no-op on systems where
     // the icon is already installed (the theme finds it there first).
     register_app_icon();
+    crate::ui::icons::init_icon_theme();
     // Read every persisted setting the window needs in one lock, one pass.
     let (use_system_font, replaygain_init_mode, saved_lang, dyn_color_init, saved_vol) = {
         let g = db.lock().unwrap();

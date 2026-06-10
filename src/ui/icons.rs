@@ -284,6 +284,9 @@ mod backend {
             });
         }
     }
+
+    /// No themed lookups on macOS — the bundled Remix SVGs are used directly.
+    pub fn init_icon_theme() {}
 }
 
 // ---------------------------------------------------------------------------
@@ -310,6 +313,19 @@ mod backend {
     pub fn set_status_page_icon(page: &adw::StatusPage, icon: Icon, _size: i32) {
         page.set_icon_name(Some(icon.icon_name()));
     }
+
+    /// Pin the app's icon theme to Adwaita. The UI is designed against the
+    /// Adwaita symbolic set (16px grid, its stroke weight); a system icon
+    /// theme like Breeze resolves the same freedesktop names to glyphs drawn
+    /// on a different grid, which render soft and misaligned at the 16/20px
+    /// sizes the app requests. This is a per-app override on `GtkSettings` —
+    /// the user's system-wide icon theme is untouched, and lookups still
+    /// fall back to hicolor (where the app icon lives).
+    pub fn init_icon_theme() {
+        if let Some(settings) = gtk4::Settings::default() {
+            settings.set_gtk_icon_theme_name(Some("Adwaita"));
+        }
+    }
 }
 
-pub use backend::{image, set_image_icon, set_status_page_icon};
+pub use backend::{image, init_icon_theme, set_image_icon, set_status_page_icon};
