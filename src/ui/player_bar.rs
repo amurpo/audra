@@ -96,8 +96,9 @@ impl PlayerBar {
         // --- Centre column: controls stacked on top of title/artist ---
         // Vertically centered against the cover so the controls drop a few
         // pixels below the cover's top edge instead of sticking to it; the
-        // title sits naturally beneath the controls.
-        let center = Box::new(Orientation::Vertical, 2);
+        // title sits beneath the controls with a touch of air (the 16px play
+        // glyph otherwise reads as glued to the song title).
+        let center = Box::new(Orientation::Vertical, 4);
         center.set_hexpand(true);
         center.set_valign(Align::Center);
 
