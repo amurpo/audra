@@ -78,37 +78,59 @@ pub(crate) fn start_scan(
     // once the worker signals it is done.
     let scan_path = folder_path;
     let db_worker = Arc::clone(&views.db);
-    let (tx, rx) = async_channel::bounded::<()>(1);
+    let (tx, rx) = async_channel::bounded::<Result<(), String>>(1);
     std::thread::spawn(move || {
         // Incremental rescan: files whose stored mtime matches are not
         // re-read; only new/changed files pay the tag-parsing cost.
         let known_mtimes = db_worker.lock().unwrap().path_mtimes().unwrap_or_default();
         let result = scanner::scan_folder(&scan_path, &known_mtimes);
-        {
+        let outcome = {
             let db_g = db_worker.lock().unwrap();
-            let _ = db_g.upsert_tracks(&result.tracks);
-            let norm_folder: std::path::PathBuf =
-                std::path::Path::new(&scan_path).components().collect();
-            let _ = db_g.set_music_folder(&norm_folder.to_string_lossy());
-            let removed = db_g
-                .remove_missing_from_folder(&scan_path, &result.found_paths)
-                .unwrap_or(0);
-            if removed > 0 {
-                log::info!("sync: eliminados {} registros obsoletos", removed);
+            // A failed write here is the difference between "library" and
+            // "silently empty library", so it is reported, not discarded.
+            match db_g.upsert_tracks(&result.tracks) {
+                Ok(()) => {
+                    let norm_folder: std::path::PathBuf =
+                        std::path::Path::new(&scan_path).components().collect();
+                    let _ = db_g.set_music_folder(&norm_folder.to_string_lossy());
+                    let removed = db_g
+                        .remove_missing_from_folder(&scan_path, &result.found_paths)
+                        .unwrap_or(0);
+                    if removed > 0 {
+                        log::info!("sync: eliminados {} registros obsoletos", removed);
+                    }
+                    Ok(())
+                }
+                Err(e) => Err(e.to_string()),
             }
-        }
-        let _ = tx.send_blocking(());
+        };
+        let _ = tx.send_blocking(outcome);
     });
 
     // No polling: this future sleeps in the main loop until the worker sends
     // (or panics, which drops the sender and yields Err).
     glib::spawn_future_local(async move {
-        if rx.recv().await.is_ok() {
-            reload_all_views(&views);
-        }
+        let outcome = rx.recv().await;
         loading_box.set_visible(false);
         spinner.stop();
+        match outcome {
+            Ok(Ok(())) => reload_all_views(&views),
+            Ok(Err(detail)) => show_scan_error(&loading_box, &detail),
+            // The sender was dropped without a message: the worker panicked.
+            Err(_) => show_scan_error(&loading_box, &gettext("The scan stopped unexpectedly.")),
+        }
     });
+}
+
+/// Non-fatal error dialog for a scan whose results could not be saved.
+/// `parent` is any widget inside the main window; the dialog resolves the
+/// window from its root.
+fn show_scan_error(parent: &impl IsA<gtk4::Widget>, detail: &str) {
+    let dialog = adw::AlertDialog::new(Some(&gettext("Could not update the library")), Some(detail));
+    dialog.add_response("ok", "OK");
+    dialog.set_default_response(Some("ok"));
+    dialog.set_close_response("ok");
+    dialog.present(Some(parent));
 }
 
 /// Present a modal error dialog and quit the application when it closes.

@@ -61,6 +61,12 @@ msgstr "Escaneando colección…"
 msgid "This may take a moment"
 msgstr "Esto puede tomar un momento"
 
+msgid "Could not update the library"
+msgstr "No se pudo actualizar la biblioteca"
+
+msgid "The scan stopped unexpectedly."
+msgstr "El escaneo se detuvo inesperadamente."
+
 msgid "Shuffle"
 msgstr "Aleatorio"
 
