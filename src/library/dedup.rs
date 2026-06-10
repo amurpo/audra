@@ -83,6 +83,17 @@ fn find_disc_marker(name: &str) -> Option<(usize, usize)> {
     best
 }
 
+/// Disc number carried by `name`'s disc marker, if any ("X [disc3]" → 3).
+fn disc_marker_number(name: &str) -> Option<i64> {
+    let (start, end) = find_disc_marker(name)?;
+    name[start..end]
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .ok()
+}
+
 /// Collapse doubled spaces, drop bracket pairs the marker removal left empty
 /// (`"X ( )"` → `"X"`), re-glue brackets to their content (`"[ Live]"` →
 /// `"[Live]"`) and trim stray trailing separators.
@@ -417,20 +428,10 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
         }
 
         for (_gkey, members) in groups {
-            let mut tracks: Vec<Track> = members.iter().map(|(_, t)| (*t).clone()).collect();
-            tracks.sort_by_key(|t| {
-                (
-                    t.disc_num.unwrap_or(1),
-                    t.track_num.unwrap_or(999),
-                    t.path.clone(),
-                )
-            });
-            // Prefer a real album tag for display. A group that actually
-            // folded several distinct raw tags is a multi-disc merge and gets
-            // titled by the disc-stripped base; a single release keeps its
-            // literal title even when it merely *looks* like a disc marker
-            // ("Mafia: Disc 2" is a name, not disc 2 of "Mafia"). Same rule
-            // for the folder-label fallback when there are no tags.
+            // Did this group actually dedup? Only when it folded several
+            // distinct raw album tags. Everything below — disc synthesis and
+            // the stripped display title — is gated on that, so untouched
+            // single releases pass through verbatim.
             let raw_tags: Vec<&str> = members
                 .iter()
                 .filter_map(|(_, t)| t.album.as_deref())
@@ -440,7 +441,37 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
                 .map(|s| normalize(s))
                 .filter(|s| !s.is_empty())
                 .collect();
-            let name = if distinct_raw.len() > 1 {
+            let folded = distinct_raw.len() > 1;
+
+            let mut tracks: Vec<Track> = members
+                .iter()
+                .map(|(_, t)| {
+                    let mut tr = (*t).clone();
+                    // Folded multi-disc rips often carry the disc number only
+                    // in the per-disc album tag ("…, Disk 3"), not as a
+                    // disc_num tag. Fill it in on the *cloned* track from DB
+                    // data alone — folder names are deliberately not
+                    // consulted — so cross-disc ordering and the per-disc
+                    // headers in the album view work.
+                    if folded && tr.disc_num.is_none() {
+                        tr.disc_num = t.album.as_deref().and_then(disc_marker_number);
+                    }
+                    tr
+                })
+                .collect();
+            tracks.sort_by_key(|t| {
+                (
+                    t.disc_num.unwrap_or(1),
+                    t.track_num.unwrap_or(999),
+                    t.path.clone(),
+                )
+            });
+            // Prefer a real album tag for display. A group that folded gets
+            // titled by the disc-stripped base; a single release keeps its
+            // literal title even when it merely *looks* like a disc marker
+            // ("Mafia: Disc 2" is a name, not disc 2 of "Mafia"). Same rule
+            // for the folder-label fallback when there are no tags.
+            let name = if folded {
                 let stripped: Vec<String> = raw_tags
                     .iter()
                     .map(|s| strip_disc_marker(s))
@@ -745,6 +776,52 @@ mod tests {
         assert_eq!(albums[0].tracks.len(), 8);
         // And the merged album is not titled after one of its discs.
         assert_eq!(albums[0].name, "Final Fantasy VIII Original Soundtrack");
+        // No disc_num tags in this rip: the number from the folder marker is
+        // synthesised onto the grouped tracks, so discs order correctly
+        // (disc 1 tracks 1,2 — disc 2 tracks 1,2 — …) instead of interleaving
+        // every disc's track 1 first.
+        let order: Vec<(Option<i64>, Option<i64>)> = albums[0]
+            .tracks
+            .iter()
+            .map(|t| (t.disc_num, t.track_num))
+            .collect();
+        let expected: Vec<(Option<i64>, Option<i64>)> = (1..=4)
+            .flat_map(|d| (1..=2).map(move |n| (Some(d), Some(n))))
+            .collect();
+        assert_eq!(order, expected);
+    }
+
+    #[test]
+    fn three_level_disc_subfolders_get_synthesised_disc_numbers() {
+        // The real FF VIII rip shape: Artist/Album/cdN/track.mp3 — one album
+        // folder, per-disc subfolders, per-disc tags, and NO disc_num tag.
+        // Because the group folds, the disc number is synthesised from the
+        // per-disc album tag (DB data only; folder names are not consulted)
+        // so the album orders disc by disc instead of interleaving.
+        let mf = Some("/Music");
+        let mut tracks = Vec::new();
+        for d in 1..=4 {
+            for n in 1..=2 {
+                tracks.push(t(
+                    &format!("/Music/Nobuo Uematsu/Final Fantasy VIII OST/cd{d}/{n}.mp3"),
+                    "Nobuo Uematsu",
+                    &format!("\"Final Fantasy VIII\" Original Soundtrack, Disk {d}"),
+                    n,
+                ));
+            }
+        }
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1, "the four cdN subfolders must fold");
+        assert_eq!(albums[0].name, "\"Final Fantasy VIII\" Original Soundtrack");
+        let order: Vec<(Option<i64>, Option<i64>)> = albums[0]
+            .tracks
+            .iter()
+            .map(|t| (t.disc_num, t.track_num))
+            .collect();
+        let expected: Vec<(Option<i64>, Option<i64>)> = (1..=4)
+            .flat_map(|d| (1..=2).map(move |n| (Some(d), Some(n))))
+            .collect();
+        assert_eq!(order, expected);
     }
 
     #[test]
@@ -792,6 +869,9 @@ mod tests {
         let albums = group_albums(&tracks, mf);
         assert_eq!(albums.len(), 1);
         assert_eq!(albums[0].name, "Mafia: Disc 2");
+        // No dedup happened, so nothing is synthesised either: the disc-like
+        // name must not leak a disc number onto the tracks.
+        assert!(albums[0].tracks.iter().all(|t| t.disc_num.is_none()));
     }
 
     #[test]
