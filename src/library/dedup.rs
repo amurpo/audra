@@ -46,49 +46,98 @@ pub fn normalize(s: &str) -> String {
     out
 }
 
-/// Strip a trailing/embedded disc marker so `… Disco 1`, `… (CD 2)`,
-/// `… [disc1]`, `… cd 3` all fold to the same album base. Returns the input
-/// untouched when no marker is found.
-pub fn strip_disc_marker(name: &str) -> String {
-    let lower = name.to_lowercase();
-    let bytes = lower.as_bytes();
-    let mut best: Option<usize> = None;
-    for kw in ["disco", "disc", "cd"] {
-        let mut from = 0;
-        while let Some(rel) = lower[from..].find(kw) {
-            let start = from + rel;
-            // Word boundary on the left.
-            let left_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-            let mut i = start + kw.len();
-            while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'.') {
+/// Byte range of the first disc marker (`Disco 1`, `disc1`, `Disk 3`, `CD 2`)
+/// in `name`: keyword at a word boundary, optional spaces/dots, then digits
+/// not glued to more letters (so `CD 20th Anniversary` is NOT a marker).
+/// Keywords are ASCII, so scanning the raw bytes case-insensitively is safe
+/// on any UTF-8 input and every returned index sits on a char boundary.
+fn find_disc_marker(name: &str) -> Option<(usize, usize)> {
+    let raw = name.as_bytes();
+    let mut best: Option<(usize, usize)> = None;
+    for kw in ["disco", "disc", "disk", "cd"] {
+        let kb = kw.as_bytes();
+        if raw.len() < kb.len() {
+            continue;
+        }
+        for start in 0..=raw.len() - kb.len() {
+            if !raw[start..start + kb.len()].eq_ignore_ascii_case(kb) {
+                continue;
+            }
+            if start > 0 && raw[start - 1].is_ascii_alphanumeric() {
+                continue;
+            }
+            let mut i = start + kb.len();
+            while i < raw.len() && (raw[i] == b' ' || raw[i] == b'.') {
                 i += 1;
             }
             let digits_start = i;
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
+            while i < raw.len() && raw[i].is_ascii_digit() {
                 i += 1;
             }
-            if left_ok && i > digits_start {
-                best = Some(match best {
-                    Some(b) => b.min(start),
-                    None => start,
-                });
+            let followed_by_word = i < raw.len() && raw[i].is_ascii_alphanumeric();
+            if i > digits_start && !followed_by_word && best.is_none_or(|(bs, _)| start < bs) {
+                best = Some((start, i));
             }
-            from = start + kw.len();
         }
     }
-    match best {
-        Some(cut) => {
-            // Also drop opening bracket/paren and separators just before it.
-            let mut end = cut;
-            let raw = name.as_bytes();
-            while end > 0 && matches!(raw[end - 1], b' ' | b'-' | b'_' | b'(' | b'[' | b'{' | b'.')
-            {
-                end -= 1;
-            }
-            name[..end].trim().to_string()
-        }
-        None => name.trim().to_string(),
+    best
+}
+
+/// Collapse doubled spaces, drop bracket pairs the marker removal left empty
+/// (`"X ( )"` → `"X"`), re-glue brackets to their content (`"[ Live]"` →
+/// `"[Live]"`) and trim stray trailing separators.
+fn tidy_after_strip(s: &str) -> String {
+    let mut out = s.to_string();
+    for (from, to) in [("( ", "("), (" )", ")"), ("[ ", "["), (" ]", "]"), ("{ ", "{"), (" }", "}")] {
+        out = out.replace(from, to);
     }
+    for empty in ["()", "[]", "{}"] {
+        out = out.replace(empty, "");
+    }
+    let mut res = String::with_capacity(out.len());
+    let mut prev_space = false;
+    for ch in out.trim().chars() {
+        if ch == ' ' {
+            if !prev_space {
+                res.push(' ');
+            }
+            prev_space = true;
+        } else {
+            res.push(ch);
+            prev_space = false;
+        }
+    }
+    res.trim_end_matches([' ', ',', '-', ':']).to_string()
+}
+
+/// Strip a disc marker so `… Disco 1`, `… (CD 2)`, `… [disc1]`, `… Disk 3`
+/// all fold to the same album base. Text around the marker survives:
+/// `"X [Disc 1 - Live]"` → `"X [Live]"`, so editions distinguished by a
+/// subtitle do not collapse into the plain release. Returns the input
+/// untouched when no marker is found.
+pub fn strip_disc_marker(name: &str) -> String {
+    let Some((mstart, mend)) = find_disc_marker(name) else {
+        return name.trim().to_string();
+    };
+    let raw = name.as_bytes();
+    // Swallow the separator chain gluing the marker to a following subtitle
+    // ("Disc 1 - Subtitle" → "Subtitle") …
+    let mut r = mend;
+    while r < raw.len() && raw[r] == b' ' {
+        r += 1;
+    }
+    if r < raw.len() && matches!(raw[r], b'-' | b':' | b',' | b'.') {
+        r += 1;
+        while r < raw.len() && raw[r] == b' ' {
+            r += 1;
+        }
+    }
+    // … and the one gluing it to what precedes ("Album, Disk 1" → "Album").
+    let mut l = mstart;
+    while l > 0 && matches!(raw[l - 1], b' ' | b'-' | b'_' | b'.' | b',' | b':') {
+        l -= 1;
+    }
+    tidy_after_strip(&format!("{} {}", &name[..l], &name[r..]))
 }
 
 /// Fold a single path component to a filesystem-equality key.
@@ -168,7 +217,12 @@ struct Derived {
     artist_key: String,
     artist_label: String,
     album_key: String,
+    /// Disc-stripped label, the grouping base.
     album_label: String,
+    /// The label as it appears on disk/tags. Kept so a single release whose
+    /// name merely *looks* like a disc marker ("Mafia: Disc 2") can keep its
+    /// literal title.
+    album_label_raw: String,
 }
 
 fn derive(track: &Track, music_folder: Option<&str>) -> Derived {
@@ -193,35 +247,36 @@ fn derive(track: &Track, music_folder: Option<&str>) -> Derived {
         Some(dirs) if !dirs.is_empty() => {
             let folder_name = dirs[0].clone();
             let artist_label = display_artist.unwrap_or_else(|| folder_name.clone());
-            let (album_label, _from_folder) = if dirs.len() >= 2 {
-                (strip_disc_marker(&dirs[1]), true)
+            let album_label_raw = if dirs.len() >= 2 {
+                dirs[1].clone()
             } else {
-                (
-                    track
-                        .album
-                        .clone()
-                        .filter(|s| !s.trim().is_empty())
-                        .unwrap_or_default(),
-                    false,
-                )
+                track
+                    .album
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_default()
             };
+            let album_label = strip_disc_marker(&album_label_raw);
             Derived {
                 artist_key: normalize(&folder_name),
                 artist_label,
                 album_key: normalize(&album_label),
                 album_label,
+                album_label_raw,
             }
         }
         // Outside the music folder (or none configured): pure tag grouping,
-        // i.e. the historical behaviour.
+        // i.e. the historical behaviour (plus the same disc-marker fold).
         _ => {
             let artist = track.display_artist();
-            let album = track.display_album();
+            let album_label_raw = track.display_album();
+            let album_label = strip_disc_marker(&album_label_raw);
             Derived {
                 artist_key: normalize(&artist),
                 artist_label: display_artist.unwrap_or(artist),
-                album_key: normalize(&album),
-                album_label: album,
+                album_key: normalize(&album_label),
+                album_label,
+                album_label_raw,
             }
         }
     }
@@ -274,6 +329,17 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
         // Stage 2: bucket by canonical album within the artist. A folder with
         // several distinct album tags is a mixed folder and gets subdivided by
         // the album tag instead of collapsing into one release.
+        //
+        // Tags are compared disc-stripped: multi-disc rips usually carry the
+        // disc number in the per-disc album tag ("X, Disk 1" … "X, Disk 4"),
+        // and comparing the raw tags here would re-split exactly what the
+        // folder-level disc fold just joined.
+        let tag_key_of = |t: &Track| {
+            t.album
+                .as_deref()
+                .map(|a| normalize(&strip_disc_marker(a)))
+                .filter(|s| !s.is_empty())
+        };
         rows.sort_by(|a, b| a.0.album_key.cmp(&b.0.album_key));
         // Pre-accumulate, per album key, the set of distinct non-empty album
         // tags. Done once here so the grouping loop stays O(1) per track
@@ -282,7 +348,7 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
         // Various Artists bucket).
         let mut tags_by_album: HashMap<&str, std::collections::HashSet<String>> = HashMap::new();
         for (d, t) in &rows {
-            if let Some(tag) = t.album.as_deref().map(normalize).filter(|s| !s.is_empty()) {
+            if let Some(tag) = tag_key_of(t) {
                 tags_by_album
                     .entry(d.album_key.as_str())
                     .or_default()
@@ -291,7 +357,7 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
         }
         let mut groups: HashMap<String, Vec<(&Derived, &Track)>> = HashMap::new();
         for (d, t) in &rows {
-            let tag_key = t.album.as_deref().map(normalize).filter(|s| !s.is_empty());
+            let tag_key = tag_key_of(t);
             // Subdivide only when the folder genuinely holds >1 album tag.
             let multi_tag = tags_by_album
                 .get(d.album_key.as_str())
@@ -319,7 +385,11 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
         {
             let mut by_tag_norm: HashMap<String, Vec<String>> = HashMap::new();
             for (key, members) in &groups {
-                let tag_norm = dominant(members.iter().filter_map(|(_, t)| t.album.as_deref()))
+                let stripped: Vec<String> = members
+                    .iter()
+                    .filter_map(|(_, t)| t.album.as_deref().map(strip_disc_marker))
+                    .collect();
+                let tag_norm = dominant(stripped.iter().map(String::as_str))
                     .map(|s| normalize(&s))
                     .unwrap_or_default();
                 if !tag_norm.is_empty() {
@@ -355,16 +425,47 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
                     t.path.clone(),
                 )
             });
-            // Prefer a real album tag for display; fall back to the (disc
-            // stripped) folder label.
-            let name = dominant(members.iter().filter_map(|(_, t)| t.album.as_deref()))
-                .or_else(|| {
+            // Prefer a real album tag for display. A group that actually
+            // folded several distinct raw tags is a multi-disc merge and gets
+            // titled by the disc-stripped base; a single release keeps its
+            // literal title even when it merely *looks* like a disc marker
+            // ("Mafia: Disc 2" is a name, not disc 2 of "Mafia"). Same rule
+            // for the folder-label fallback when there are no tags.
+            let raw_tags: Vec<&str> = members
+                .iter()
+                .filter_map(|(_, t)| t.album.as_deref())
+                .collect();
+            let distinct_raw: std::collections::HashSet<String> = raw_tags
+                .iter()
+                .map(|s| normalize(s))
+                .filter(|s| !s.is_empty())
+                .collect();
+            let name = if distinct_raw.len() > 1 {
+                let stripped: Vec<String> = raw_tags
+                    .iter()
+                    .map(|s| strip_disc_marker(s))
+                    .filter(|s| !s.trim().is_empty())
+                    .collect();
+                dominant(stripped.iter().map(String::as_str))
+            } else {
+                dominant(raw_tags.iter().copied())
+            }
+            .or_else(|| {
+                let labels: std::collections::HashSet<&str> = members
+                    .iter()
+                    .map(|(d, _)| d.album_label_raw.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .collect();
+                if labels.len() == 1 {
+                    labels.into_iter().next().map(str::to_string)
+                } else {
                     members
                         .iter()
                         .map(|(d, _)| d.album_label.clone())
                         .find(|s| !s.trim().is_empty())
-                })
-                .unwrap_or_else(|| tracks[0].display_album());
+                }
+            })
+            .unwrap_or_else(|| tracks[0].display_album());
             albums.push(Album {
                 name,
                 artist: artist_label.clone(),
@@ -499,6 +600,31 @@ mod tests {
         assert_eq!(strip_disc_marker("Abbey Road"), "Abbey Road");
         // "cd" inside a word must not trigger.
         assert_eq!(strip_disc_marker("Mcdonald Songs"), "Mcdonald Songs");
+        // "Disk" with a k (FF VIII OST rips) and a separator before it.
+        assert_eq!(
+            strip_disc_marker("Final Fantasy VIII Original Soundtrack, Disk 1"),
+            "Final Fantasy VIII Original Soundtrack"
+        );
+        // Parenthesised marker leaves no empty "()" behind.
+        assert_eq!(strip_disc_marker("Lost Dogs (Disc 2)"), "Lost Dogs");
+        // A subtitle after the marker survives, so an edition with its own
+        // bracket text stays distinguishable from the plain release. Note:
+        // only digits count as a disc number — "Disc Two" written out is not
+        // recognised, on purpose (too easy to eat a real title).
+        assert_eq!(
+            strip_disc_marker("Live Set [Disc 1 - Acoustic]"),
+            "Live Set [Acoustic]"
+        );
+        // Digits glued to a word are a name, not a disc number.
+        assert_eq!(
+            strip_disc_marker("CD 20th Anniversary"),
+            "CD 20th Anniversary"
+        );
+        // Multibyte text before the marker must not break byte-level scanning.
+        assert_eq!(
+            strip_disc_marker("Symphonic GUNDAM 1979〜1998 [disc2]"),
+            "Symphonic GUNDAM 1979〜1998"
+        );
     }
 
     #[test]
@@ -592,6 +718,102 @@ mod tests {
         ];
         let albums = group_albums(&tracks, mf);
         assert_eq!(albums.len(), 1, "Disco 1/2 must fold");
+        assert_eq!(albums[0].tracks.len(), 2);
+    }
+
+    #[test]
+    fn multidisc_fold_survives_per_disc_album_tags() {
+        // The realistic rip shape: one folder per disc AND the disc number
+        // repeated in each disc's album tag. The folder fold joins them; the
+        // mixed-folder subdivision must not re-split them on the raw tags.
+        let mf = Some("/Music");
+        let mut tracks = Vec::new();
+        for d in 1..=4 {
+            for n in 1..=2 {
+                tracks.push(t(
+                    &format!(
+                        "/Music/Nobuo Uematsu/Final Fantasy VIII Original Soundtrack, Disk {d}/{n}.mp3"
+                    ),
+                    "Nobuo Uematsu",
+                    &format!("Final Fantasy VIII Original Soundtrack, Disk {d}"),
+                    n,
+                ));
+            }
+        }
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1, "the four Disk folders must fold");
+        assert_eq!(albums[0].tracks.len(), 8);
+        // And the merged album is not titled after one of its discs.
+        assert_eq!(albums[0].name, "Final Fantasy VIII Original Soundtrack");
+    }
+
+    #[test]
+    fn bracketed_disc_markers_with_per_disc_tags_fold() {
+        let mf = Some("/Music");
+        let mut tracks = Vec::new();
+        for d in 1..=2 {
+            tracks.push(t(
+                &format!(
+                    "/Music/Tokyo Phil/20th Anniversary Concert Symphonic GUNDAM 1979〜1998 [disc{d}]/1.mp3"
+                ),
+                "Tokyo Phil",
+                &format!("20th Anniversary Concert Symphonic GUNDAM 1979〜1998 [disc{d}]"),
+                1,
+            ));
+        }
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1, "[disc1]/[disc2] must fold");
+        assert_eq!(
+            albums[0].name,
+            "20th Anniversary Concert Symphonic GUNDAM 1979〜1998"
+        );
+    }
+
+    #[test]
+    fn single_release_with_disc_like_name_keeps_its_literal_title() {
+        // "Mafia: Disc 2" is the album's actual name, not disc 2 of "Mafia".
+        // With only one release in the group there is nothing to fold, so the
+        // literal title must survive.
+        let mf = Some("/Music");
+        let tracks = vec![
+            t(
+                "/Music/Band/Mafia Disc 2/1.mp3",
+                "Band",
+                "Mafia: Disc 2",
+                1,
+            ),
+            t(
+                "/Music/Band/Mafia Disc 2/2.mp3",
+                "Band",
+                "Mafia: Disc 2",
+                2,
+            ),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].name, "Mafia: Disc 2");
+    }
+
+    #[test]
+    fn parenthesised_disc_folders_fold() {
+        let mf = Some("/Music");
+        let tracks = vec![
+            t(
+                "/Music/Pearl Jam/Lost Dogs (Disc 1)/1.mp3",
+                "Pearl Jam",
+                "Lost Dogs (Disc 1)",
+                1,
+            ),
+            t(
+                "/Music/Pearl Jam/Lost Dogs (Disc 2)/1.mp3",
+                "Pearl Jam",
+                "Lost Dogs (Disc 2)",
+                1,
+            ),
+        ];
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1, "(Disc 1)/(Disc 2) must fold");
+        assert_eq!(albums[0].name, "Lost Dogs");
         assert_eq!(albums[0].tracks.len(), 2);
     }
 
