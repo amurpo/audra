@@ -99,7 +99,14 @@ fn disc_marker_number(name: &str) -> Option<i64> {
 /// `"[Live]"`) and trim stray trailing separators.
 fn tidy_after_strip(s: &str) -> String {
     let mut out = s.to_string();
-    for (from, to) in [("( ", "("), (" )", ")"), ("[ ", "["), (" ]", "]"), ("{ ", "{"), (" }", "}")] {
+    for (from, to) in [
+        ("( ", "("),
+        (" )", ")"),
+        ("[ ", "["),
+        (" ]", "]"),
+        ("{ ", "{"),
+        (" }", "}"),
+    ] {
         out = out.replace(from, to);
     }
     for empty in ["()", "[]", "{}"] {
@@ -853,18 +860,8 @@ mod tests {
         // literal title must survive.
         let mf = Some("/Music");
         let tracks = vec![
-            t(
-                "/Music/Band/Mafia Disc 2/1.mp3",
-                "Band",
-                "Mafia: Disc 2",
-                1,
-            ),
-            t(
-                "/Music/Band/Mafia Disc 2/2.mp3",
-                "Band",
-                "Mafia: Disc 2",
-                2,
-            ),
+            t("/Music/Band/Mafia Disc 2/1.mp3", "Band", "Mafia: Disc 2", 1),
+            t("/Music/Band/Mafia Disc 2/2.mp3", "Band", "Mafia: Disc 2", 2),
         ];
         let albums = group_albums(&tracks, mf);
         assert_eq!(albums.len(), 1);

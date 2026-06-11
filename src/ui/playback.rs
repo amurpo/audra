@@ -386,6 +386,7 @@ pub fn wire_transport_controls(ctx: &PlaybackCtx) {
     }
     {
         let player = Rc::clone(&ctx.player);
+        let bar = Rc::clone(&ctx.bar);
         let prog_bar = ctx.bar.prog_bar.clone();
         ctx.bar.prog_gesture.connect_pressed(move |_, _, x, _| {
             let p = player.borrow();
@@ -401,7 +402,11 @@ pub fn wire_transport_controls(ctx: &PlaybackCtx) {
             if width <= 0.0 {
                 return;
             }
-            p.seek((x / width).clamp(0.0, 1.0) * total);
+            let target = (x / width).clamp(0.0, 1.0) * total;
+            p.seek(target);
+            // While paused the tick loop bails out before refreshing the bar, so
+            // redraw it here to reflect the new position immediately.
+            bar.update_progress(target, total);
         });
     }
     {

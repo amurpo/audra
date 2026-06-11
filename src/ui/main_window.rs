@@ -126,7 +126,8 @@ pub(crate) fn start_scan(
 /// `parent` is any widget inside the main window; the dialog resolves the
 /// window from its root.
 fn show_scan_error(parent: &impl IsA<gtk4::Widget>, detail: &str) {
-    let dialog = adw::AlertDialog::new(Some(&gettext("Could not update the library")), Some(detail));
+    let dialog =
+        adw::AlertDialog::new(Some(&gettext("Could not update the library")), Some(detail));
     dialog.add_response("ok", "OK");
     dialog.set_default_response(Some("ok"));
     dialog.set_close_response("ok");
@@ -540,10 +541,11 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
             let value = scale.value();
             let db = db.clone();
             let timer = Rc::clone(&vol_save_timer);
-            let id = glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
-                timer.borrow_mut().take();
-                let _ = db.lock().unwrap().set_volume(value);
-            });
+            let id =
+                glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
+                    timer.borrow_mut().take();
+                    let _ = db.lock().unwrap().set_volume(value);
+                });
             *vol_save_timer.borrow_mut() = Some(id);
         }
     ));

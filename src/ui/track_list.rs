@@ -629,7 +629,13 @@ fn repaint_now_playing(
         };
         let pos = unsafe { *pos.as_ref() };
         if let Some(track) = disp.get(pos) {
-            paint_slot(&row, np, &track.path, show_num, display_no(track, pos, per_disc));
+            paint_slot(
+                &row,
+                np,
+                &track.path,
+                show_num,
+                display_no(track, pos, per_disc),
+            );
         }
     }
 }
