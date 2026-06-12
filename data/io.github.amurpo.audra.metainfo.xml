@@ -51,6 +51,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.2.5" date="2026-06-12">
+      <description>
+        <p>Fixes MP3 tracks that silently refused to play by tolerating undecodable leading frames. Folds real-world multi-disc rips into a single album with per-disc headers in the album view, makes search and library rescans faster, and adds several UI, navigation, and scanning fixes.</p>
+      </description>
+    </release>
     <release version="0.2.4" date="2026-06-03">
       <description>
         <p>Track lists gain a per-row play/pause icon and hover affordance, with a clearer now-playing row highlight. Adds the Remix icon set and macOS (Apple Silicon) support, plus album-art and library fixes.</p>
