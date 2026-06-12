@@ -39,6 +39,19 @@ type CandidatesFn = Arc<dyn Fn(&str) -> Vec<CoverCandidate> + Send + Sync>;
 /// original bytes to store verbatim if the user picks it.
 type ScaledCandidate = (String, Vec<u8>, i32, bool, Vec<u8>);
 
+/// Everything that distinguishes the album picker from the artist picker —
+/// dialog title, initial search term and the three injected strategies —
+/// bundled so the menu/dialog chain passes one handle around. All fields are
+/// cheap clones (`String`, `Rc`, `Arc`).
+#[derive(Clone)]
+struct PickerCtx {
+    title: String,
+    default_query: String,
+    apply: ApplyFn,
+    persist: PersistFn,
+    candidates: CandidatesFn,
+}
+
 /// Add a right-click gesture to an album card opening the cover menu.
 pub fn install_album_cover_gesture(
     child: &gtk4::FlowBoxChild,
@@ -56,6 +69,10 @@ pub fn install_album_cover_gesture(
         let (db, a, al) = (Arc::clone(&db), artist.clone(), album.clone());
         Arc::new(move |b: &[u8]| {
             let _ = db.lock().unwrap().set_cover(&a, &al, b);
+            // Tell the playback layer: it drops its cached art and, if this
+            // album is the one playing, repaints the bar/tint/OS controls
+            // immediately.
+            crate::ui::playback::notify_cover_changed(&a, &al);
         })
     };
 
@@ -76,15 +93,15 @@ pub fn install_album_cover_gesture(
         })
     };
 
-    let default_query = album;
-
     install_gesture(
         child,
-        gettext("Choose cover"),
-        default_query,
-        apply,
-        persist,
-        candidates,
+        PickerCtx {
+            title: gettext("Choose cover"),
+            default_query: album,
+            apply,
+            persist,
+            candidates,
+        },
     );
 }
 
@@ -106,56 +123,31 @@ pub fn install_artist_photo_gesture(
     let candidates: CandidatesFn =
         Arc::new(move |query: &str| metadata::fetch_artist_photo_candidates(query));
 
-    let default_query = artist;
-
     install_gesture(
         child,
-        gettext("Choose photo"),
-        default_query,
-        apply,
-        persist,
-        candidates,
+        PickerCtx {
+            title: gettext("Choose photo"),
+            default_query: artist,
+            apply,
+            persist,
+            candidates,
+        },
     );
 }
 
-fn install_gesture(
-    child: &gtk4::FlowBoxChild,
-    title: String,
-    default_query: String,
-    apply: ApplyFn,
-    persist: PersistFn,
-    candidates: CandidatesFn,
-) {
+fn install_gesture(child: &gtk4::FlowBoxChild, ctx: PickerCtx) {
     let gesture = gtk4::GestureClick::new();
     gesture.set_button(gtk4::gdk::BUTTON_SECONDARY);
     let child_w = child.clone();
     gesture.connect_pressed(move |g, _, x, y| {
         g.set_state(gtk4::EventSequenceState::Claimed);
-        show_menu(
-            &child_w,
-            x,
-            y,
-            title.clone(),
-            default_query.clone(),
-            Rc::clone(&apply),
-            Arc::clone(&persist),
-            Arc::clone(&candidates),
-        );
+        show_menu(&child_w, x, y, &ctx);
     });
     child.add_controller(gesture);
 }
 
-#[allow(clippy::too_many_arguments)]
-fn show_menu(
-    parent: &gtk4::FlowBoxChild,
-    x: f64,
-    y: f64,
-    title: String,
-    default_query: String,
-    apply: ApplyFn,
-    persist: PersistFn,
-    candidates: CandidatesFn,
-) {
+fn show_menu(parent: &gtk4::FlowBoxChild, x: f64, y: f64, ctx: &PickerCtx) {
+    let ctx = ctx.clone();
     let pop = gtk4::Popover::new();
     pop.add_css_class("audra-shaded");
     pop.set_parent(parent);
@@ -179,52 +171,33 @@ fn show_menu(
 
     btn_change.connect_clicked(clone!(
         #[strong]
-        apply,
-        #[strong]
-        persist,
-        #[strong]
-        candidates,
+        ctx,
         #[weak]
         pop,
         #[strong]
         parent,
-        #[strong]
-        title,
-        #[strong]
-        default_query,
         move |_| {
             pop.popdown();
-            open_picker(
-                &parent,
-                title.clone(),
-                default_query.clone(),
-                Rc::clone(&apply),
-                Arc::clone(&persist),
-                Arc::clone(&candidates),
-            );
+            open_picker(&parent, &ctx);
         }
     ));
 
     btn_custom.connect_clicked(clone!(
         #[strong]
-        apply,
-        #[strong]
-        persist,
+        ctx,
         #[weak]
         pop,
         #[strong]
         parent,
         move |_| {
             pop.popdown();
-            pick_custom_image(&parent, Rc::clone(&apply), Arc::clone(&persist));
+            pick_custom_image(&parent, &ctx);
         }
     ));
 
     btn_remove.connect_clicked(clone!(
         #[strong]
-        apply,
-        #[strong]
-        persist,
+        ctx,
         #[weak]
         pop,
         move |_| {
@@ -232,8 +205,8 @@ fn show_menu(
             // An empty blob is the "user removed this on purpose" marker:
             // the placeholder shows now and the automatic fetch skips it,
             // so the image does not silently come back on the next scan.
-            persist(&[]);
-            apply(None);
+            (ctx.persist)(&[]);
+            (ctx.apply)(None);
         }
     ));
 
@@ -248,7 +221,8 @@ fn show_load_error(window: Option<&gtk4::Window>) {
 
 /// Let the user pick any image from disk and use it as the art. Reuses the
 /// same `persist`/`apply` strategies, so it is just another byte source.
-fn pick_custom_image(parent: &gtk4::FlowBoxChild, apply: ApplyFn, persist: PersistFn) {
+fn pick_custom_image(parent: &gtk4::FlowBoxChild, ctx: &PickerCtx) {
+    let (apply, persist) = (Rc::clone(&ctx.apply), Arc::clone(&ctx.persist));
     let window = parent.root().and_downcast::<gtk4::Window>();
 
     let filter = gtk4::FileFilter::new();
@@ -284,15 +258,14 @@ fn pick_custom_image(parent: &gtk4::FlowBoxChild, apply: ApplyFn, persist: Persi
     });
 }
 
-fn open_picker(
-    parent: &gtk4::FlowBoxChild,
-    title: String,
-    default_query: String,
-    apply: ApplyFn,
-    persist: PersistFn,
-    candidates: CandidatesFn,
-) {
-    let _ = parent;
+fn open_picker(parent: &gtk4::FlowBoxChild, ctx: &PickerCtx) {
+    let PickerCtx {
+        title,
+        default_query,
+        apply,
+        persist,
+        candidates,
+    } = ctx.clone();
     let dialog = adw::Dialog::new();
     dialog.add_css_class("audra-shaded");
     dialog.set_title(&title);

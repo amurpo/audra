@@ -1,7 +1,6 @@
+use crate::player::decoder::TolerantSource;
 use anyhow::Result;
-use rodio::{Decoder, OutputStream, Sink, Source};
-use std::fs::File;
-use std::io::BufReader;
+use rodio::{OutputStream, Sink, Source};
 
 pub struct AudioEngine {
     _stream: OutputStream,
@@ -18,8 +17,7 @@ impl AudioEngine {
     /// Play with a linear gain factor applied to the decoded audio.
     /// `gain` = 1.0 means no change; use `10_f32.powf(db / 20.0)` to convert dB.
     pub fn play_with_gain(&self, path: &str, gain: f32) -> Result<()> {
-        let file = BufReader::new(File::open(path)?);
-        let source = Decoder::new(file)?;
+        let source = TolerantSource::open(path)?;
         self.sink.clear();
         self.sink.append(source.amplify(gain.max(0.0)));
         self.sink.play();

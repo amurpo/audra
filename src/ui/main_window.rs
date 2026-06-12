@@ -1,7 +1,7 @@
 use adw::prelude::*;
 use glib::clone;
 use gtk4::prelude::*;
-use gtk4::{gio, Button, FileDialog, MenuButton, Popover, SearchBar, SearchEntry, ToggleButton};
+use gtk4::{SearchBar, SearchEntry, ToggleButton};
 use libadwaita as adw;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -10,20 +10,18 @@ use std::sync::{Arc, Mutex};
 
 use crate::i18n::gettext;
 use crate::library::{self, db::Database, scanner};
-use crate::player::{replaygain::ReplayGainMode, Player};
+use crate::player::Player;
 use crate::scrobbler::LastFmClient;
 use crate::ui::albums_view::AlbumsView;
 use crate::ui::artists_view::ArtistsView;
-use crate::ui::lastfm_dialog::show_lastfm_dialog;
 use crate::ui::library_view::LibraryView;
 use crate::ui::now_playing::NowPlaying;
 use crate::ui::playback::{
-    make_play_callback, start_player_timer, wire_mpris, wire_transport_controls, CoverIndex,
-    ScrobbleTracker,
+    cover_cache, make_play_callback, start_player_timer, wire_cover_sync, wire_mpris,
+    wire_transport_controls, CoverIndex, PlaybackCtx, ScrobbleTracker,
 };
 use crate::ui::player_bar::PlayerBar;
-use crate::ui::reset::show_reset_dialog;
-use crate::ui::theme::{set_tint_mode, setup_css, update_font, TintMode};
+use crate::ui::theme::{set_tint_mode, setup_css};
 
 /// The library views plus the DB handle and the shared cover index — the
 /// bundle of state the scan/reload paths always pass around together. Grouping
@@ -43,10 +41,7 @@ pub(crate) struct Views {
 pub(crate) fn reload_all_views(views: &Views) {
     let (all, music_folder) = {
         let g = views.db.lock().unwrap();
-        (
-            g.all_tracks().unwrap_or_default(),
-            g.get_setting("music_folder"),
-        )
+        (g.all_tracks().unwrap_or_default(), g.music_folder())
     };
     let albums = library::group_into_albums(&all, music_folder.as_deref());
     let artists = library::group_into_artists(&albums);
@@ -83,43 +78,60 @@ pub(crate) fn start_scan(
     // once the worker signals it is done.
     let scan_path = folder_path;
     let db_worker = Arc::clone(&views.db);
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = async_channel::bounded::<Result<(), String>>(1);
     std::thread::spawn(move || {
-        let tracks = scanner::scan_folder(&scan_path);
-        {
+        // Incremental rescan: files whose stored mtime matches are not
+        // re-read; only new/changed files pay the tag-parsing cost.
+        let known_mtimes = db_worker.lock().unwrap().path_mtimes().unwrap_or_default();
+        let result = scanner::scan_folder(&scan_path, &known_mtimes);
+        let outcome = {
             let db_g = db_worker.lock().unwrap();
-            let _ = db_g.upsert_tracks(&tracks);
-            let norm_folder: std::path::PathBuf =
-                std::path::Path::new(&scan_path).components().collect();
-            let _ = db_g.set_setting("music_folder", &norm_folder.to_string_lossy());
-            let found: Vec<String> = tracks.iter().map(|t| t.path.clone()).collect();
-            let removed = db_g
-                .remove_missing_from_folder(&scan_path, &found)
-                .unwrap_or(0);
-            if removed > 0 {
-                log::info!("sync: eliminados {} registros obsoletos", removed);
+            // A failed write here is the difference between "library" and
+            // "silently empty library", so it is reported, not discarded.
+            match db_g.upsert_tracks(&result.tracks) {
+                Ok(()) => {
+                    let norm_folder: std::path::PathBuf =
+                        std::path::Path::new(&scan_path).components().collect();
+                    let _ = db_g.set_music_folder(&norm_folder.to_string_lossy());
+                    let removed = db_g
+                        .remove_missing_from_folder(&scan_path, &result.found_paths)
+                        .unwrap_or(0);
+                    if removed > 0 {
+                        log::info!("sync: eliminados {} registros obsoletos", removed);
+                    }
+                    Ok(())
+                }
+                Err(e) => Err(e.to_string()),
             }
-        }
-        let _ = tx.send(());
+        };
+        let _ = tx.send_blocking(outcome);
     });
 
-    glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-        use std::sync::mpsc::TryRecvError;
-        match rx.try_recv() {
-            Ok(()) => {
-                reload_all_views(&views);
-                loading_box.set_visible(false);
-                spinner.stop();
-                glib::ControlFlow::Break
-            }
-            Err(TryRecvError::Empty) => glib::ControlFlow::Continue,
-            Err(TryRecvError::Disconnected) => {
-                loading_box.set_visible(false);
-                spinner.stop();
-                glib::ControlFlow::Break
-            }
+    // No polling: this future sleeps in the main loop until the worker sends
+    // (or panics, which drops the sender and yields Err).
+    glib::spawn_future_local(async move {
+        let outcome = rx.recv().await;
+        loading_box.set_visible(false);
+        spinner.stop();
+        match outcome {
+            Ok(Ok(())) => reload_all_views(&views),
+            Ok(Err(detail)) => show_scan_error(&loading_box, &detail),
+            // The sender was dropped without a message: the worker panicked.
+            Err(_) => show_scan_error(&loading_box, &gettext("The scan stopped unexpectedly.")),
         }
     });
+}
+
+/// Non-fatal error dialog for a scan whose results could not be saved.
+/// `parent` is any widget inside the main window; the dialog resolves the
+/// window from its root.
+fn show_scan_error(parent: &impl IsA<gtk4::Widget>, detail: &str) {
+    let dialog =
+        adw::AlertDialog::new(Some(&gettext("Could not update the library")), Some(detail));
+    dialog.add_response("ok", "OK");
+    dialog.set_default_response(Some("ok"));
+    dialog.set_close_response("ok");
+    dialog.present(Some(parent));
 }
 
 /// Present a modal error dialog and quit the application when it closes.
@@ -185,40 +197,19 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     // register that dir with the icon theme. This is a no-op on systems where
     // the icon is already installed (the theme finds it there first).
     register_app_icon();
-    let use_system_font = db.lock().unwrap().get_setting("use_system_font").as_deref() == Some("1");
-    let replaygain_setting = db
-        .lock()
-        .unwrap()
-        .get_setting("replaygain")
-        .unwrap_or_default();
-    let replaygain_init_idx: u32 = match replaygain_setting.as_str() {
-        "track" => 1,
-        "album" => 2,
-        _ => 0,
+    crate::ui::icons::init_icon_theme();
+    // Read every persisted setting the window needs in one lock, one pass.
+    let (use_system_font, replaygain_init_mode, saved_lang, dyn_color_init, saved_vol) = {
+        let g = db.lock().unwrap();
+        (
+            g.use_system_font(),
+            g.replaygain(),
+            g.language(),
+            g.dynamic_color(),
+            g.volume(),
+        )
     };
-    let replaygain_init_mode: Option<ReplayGainMode> = match replaygain_setting.as_str() {
-        "track" => Some(ReplayGainMode::Track),
-        "album" => Some(ReplayGainMode::Album),
-        _ => None,
-    };
-    let lang_setting = db
-        .lock()
-        .unwrap()
-        .get_setting("language")
-        .unwrap_or_default();
-    let dyn_color_setting = db
-        .lock()
-        .unwrap()
-        .get_setting("dynamic_color")
-        .unwrap_or_default();
-    let dyn_color_init = TintMode::from_setting(&dyn_color_setting);
     set_tint_mode(dyn_color_init);
-    let saved_vol: f64 = db
-        .lock()
-        .unwrap()
-        .get_setting("volume")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0.5);
     setup_css(!use_system_font);
 
     let window = adw::ApplicationWindow::builder()
@@ -232,15 +223,53 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     #[cfg(target_os = "windows")]
     window.set_decorated(false);
 
+    // --- Player ---
+    // Created before the settings popover because the ReplayGain and Language
+    // rows capture it. No audio device (CI/headless, missing ALSA, etc.) is
+    // recoverable enough to keep the rest of the app off the panic path: show
+    // a modal and exit cleanly instead of aborting with a stack trace.
+    let player: Rc<RefCell<Player>> = match Player::new() {
+        Ok(p) => Rc::new(RefCell::new(p)),
+        Err(e) => {
+            show_fatal_error(
+                app,
+                &gettext("Audio output unavailable"),
+                &format!(
+                    "{}\n\n{}",
+                    gettext("Audra could not initialise the audio engine."),
+                    e
+                ),
+            );
+            return;
+        }
+    };
+    player.borrow_mut().replaygain_mode = replaygain_init_mode;
+
+    // Switching language tears the window down and rebuilds it so every
+    // gettext string is re-evaluated; playback is stopped first because the
+    // rebuilt window creates a fresh Player.
+    let apply_language: Rc<dyn Fn(Option<&'static str>)> = Rc::new({
+        let player = Rc::clone(&player);
+        let db = Arc::clone(&db);
+        let app = app.clone();
+        let window = window.downgrade();
+        move |lang: Option<&'static str>| {
+            player.borrow_mut().stop();
+            let _ = db.lock().unwrap().set_language(lang);
+            crate::i18n::init(lang);
+            if let Some(w) = window.upgrade() {
+                w.close();
+            }
+            build_window(&app, Arc::clone(&db));
+        }
+    });
+
     // --- Last.fm ---
     let lastfm: Arc<Mutex<Option<LastFmClient>>> = Arc::new(Mutex::new(None));
     {
         if LastFmClient::is_configured() {
             let db_g = db.lock().unwrap();
-            if let Some(sk) = db_g
-                .get_setting("lastfm_session_key")
-                .filter(|s| !s.is_empty())
-            {
+            if let Some(sk) = db_g.lastfm_session_key() {
                 *lastfm.lock().unwrap() = Some(LastFmClient::new().with_session(&sk));
             }
         }
@@ -264,202 +293,6 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let header = adw::HeaderBar::new();
     header.add_css_class("audra-header-bar");
 
-    let menu_btn = MenuButton::new();
-    let menu_icon = crate::ui::icons::image(crate::ui::icons::Icon::FolderMusic, 20);
-    menu_btn.set_child(Some(&menu_icon));
-    menu_btn.set_tooltip_text(Some(&gettext("Library")));
-    menu_btn.add_css_class("flat");
-
-    let popover = Popover::new();
-    popover.add_css_class("audra-shaded");
-    let pop_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
-    pop_box.set_margin_top(4);
-    pop_box.set_margin_bottom(4);
-    pop_box.set_margin_start(4);
-    pop_box.set_margin_end(4);
-    // Fixed width so the popover does not resize when labels change length
-    // across languages.
-    pop_box.set_size_request(264, -1);
-
-    let scan_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-
-    let item_scan = Button::with_label(&gettext("Scan collection"));
-    item_scan.add_css_class("flat");
-    item_scan.set_hexpand(true);
-    item_scan.set_halign(gtk4::Align::Fill);
-
-    let item_refresh =
-        crate::ui::icons::flat_icon_button(crate::ui::icons::Icon::Refresh, 20, None);
-    item_refresh.add_css_class("flat");
-    item_refresh.set_tooltip_text(Some(&gettext("Refresh collection")));
-
-    scan_row.append(&item_scan);
-    scan_row.append(&item_refresh);
-
-    let pop_sep = gtk4::Separator::new(gtk4::Orientation::Horizontal);
-    pop_sep.set_margin_top(4);
-    pop_sep.set_margin_bottom(4);
-
-    let item_lastfm = Button::with_label(&gettext("Last.fm Account"));
-    item_lastfm.add_css_class("flat");
-    item_lastfm.set_halign(gtk4::Align::Fill);
-
-    let pop_sep2 = gtk4::Separator::new(gtk4::Orientation::Horizontal);
-    pop_sep2.set_margin_top(4);
-    pop_sep2.set_margin_bottom(4);
-
-    let font_row = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    font_row.set_margin_top(2);
-    font_row.set_margin_bottom(2);
-    font_row.set_margin_start(8);
-    font_row.set_margin_end(8);
-    let font_label = gtk4::Label::new(Some(&gettext("System font")));
-    font_label.set_hexpand(true);
-    font_label.set_xalign(0.0);
-    let font_switch = gtk4::Switch::new();
-    font_switch.set_active(use_system_font);
-    font_switch.set_valign(gtk4::Align::Center);
-    font_row.append(&font_label);
-    font_row.append(&font_switch);
-
-    let rg_row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
-    rg_row.set_margin_top(4);
-    rg_row.set_margin_bottom(4);
-    rg_row.set_margin_start(8);
-    rg_row.set_margin_end(8);
-    let rg_label = gtk4::Label::new(Some(&gettext("ReplayGain")));
-    rg_label.set_xalign(0.0);
-    rg_label.add_css_class("caption");
-    rg_label.add_css_class("dim-label");
-    let rg_btn_off = gtk4::ToggleButton::with_label(&gettext("Off"));
-    let rg_btn_track = gtk4::ToggleButton::with_label(&gettext("Track"));
-    let rg_btn_album = gtk4::ToggleButton::with_label(&gettext("Album"));
-    rg_btn_track.set_group(Some(&rg_btn_off));
-    rg_btn_album.set_group(Some(&rg_btn_off));
-    match replaygain_init_idx {
-        1 => rg_btn_track.set_active(true),
-        2 => rg_btn_album.set_active(true),
-        _ => rg_btn_off.set_active(true),
-    }
-    let rg_seg = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    rg_seg.add_css_class("linked");
-    rg_seg.append(&rg_btn_off);
-    rg_seg.append(&rg_btn_track);
-    rg_seg.append(&rg_btn_album);
-    rg_row.append(&rg_label);
-    rg_row.append(&rg_seg);
-
-    let dc_row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
-    dc_row.set_margin_top(4);
-    dc_row.set_margin_bottom(4);
-    dc_row.set_margin_start(8);
-    dc_row.set_margin_end(8);
-    let dc_label = gtk4::Label::new(Some(&gettext("Dynamic color")));
-    dc_label.set_xalign(0.0);
-    dc_label.add_css_class("caption");
-    dc_label.add_css_class("dim-label");
-    let dc_btn_off = gtk4::ToggleButton::with_label(&gettext("Off"));
-    let dc_btn_partial = gtk4::ToggleButton::with_label(&gettext("Partial"));
-    let dc_btn_full = gtk4::ToggleButton::with_label(&gettext("Full"));
-    dc_btn_partial.set_group(Some(&dc_btn_off));
-    dc_btn_full.set_group(Some(&dc_btn_off));
-    match dyn_color_init {
-        TintMode::Off => dc_btn_off.set_active(true),
-        TintMode::Partial => dc_btn_partial.set_active(true),
-        TintMode::Full => dc_btn_full.set_active(true),
-    }
-    let dc_seg = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    dc_seg.add_css_class("linked");
-    dc_seg.append(&dc_btn_off);
-    dc_seg.append(&dc_btn_partial);
-    dc_seg.append(&dc_btn_full);
-    dc_row.append(&dc_label);
-    dc_row.append(&dc_seg);
-
-    let pop_sep3 = gtk4::Separator::new(gtk4::Orientation::Horizontal);
-    pop_sep3.set_margin_top(14);
-    pop_sep3.set_margin_bottom(3);
-
-    let lang_row = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
-    lang_row.set_margin_top(4);
-    lang_row.set_margin_bottom(4);
-    lang_row.set_margin_start(8);
-    lang_row.set_margin_end(8);
-    let lang_label = gtk4::Label::new(Some(&gettext("Language")));
-    lang_label.set_xalign(0.0);
-    lang_label.add_css_class("caption");
-    lang_label.add_css_class("dim-label");
-
-    let lang_btn_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    lang_btn_box.add_css_class("linked");
-
-    let btn_lang_auto = ToggleButton::with_label("Auto");
-    let btn_lang_en = ToggleButton::with_label("English");
-    let btn_lang_es = ToggleButton::with_label("Español");
-    btn_lang_en.set_group(Some(&btn_lang_auto));
-    btn_lang_es.set_group(Some(&btn_lang_auto));
-
-    // Set initial state before connecting signals to avoid spurious rebuilds
-    match lang_setting.as_str() {
-        "en" => btn_lang_en.set_active(true),
-        "es" => btn_lang_es.set_active(true),
-        _ => btn_lang_auto.set_active(true),
-    }
-
-    lang_btn_box.append(&btn_lang_auto);
-    lang_btn_box.append(&btn_lang_en);
-    lang_btn_box.append(&btn_lang_es);
-    lang_row.append(&lang_label);
-    lang_row.append(&lang_btn_box);
-
-    let item_reset = Button::new();
-    item_reset.add_css_class("flat");
-    item_reset.set_halign(gtk4::Align::Fill);
-    item_reset.set_margin_top(3);
-    let reset_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
-    let reset_icon = crate::ui::icons::image(crate::ui::icons::Icon::DeleteBin, 16);
-    reset_icon.add_css_class("menu-destructive");
-    {
-        let reset_icon = reset_icon.clone();
-        reset_icon.connect_realize(move |img| {
-            crate::ui::icons::set_image_icon(
-                img,
-                crate::ui::icons::Icon::DeleteBin,
-                16,
-                &crate::ui::icons::error_color(img),
-            );
-        });
-    }
-    let reset_lbl = gtk4::Label::new(Some(&gettext("Reset library…")));
-    reset_lbl.add_css_class("menu-destructive");
-    reset_box.append(&reset_icon);
-    reset_box.append(&reset_lbl);
-    item_reset.set_child(Some(&reset_box));
-
-    let pop_sep4 = gtk4::Separator::new(gtk4::Orientation::Horizontal);
-    pop_sep4.set_margin_top(4);
-    pop_sep4.set_margin_bottom(4);
-
-    let item_about = Button::with_label(&gettext("About Audra"));
-    item_about.add_css_class("flat");
-    item_about.set_halign(gtk4::Align::Fill);
-
-    pop_box.append(&scan_row);
-    pop_box.append(&pop_sep);
-    pop_box.append(&item_lastfm);
-    pop_box.append(&pop_sep2);
-    pop_box.append(&font_row);
-    pop_box.append(&rg_row);
-    pop_box.append(&dc_row);
-    pop_box.append(&lang_row);
-    pop_box.append(&pop_sep3);
-    pop_box.append(&item_reset);
-    pop_box.append(&pop_sep4);
-    pop_box.append(&item_about);
-    popover.set_child(Some(&pop_box));
-    menu_btn.set_popover(Some(&popover));
-    header.pack_start(&menu_btn);
-
     let btn_search = ToggleButton::new();
     let search_icon = crate::ui::icons::image(crate::ui::icons::Icon::Search, 20);
     btn_search.set_child(Some(&search_icon));
@@ -467,26 +300,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     btn_search.add_css_class("flat");
     header.pack_end(&btn_search);
 
-    // --- Player, vistas y estado compartido ---
-    // No audio device (CI/headless, missing ALSA, etc.) is recoverable enough
-    // to keep the rest of the app off the panic path: show a modal and exit
-    // cleanly instead of aborting with a stack trace.
-    let player: Rc<RefCell<Player>> = match Player::new() {
-        Ok(p) => Rc::new(RefCell::new(p)),
-        Err(e) => {
-            show_fatal_error(
-                app,
-                &gettext("Audio output unavailable"),
-                &format!(
-                    "{}\n\n{}",
-                    gettext("Audra could not initialise the audio engine."),
-                    e
-                ),
-            );
-            return;
-        }
-    };
-    player.borrow_mut().replaygain_mode = replaygain_init_mode;
+    // --- Vistas y estado compartido ---
     // Single source of truth for "what's currently playing". All track lists
     // subscribe to this bus and update their `.playing` row indicator in sync.
     let now_playing = NowPlaying::new();
@@ -638,6 +452,28 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
 
     window.set_content(Some(&scan_overlay));
 
+    // Settings popover: built here (not with the header) because its handlers
+    // capture the views and the scan widgets, which only now exist. Packing
+    // into the header at this point is fine — it is the only pack_start child.
+    let menu_btn = crate::ui::settings_menu::build(crate::ui::settings_menu::SettingsMenuCtx {
+        window: window.clone(),
+        views: views.clone(),
+        scan_loading_box: scan_loading_box.clone(),
+        scan_spinner: scan_spinner.clone(),
+        lastfm: Arc::clone(&lastfm),
+        player: Rc::clone(&player),
+        apply_language: Rc::clone(&apply_language),
+        use_system_font,
+        replaygain_init: replaygain_init_mode,
+        dyn_color_init,
+        lang_init: match saved_lang.as_deref() {
+            Some("en") => Some("en"),
+            Some("es") => Some("es"),
+            _ => None,
+        },
+    });
+    header.pack_start(&menu_btn);
+
     // --- Señales ---
     {
         let lib_view = Rc::clone(&lib_view);
@@ -651,304 +487,39 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         });
     }
 
-    item_scan.connect_clicked(clone!(
-        #[strong]
-        window,
-        #[strong]
-        views,
-        #[weak]
-        popover,
-        #[weak]
-        scan_loading_box,
-        #[weak]
-        scan_spinner,
-        move |_| {
-            popover.popdown();
-            let dialog = FileDialog::new();
-            dialog.select_folder(
-                Some(&window),
-                gio::Cancellable::NONE,
-                clone!(
-                    #[strong]
-                    views,
-                    #[weak]
-                    scan_loading_box,
-                    #[weak]
-                    scan_spinner,
-                    move |result| {
-                        if let Ok(file) = result {
-                            if let Some(path) = file.path() {
-                                start_scan(
-                                    path.to_string_lossy().to_string(),
-                                    views.clone(),
-                                    scan_loading_box,
-                                    scan_spinner,
-                                );
-                            }
-                        }
-                    }
-                ),
-            );
-        }
-    ));
-
-    item_refresh.connect_clicked(clone!(
-        #[strong]
-        views,
-        #[weak]
-        popover,
-        #[weak]
-        scan_loading_box,
-        #[weak]
-        scan_spinner,
-        move |_| {
-            popover.popdown();
-            if let Some(folder) = views.db.lock().unwrap().get_setting("music_folder") {
-                start_scan(folder, views.clone(), scan_loading_box, scan_spinner);
-            }
-        }
-    ));
-
-    font_switch.connect_state_set(clone!(
-        #[strong]
-        db,
-        move |_, state| {
-            let _ = db
-                .lock()
-                .unwrap()
-                .set_setting("use_system_font", if state { "1" } else { "0" });
-            update_font(!state);
-            glib::Propagation::Proceed
-        }
-    ));
-
-    rg_btn_off.connect_toggled(clone!(
-        #[strong]
-        db,
-        #[strong]
-        player,
-        move |btn| {
-            if btn.is_active() {
-                player.borrow_mut().replaygain_mode = None;
-                let _ = db.lock().unwrap().set_setting("replaygain", "off");
-            }
-        }
-    ));
-    rg_btn_track.connect_toggled(clone!(
-        #[strong]
-        db,
-        #[strong]
-        player,
-        move |btn| {
-            if btn.is_active() {
-                player.borrow_mut().replaygain_mode = Some(ReplayGainMode::Track);
-                let _ = db.lock().unwrap().set_setting("replaygain", "track");
-            }
-        }
-    ));
-    rg_btn_album.connect_toggled(clone!(
-        #[strong]
-        db,
-        #[strong]
-        player,
-        move |btn| {
-            if btn.is_active() {
-                player.borrow_mut().replaygain_mode = Some(ReplayGainMode::Album);
-                let _ = db.lock().unwrap().set_setting("replaygain", "album");
-            }
-        }
-    ));
-
-    let apply_tint_mode = |db: &Arc<Mutex<Database>>, mode: TintMode| {
-        let _ = db
-            .lock()
-            .unwrap()
-            .set_setting("dynamic_color", mode.as_setting());
-        set_tint_mode(mode);
+    // One shared playback context and ONE play callback instance behind an
+    // `Rc`, handed to every view — instead of building four identical
+    // closures with six captured handles each.
+    let ctx = PlaybackCtx {
+        player: Rc::clone(&player),
+        bar: Rc::clone(&bar),
+        db: Arc::clone(&db),
+        notify_now_playing: Rc::clone(&notify_now_playing),
+        highlight: Rc::clone(&highlight_track),
+        cover_index: Rc::clone(&cover_index),
+        cover_cache: cover_cache(),
     };
-    dc_btn_off.connect_toggled(clone!(
-        #[strong]
-        db,
-        move |btn| {
-            if btn.is_active() {
-                apply_tint_mode(&db, TintMode::Off);
-            }
-        }
-    ));
-    dc_btn_partial.connect_toggled(clone!(
-        #[strong]
-        db,
-        move |btn| {
-            if btn.is_active() {
-                apply_tint_mode(&db, TintMode::Partial);
-            }
-        }
-    ));
-    dc_btn_full.connect_toggled(clone!(
-        #[strong]
-        db,
-        move |btn| {
-            if btn.is_active() {
-                apply_tint_mode(&db, TintMode::Full);
-            }
-        }
-    ));
+    let play_cb: Rc<dyn Fn(Vec<crate::library::Track>, usize)> =
+        Rc::new(make_play_callback(ctx.clone()));
 
-    let apply_language: Rc<dyn Fn(Option<&'static str>)> = Rc::new({
-        let player = Rc::clone(&player);
-        let db = Arc::clone(&db);
-        let app = app.clone();
-        let window = window.downgrade();
-        move |lang: Option<&'static str>| {
-            player.borrow_mut().stop();
-            let _ = db
-                .lock()
-                .unwrap()
-                .set_setting("language", lang.unwrap_or(""));
-            crate::i18n::init(lang);
-            if let Some(w) = window.upgrade() {
-                w.close();
-            }
-            build_window(&app, Arc::clone(&db));
-        }
+    albums_view.set_on_play({
+        let cb = Rc::clone(&play_cb);
+        move |tracks, idx| cb(tracks, idx)
     });
-    btn_lang_auto.connect_toggled(clone!(
-        #[strong]
-        apply_language,
-        move |btn| {
-            if btn.is_active() {
-                apply_language(None);
-            }
-        }
-    ));
-    btn_lang_en.connect_toggled(clone!(
-        #[strong]
-        apply_language,
-        move |btn| {
-            if btn.is_active() {
-                apply_language(Some("en"));
-            }
-        }
-    ));
-    btn_lang_es.connect_toggled(clone!(
-        #[strong]
-        apply_language,
-        move |btn| {
-            if btn.is_active() {
-                apply_language(Some("es"));
-            }
-        }
-    ));
+    artists_view.set_on_play({
+        let cb = Rc::clone(&play_cb);
+        move |tracks, idx| cb(tracks, idx)
+    });
+    lib_view.borrow().set_on_play_all({
+        let cb = Rc::clone(&play_cb);
+        move |tracks, idx| cb(tracks, idx)
+    });
+    lib_view.borrow().set_on_activate({
+        let cb = Rc::clone(&play_cb);
+        move |tracks, idx| cb(tracks, idx)
+    });
 
-    item_lastfm.connect_clicked(clone!(
-        #[strong]
-        window,
-        #[strong]
-        db,
-        #[strong]
-        lastfm,
-        #[weak]
-        popover,
-        move |_| {
-            popover.popdown();
-            show_lastfm_dialog(&window, Arc::clone(&db), Arc::clone(&lastfm));
-        }
-    ));
-
-    item_reset.connect_clicked(clone!(
-        #[strong]
-        window,
-        #[strong]
-        views,
-        #[strong]
-        scan_loading_box,
-        #[strong]
-        scan_spinner,
-        #[weak]
-        popover,
-        move |_| {
-            popover.popdown();
-            show_reset_dialog(
-                &window,
-                views.clone(),
-                scan_loading_box.clone(),
-                scan_spinner.clone(),
-            );
-        }
-    ));
-
-    item_about.connect_clicked(clone!(
-        #[strong]
-        window,
-        #[weak]
-        popover,
-        move |_| {
-            popover.popdown();
-            let about = adw::AboutDialog::builder()
-                .application_name("Audra")
-                .application_icon("io.github.amurpo.audra")
-                .developer_name("Daniel Avila")
-                .version(env!("CARGO_PKG_VERSION"))
-                .comments(gettext("Native music player with Last.fm scrobbling"))
-                .copyright("© Daniel Avila")
-                .license_type(gtk4::License::Gpl30)
-                .website("https://github.com/amurpo/audra")
-                .issue_url("https://github.com/amurpo/audra/issues")
-                .translator_credits(gettext("translator-credits"))
-                .build();
-            about.add_credit_section(
-                Some("Remix Icon"),
-                &["https://remixicon.com — Remix Icon License v1.0"],
-            );
-            about.add_css_class("audra-shaded");
-            about.present(Some(&window));
-        }
-    ));
-
-    albums_view.set_on_play(make_play_callback(
-        Rc::clone(&player),
-        Rc::clone(&bar),
-        Arc::clone(&db),
-        Rc::clone(&notify_now_playing),
-        Rc::clone(&highlight_track),
-        Rc::clone(&cover_index),
-    ));
-    artists_view.set_on_play(make_play_callback(
-        Rc::clone(&player),
-        Rc::clone(&bar),
-        Arc::clone(&db),
-        Rc::clone(&notify_now_playing),
-        Rc::clone(&highlight_track),
-        Rc::clone(&cover_index),
-    ));
-    lib_view.borrow().set_on_play_all(make_play_callback(
-        Rc::clone(&player),
-        Rc::clone(&bar),
-        Arc::clone(&db),
-        Rc::clone(&notify_now_playing),
-        Rc::clone(&highlight_track),
-        Rc::clone(&cover_index),
-    ));
-    {
-        let play_cb = make_play_callback(
-            Rc::clone(&player),
-            Rc::clone(&bar),
-            Arc::clone(&db),
-            Rc::clone(&notify_now_playing),
-            Rc::clone(&highlight_track),
-            Rc::clone(&cover_index),
-        );
-        lib_view.borrow().set_on_activate(play_cb);
-    }
-
-    wire_transport_controls(
-        &bar,
-        &player,
-        Arc::clone(&db),
-        Rc::clone(&notify_now_playing),
-        Rc::clone(&highlight_track),
-        Rc::clone(&cover_index),
-    );
+    wire_transport_controls(&ctx);
 
     // Apply saved volume (explicitly set player + label before triggering the scale signal)
     player.borrow_mut().set_volume(saved_vol as f32);
@@ -956,23 +527,38 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         .set_text(&format!("{:.0}%", saved_vol * 100.0));
     bar.vol_scale.set_value(saved_vol);
 
-    // Persist volume changes to DB
+    // Persist volume changes to DB, debounced: value_changed fires for every
+    // pixel of a drag, so each change re-arms a 300 ms timer and only the
+    // final value is written.
+    let vol_save_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
     bar.vol_scale.connect_value_changed(clone!(
         #[strong]
         db,
         move |scale| {
-            let _ = db
-                .lock()
-                .unwrap()
-                .set_setting("volume", &scale.value().to_string());
+            if let Some(prev) = vol_save_timer.borrow_mut().take() {
+                prev.remove();
+            }
+            let value = scale.value();
+            let db = db.clone();
+            let timer = Rc::clone(&vol_save_timer);
+            let id =
+                glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
+                    timer.borrow_mut().take();
+                    let _ = db.lock().unwrap().set_volume(value);
+                });
+            *vol_save_timer.borrow_mut() = Some(id);
         }
     ));
 
-    let (mpris_tx, mpris_rx) = std::sync::mpsc::channel();
+    let (mpris_tx, mpris_rx) = async_channel::unbounded();
     let mpris_cell: crate::ui::playback::MprisHandle =
         std::rc::Rc::new(std::cell::RefCell::new(None));
 
-    // Windows SMTC: wire the command-drain timer unconditionally so it is
+    // Live cover sync: a cover change from the picker repaints the bar, tint
+    // and OS controls immediately when it hits the album that's playing.
+    wire_cover_sync(&ctx, Rc::clone(&mpris_cell));
+
+    // Windows SMTC: wire the command-drain future unconditionally so it is
     // ready before the first event arrives. Sender<T>: Clone lets the
     // connect_map handler below supply a fresh tx for each attempt without
     // rebinding the receiver.
@@ -1042,15 +628,10 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     }
 
     start_player_timer(
-        Rc::clone(&player),
-        Rc::clone(&bar),
+        ctx,
         Rc::clone(&scrobble_tracker),
         Arc::clone(&lastfm),
-        Arc::clone(&db),
-        Rc::clone(&notify_now_playing),
-        Rc::clone(&highlight_track),
         window.downgrade(),
         mpris_cell,
-        Rc::clone(&cover_index),
     );
 }

@@ -3,6 +3,7 @@ use anyhow::Result;
 use lofty::prelude::*;
 use lofty::probe::Probe;
 use lofty::tag::ItemKey;
+use std::collections::HashMap;
 use std::path::Path;
 use walkdir::WalkDir;
 
@@ -11,8 +12,26 @@ use walkdir::WalkDir;
 // library and then fail at play time.
 const AUDIO_EXTS: &[&str] = &["mp3", "flac", "ogg", "wav"];
 
-pub fn scan_folder(folder: &str) -> Vec<Track> {
-    WalkDir::new(folder)
+/// Outcome of one folder scan.
+///
+/// `tracks` holds only new files and files whose mtime changed since the last
+/// scan — the ones whose tags were actually (re-)read. `found_paths` lists
+/// every audio file seen, including unchanged ones, so stale-row cleanup
+/// (`remove_missing_from_folder`) still sees the full picture.
+pub struct ScanResult {
+    pub tracks: Vec<Track>,
+    pub found_paths: Vec<String>,
+}
+
+/// Scan `folder` for audio files. `known_mtimes` (path → mtime as stored in
+/// the DB) makes the scan incremental: a file whose on-disk mtime matches its
+/// stored one is counted as found but its tags are not re-read. Pass an empty
+/// map to force a full read of every file.
+pub fn scan_folder(folder: &str, known_mtimes: &HashMap<String, i64>) -> ScanResult {
+    let mut tracks = Vec::new();
+    let mut found_paths = Vec::new();
+
+    let entries = WalkDir::new(folder)
         .follow_links(true)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -23,9 +42,40 @@ pub fn scan_folder(folder: &str) -> Vec<Track> {
                 .and_then(|x| x.to_str())
                 .map(|x| AUDIO_EXTS.contains(&x.to_lowercase().as_str()))
                 .unwrap_or(false)
-        })
-        .filter_map(|e| read_track(e.path()).ok())
-        .collect()
+        });
+
+    for entry in entries {
+        let path_str = entry.path().to_string_lossy().to_string();
+        let mtime = file_mtime(&entry);
+        found_paths.push(path_str.clone());
+        if let (Some(mt), Some(known)) = (mtime, known_mtimes.get(&path_str)) {
+            if mt == *known {
+                continue; // unchanged since last scan: skip the tag read
+            }
+        }
+        if let Ok(mut track) = read_track(entry.path()) {
+            track.mtime = mtime;
+            tracks.push(track);
+        }
+    }
+
+    ScanResult {
+        tracks,
+        found_paths,
+    }
+}
+
+/// Modification time as Unix seconds, or `None` when the metadata is
+/// unavailable (the file is then always re-read — the safe fallback).
+fn file_mtime(entry: &walkdir::DirEntry) -> Option<i64> {
+    entry
+        .metadata()
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs() as i64)
 }
 
 fn read_track(path: &Path) -> Result<Track> {
@@ -59,6 +109,9 @@ fn read_track(path: &Path) -> Result<Track> {
         duration_secs: Some(duration_secs),
         disc_num,
         album_artist,
+        // Filled by `scan_folder` from the directory entry; reading it here
+        // would cost an extra stat per file.
+        mtime: None,
     })
 }
 
@@ -113,10 +166,17 @@ mod tests {
         std::fs::write(path, wav).unwrap();
     }
 
+    /// Full (non-incremental) scan: no known mtimes.
+    fn scan_all(folder: &str) -> ScanResult {
+        scan_folder(folder, &HashMap::new())
+    }
+
     #[test]
     fn scan_folder_on_empty_dir_returns_nothing() {
         let dir = TmpDir::new();
-        assert!(scan_folder(dir.path().to_str().unwrap()).is_empty());
+        let result = scan_all(dir.path().to_str().unwrap());
+        assert!(result.tracks.is_empty());
+        assert!(result.found_paths.is_empty());
     }
 
     #[test]
@@ -124,7 +184,9 @@ mod tests {
         let dir = TmpDir::new();
         std::fs::write(dir.path().join("notes.txt"), b"hello").unwrap();
         std::fs::write(dir.path().join("cover.jpg"), b"\xff\xd8\xff").unwrap();
-        assert!(scan_folder(dir.path().to_str().unwrap()).is_empty());
+        let result = scan_all(dir.path().to_str().unwrap());
+        assert!(result.tracks.is_empty());
+        assert!(result.found_paths.is_empty());
     }
 
     #[test]
@@ -136,7 +198,7 @@ mod tests {
         write_wav(&sub.join("Deep Cut.wav"));
         std::fs::write(dir.path().join("readme.md"), b"x").unwrap();
 
-        let mut tracks = scan_folder(dir.path().to_str().unwrap());
+        let mut tracks = scan_all(dir.path().to_str().unwrap()).tracks;
         tracks.sort_by(|a, b| a.path.cmp(&b.path));
         assert_eq!(tracks.len(), 2, "both nested and top-level WAVs found");
         // No tags => title falls back to the file stem.
@@ -147,5 +209,42 @@ mod tests {
         assert!(titles.contains(&"song".to_string()));
         assert!(titles.contains(&"Deep Cut".to_string()));
         assert!(tracks.iter().all(|t| t.duration_secs.is_some()));
+        // Every scanned track carries the mtime the incremental rescan needs.
+        assert!(tracks.iter().all(|t| t.mtime.is_some()));
+    }
+
+    #[test]
+    fn rescan_skips_unchanged_files_but_still_reports_them_found() {
+        let dir = TmpDir::new();
+        write_wav(&dir.path().join("a.wav"));
+        write_wav(&dir.path().join("b.wav"));
+
+        let first = scan_all(dir.path().to_str().unwrap());
+        assert_eq!(first.tracks.len(), 2);
+
+        // Simulate the DB state after the first scan.
+        let known: HashMap<String, i64> = first
+            .tracks
+            .iter()
+            .filter_map(|t| t.mtime.map(|m| (t.path.clone(), m)))
+            .collect();
+        assert_eq!(known.len(), 2);
+
+        let second = scan_folder(dir.path().to_str().unwrap(), &known);
+        assert!(second.tracks.is_empty(), "unchanged files must be skipped");
+        assert_eq!(
+            second.found_paths.len(),
+            2,
+            "skipped files still count as found (stale-row cleanup needs them)"
+        );
+
+        // A changed mtime forces a re-read of just that file.
+        let mut stale = known.clone();
+        if let Some(m) = stale.get_mut(&first.tracks[0].path) {
+            *m -= 10;
+        }
+        let third = scan_folder(dir.path().to_str().unwrap(), &stale);
+        assert_eq!(third.tracks.len(), 1);
+        assert_eq!(third.tracks[0].path, first.tracks[0].path);
     }
 }

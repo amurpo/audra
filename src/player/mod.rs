@@ -1,3 +1,4 @@
+pub mod decoder;
 pub mod engine;
 pub mod mpris;
 pub mod replaygain;
@@ -76,7 +77,10 @@ impl Player {
             Some(mode) => read_gain(&track.path, mode),
             None => 1.0,
         };
-        self.engine.play_with_gain(&track.path, gain)?;
+        if let Err(e) = self.engine.play_with_gain(&track.path, gain) {
+            log::error!("playback failed for {}: {e:#}", track.path);
+            return Err(e);
+        }
         self.engine.set_volume(self.volume);
         self.state = PlayerState::Playing;
         Ok(self.queue.get(idx))
@@ -189,6 +193,7 @@ mod tests {
             duration_secs: Some(100),
             disc_num: None,
             album_artist: None,
+            mtime: None,
         }
     }
 

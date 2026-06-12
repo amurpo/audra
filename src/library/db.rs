@@ -39,7 +39,8 @@ impl Database {
                 duration     INTEGER,
                 added_at     TEXT NOT NULL,
                 disc_num     INTEGER,
-                album_artist TEXT
+                album_artist TEXT,
+                mtime        INTEGER
             );
             CREATE TABLE IF NOT EXISTS playlists (
                 id   INTEGER PRIMARY KEY,
@@ -74,6 +75,7 @@ impl Database {
         for stmt in [
             "ALTER TABLE tracks ADD COLUMN disc_num INTEGER",
             "ALTER TABLE tracks ADD COLUMN album_artist TEXT",
+            "ALTER TABLE tracks ADD COLUMN mtime INTEGER",
         ] {
             let _ = self.conn.execute(stmt, []);
         }
@@ -86,13 +88,13 @@ impl Database {
         let tx = self.conn.unchecked_transaction()?;
         {
             let mut stmt = tx.prepare_cached(
-                "INSERT INTO tracks (path, title, artist, album, track_num, duration, added_at, disc_num, album_artist)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), ?7, ?8)
+                "INSERT INTO tracks (path, title, artist, album, track_num, duration, added_at, disc_num, album_artist, mtime)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), ?7, ?8, ?9)
                  ON CONFLICT(path) DO UPDATE SET
                    title=excluded.title, artist=excluded.artist,
                    album=excluded.album, track_num=excluded.track_num,
                    duration=excluded.duration, disc_num=excluded.disc_num,
-                   album_artist=excluded.album_artist",
+                   album_artist=excluded.album_artist, mtime=excluded.mtime",
             )?;
             for t in tracks {
                 stmt.execute(params![
@@ -103,7 +105,8 @@ impl Database {
                     t.track_num,
                     t.duration_secs,
                     t.disc_num,
-                    t.album_artist
+                    t.album_artist,
+                    t.mtime
                 ])?;
             }
         }
@@ -113,7 +116,7 @@ impl Database {
 
     pub fn all_tracks(&self) -> Result<Vec<Track>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, path, title, artist, album, track_num, duration, disc_num, album_artist FROM tracks ORDER BY artist, album, disc_num, track_num"
+            "SELECT id, path, title, artist, album, track_num, duration, disc_num, album_artist, mtime FROM tracks ORDER BY artist, album, disc_num, track_num"
         )?;
         let tracks = stmt
             .query_map([], |row| {
@@ -127,10 +130,25 @@ impl Database {
                     duration_secs: row.get(6)?,
                     disc_num: row.get(7)?,
                     album_artist: row.get(8)?,
+                    mtime: row.get(9)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(tracks)
+    }
+
+    /// Map of `path → stored mtime` for every track that has one. Drives the
+    /// incremental rescan: files whose on-disk mtime matches are not re-read.
+    /// Rows without an mtime (written before the column existed) are simply
+    /// absent, so those files get re-read once and then carry an mtime.
+    pub fn path_mtimes(&self) -> Result<std::collections::HashMap<String, i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path, mtime FROM tracks WHERE mtime IS NOT NULL")?;
+        let map = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<std::collections::HashMap<String, i64>>>()?;
+        Ok(map)
     }
 
     pub fn queue_scrobble(&self, track_id: i64, played_at: &str) -> Result<()> {
@@ -160,6 +178,7 @@ impl Database {
                         duration_secs: row.get(7)?,
                         disc_num: None,
                         album_artist: None,
+                        mtime: None,
                     },
                     row.get::<_, String>(8)?,
                 ))
@@ -352,6 +371,7 @@ mod tests {
             duration_secs: Some(180),
             disc_num: None,
             album_artist: None,
+            mtime: None,
         }
     }
 
@@ -406,6 +426,25 @@ mod tests {
             .map(|t| t.path)
             .collect();
         assert_eq!(paths, vec!["/m/1.mp3", "/m/2.mp3", "/m/3.mp3"]);
+    }
+
+    #[test]
+    fn path_mtimes_returns_only_rows_with_mtime() {
+        let db = db();
+        let mut with = track("/m/a.mp3", "A", "X", 1);
+        with.mtime = Some(1700000000);
+        let without = track("/m/b.mp3", "A", "X", 2); // mtime: None
+        db.upsert_tracks(&[with, without]).unwrap();
+
+        let map = db.path_mtimes().unwrap();
+        assert_eq!(map.len(), 1, "NULL mtimes must be absent from the map");
+        assert_eq!(map.get("/m/a.mp3"), Some(&1700000000));
+
+        // Upserting again with a new mtime updates the stored value.
+        let mut updated = track("/m/a.mp3", "A", "X", 1);
+        updated.mtime = Some(1700000999);
+        db.upsert_tracks(&[updated]).unwrap();
+        assert_eq!(db.path_mtimes().unwrap().get("/m/a.mp3"), Some(&1700000999));
     }
 
     #[test]

@@ -11,7 +11,7 @@ const JOST_FONT_CSS: &str = "
 }
 ";
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TintMode {
     /// No dynamic tint; use the theme's default surfaces.
     Off,

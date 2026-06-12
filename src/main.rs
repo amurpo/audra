@@ -3,6 +3,7 @@ mod i18n;
 mod library;
 mod player;
 mod scrobbler;
+mod settings;
 mod ui;
 
 use adw::prelude::*;
@@ -53,7 +54,7 @@ fn main() {
         {
             let g = db.lock().unwrap();
             if let Ok(tracks) = g.all_tracks() {
-                let mf = g.get_setting("music_folder");
+                let mf = g.music_folder();
                 let cover_map = library::dedup::canonical_key_map(&tracks, mf.as_deref());
                 let _ = g.migrate_cover_keys(&cover_map);
             }
@@ -61,8 +62,8 @@ fn main() {
 
         // Re-init i18n with the user's saved preference so the rest of the UI
         // honours it.
-        let lang = db.lock().unwrap().get_setting("language");
-        i18n::init(lang.as_deref().filter(|s| !s.is_empty()));
+        let lang = db.lock().unwrap().language();
+        i18n::init(lang.as_deref());
 
         ui::main_window::build_window(app, db);
     });

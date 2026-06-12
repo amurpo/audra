@@ -1,8 +1,9 @@
 //! Two-pass async image pipeline shared by every grid that fetches artwork.
 //!
 //! Unifies what used to be `start_cover_fetch` (albums) and `start_photo_fetch`
-//! (artists): a worker thread produces decoded pixel data, a GTK-thread timer
-//! drains a queue and applies textures to widgets.
+//! (artists): a worker thread produces decoded pixel data and sends it over a
+//! channel; a future on the GTK main loop applies textures to widgets as each
+//! result arrives — no polling timer, no per-poll latency.
 //!
 //! Why two passes:
 //! - **Fast lane** runs over every item with no delay; ideal for local sources
@@ -15,9 +16,6 @@
 //! need a third state — *explicit skip* — for items the user has cleared on
 //! purpose (empty bytes in the DB). Without it, those items would loop
 //! forever through the slow lane.
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-
 use glib;
 use gtk4::gdk;
 
@@ -33,8 +31,6 @@ pub enum FetchOutcome {
 pub struct ImagePipelineConfig {
     /// Square edge in pixels used for the in-memory scaled bitmap.
     pub target_size: i32,
-    /// How often the UI drains the result queue.
-    pub poll_ms: u32,
     /// Delay between slow-lane calls. Set to 0 to disable rate limiting.
     pub slow_delay_ms: u64,
 }
@@ -45,7 +41,6 @@ pub type SlowFetcher<K> = Box<dyn Fn(&K) -> Option<Vec<u8>> + Send>;
 
 /// One ready-to-paint result on the worker side: `(key, pixels, rowstride, has_alpha)`.
 type ScaledResult<K> = (K, Vec<u8>, i32, bool);
-type ResultQueue<K> = Arc<Mutex<Vec<ScaledResult<K>>>>;
 
 /// Run the pipeline.
 ///
@@ -71,11 +66,7 @@ pub fn run<K, FF, AP>(
         return;
     }
 
-    let queue: ResultQueue<K> = Arc::new(Mutex::new(Vec::new()));
-    let finished = Arc::new(AtomicBool::new(false));
-
-    let queue_tx = Arc::clone(&queue);
-    let finished_tx = Arc::clone(&finished);
+    let (tx, rx) = async_channel::unbounded::<ScaledResult<K>>();
     let target_size = config.target_size;
     let slow_delay = std::time::Duration::from_millis(config.slow_delay_ms);
 
@@ -86,10 +77,7 @@ pub fn run<K, FF, AP>(
             match fetch_fast(item) {
                 FetchOutcome::Got(bytes) => {
                     if let Some((pixels, stride, alpha)) = scale_to_pixels(&bytes, target_size) {
-                        queue_tx
-                            .lock()
-                            .unwrap()
-                            .push((item.clone(), pixels, stride, alpha));
+                        let _ = tx.send_blocking((item.clone(), pixels, stride, alpha));
                     }
                 }
                 FetchOutcome::Skip => {}
@@ -108,27 +96,18 @@ pub fn run<K, FF, AP>(
                 }
                 if let Some(bytes) = slow(&item) {
                     if let Some((pixels, stride, alpha)) = scale_to_pixels(&bytes, target_size) {
-                        queue_tx.lock().unwrap().push((item, pixels, stride, alpha));
+                        let _ = tx.send_blocking((item, pixels, stride, alpha));
                     }
                 }
             }
         }
-
-        finished_tx.store(true, Ordering::Relaxed);
+        // Dropping `tx` here closes the channel and ends the UI future below.
     });
 
-    let poll = std::time::Duration::from_millis(config.poll_ms as u64);
-    glib::timeout_add_local(poll, move || {
-        let mut q = queue.lock().unwrap();
-        for (k, pixels, stride, alpha) in q.drain(..) {
+    glib::spawn_future_local(async move {
+        while let Ok((k, pixels, stride, alpha)) = rx.recv().await {
             let texture = pixels_to_texture(pixels, stride, alpha, target_size);
             apply(&k, texture);
-        }
-        drop(q);
-        if finished.load(Ordering::Relaxed) {
-            glib::ControlFlow::Break
-        } else {
-            glib::ControlFlow::Continue
         }
     });
 }

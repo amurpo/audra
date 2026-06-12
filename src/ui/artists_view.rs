@@ -26,6 +26,9 @@ pub struct ArtistsView {
     pub root: adw::NavigationView,
     flow: FlowBox,
     artists_list: Rc<RefCell<Vec<Artist>>>,
+    /// Lowercased artist name per entry in `artists_list`, in the same order.
+    /// Precomputed on load so filtering is one `contains` per child.
+    search_keys: Rc<RefCell<Vec<String>>>,
     all_albums: Rc<RefCell<Vec<Album>>>,
     on_play: Rc<RefCell<Option<PlayCallback>>>,
     avatars: AvatarMap,
@@ -76,6 +79,10 @@ impl ArtistsView {
             let now_playing_c = Rc::clone(&now_playing);
 
             flow.connect_child_activated(move |_, child| {
+                // Double-click guard: see the equivalent check in AlbumsView.
+                if nav_c.visible_page().and_then(|p| p.tag()).as_deref() != Some("artists-root") {
+                    return;
+                }
                 let idx = child.index() as usize;
                 let artist_name = artists_c.borrow().get(idx).map(|a| a.name.clone());
                 if let Some(name) = artist_name {
@@ -141,6 +148,7 @@ impl ArtistsView {
             root: nav,
             flow,
             artists_list,
+            search_keys: Rc::new(RefCell::new(Vec::new())),
             all_albums,
             on_play,
             avatars,
@@ -158,14 +166,12 @@ impl ArtistsView {
             self.flow.set_filter_func(|_| true);
         } else {
             let q = query.to_lowercase();
-            let artists = Rc::clone(&self.artists_list);
+            let keys = Rc::clone(&self.search_keys);
             self.flow.set_filter_func(move |child| {
                 let idx = child.index() as usize;
-                if let Some(artist) = artists.borrow().get(idx) {
-                    artist.name.to_lowercase().contains(&q)
-                } else {
-                    false
-                }
+                keys.borrow()
+                    .get(idx)
+                    .is_some_and(|key| key.contains(&q))
             });
         }
     }
@@ -192,6 +198,8 @@ impl ArtistsView {
             names_to_fetch.push(artist.name.clone());
         }
 
+        *self.search_keys.borrow_mut() =
+            artists.iter().map(|a| a.name.to_lowercase()).collect();
         *self.artists_list.borrow_mut() = artists;
         *self.all_albums.borrow_mut() = albums;
 
@@ -214,7 +222,6 @@ impl ArtistsView {
             artists,
             ImagePipelineConfig {
                 target_size: AVATAR_SIZE,
-                poll_ms: 400,
                 slow_delay_ms: 0,
             },
             |_artist: &String| FetchOutcome::Miss,
@@ -310,6 +317,10 @@ fn make_artist_detail_page(
         let nav_c = nav.clone();
         let now_playing_c = Rc::clone(&now_playing);
         flow.connect_child_activated(move |_, child| {
+            // Double-click guard: see the equivalent check in AlbumsView.
+            if nav_c.visible_page().and_then(|p| p.tag()).as_deref() != Some("artist-detail") {
+                return;
+            }
             let idx = child.index() as usize;
             if let Some(album) = albums_c.get(idx) {
                 let page =
@@ -343,7 +354,12 @@ fn make_artist_detail_page(
     scroll.set_child(Some(&grid_clamp));
     content.append(&scroll);
 
-    adw::NavigationPage::new(&content, artist_name)
+    let page = adw::NavigationPage::new(&content, artist_name);
+    // Tagged so the album grid above can tell whether this page is still the
+    // visible one before pushing an album detail. Unique in the stack: the
+    // artists-root guard ensures at most one artist detail at a time.
+    page.set_tag(Some("artist-detail"));
+    page
 }
 
 fn make_artist_album_card(album: &Album, db: Arc<Mutex<Database>>) -> FlowBoxChild {

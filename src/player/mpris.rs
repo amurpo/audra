@@ -11,7 +11,6 @@ use libadwaita as adw;
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
 };
-use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 /// Transport command translated from the OS media controls (DIP: the app
@@ -37,7 +36,10 @@ impl Mpris {
     /// Build the OS media controls and forward their events into `tx`.
     /// Returns `None` if the platform service is unavailable (e.g. no D-Bus
     /// session bus, or the native HWND is not allocated yet on Windows).
-    pub fn new(window: &adw::ApplicationWindow, tx: Sender<MprisCommand>) -> Option<Self> {
+    pub fn new(
+        window: &adw::ApplicationWindow,
+        tx: async_channel::Sender<MprisCommand>,
+    ) -> Option<Self> {
         let hwnd = window_handle(window);
 
         // Windows: souvlaki panics on a None HWND ("Windows media controls
@@ -69,7 +71,9 @@ impl Mpris {
                     MediaControlEvent::Raise => MprisCommand::Raise,
                     _ => return,
                 };
-                let _ = tx.send(cmd);
+                // Unbounded channel: send_blocking never actually blocks
+                // souvlaki's event thread.
+                let _ = tx.send_blocking(cmd);
             })
             .is_err()
         {
@@ -130,6 +134,14 @@ impl Mpris {
                 .duration_secs
                 .map(|d| Duration::from_secs(d.max(0) as u64)),
         });
+    }
+
+    /// Re-push metadata even though the track path hasn't changed — used when
+    /// the *cover* changed for the currently playing track, which the
+    /// same-path guard in [`update_track`](Self::update_track) would swallow.
+    pub fn refresh_metadata(&mut self, track: Option<&Track>, cover: Option<&[u8]>) {
+        self.last_track = None;
+        self.update_track(track, cover);
     }
 
     pub fn set_playback(&mut self, state: &PlayerState, position: Duration) {

@@ -14,7 +14,7 @@
 //!
 //! Width: the whole list is wrapped in `adw::Clamp` (max 760 px) so on wide
 //! monitors it doesn't look like a GNOME-Music-style spreadsheet.
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk4::prelude::*;
@@ -46,6 +46,11 @@ pub struct TrackListConfig {
     /// the Songs view and album-detail pages set this to true so the two
     /// surfaces look identical.
     pub show_action_row: bool,
+    /// When the loaded tracks span more than one disc (a dedup-folded
+    /// multi-disc release), show a dim "Disc N" header above each disc's
+    /// first row and number tracks per disc. Single-disc albums and the
+    /// global Songs list are unaffected.
+    pub show_disc_headers: bool,
 }
 
 impl TrackListConfig {
@@ -57,6 +62,7 @@ impl TrackListConfig {
             show_artist: true,
             show_duration: true,
             show_action_row: true,
+            show_disc_headers: false,
         }
     }
     /// Album detail: shows the track number (artist is implied by the page).
@@ -66,6 +72,7 @@ impl TrackListConfig {
             show_artist: false,
             show_duration: true,
             show_action_row: true,
+            show_disc_headers: true,
         }
     }
 }
@@ -84,7 +91,15 @@ pub struct TrackList {
     pub root: gtk4::Widget,
     model: StringList,
     full_tracks: RefCell<Vec<Track>>,
+    /// Lowercased search haystack per entry in `full_tracks`, in the same
+    /// order. Precomputed on `load` so a keystroke only does one `contains`
+    /// per row instead of three fresh `to_lowercase` allocations.
+    search_keys: RefCell<Vec<String>>,
     displayed: Rc<RefCell<Vec<Track>>>,
+    /// True when the displayed tracks span more than one disc — the gate for
+    /// the per-disc headers and per-disc numbering. Recomputed on every
+    /// `load`/`filter`; shared with the factory closures.
+    multi_disc: Rc<Cell<bool>>,
     active_filter: RefCell<String>,
     /// `[N songs]` label inside the action row, or `None` when the action row
     /// is disabled. Updated on every `load`/`filter`.
@@ -96,6 +111,7 @@ pub struct TrackList {
 impl TrackList {
     pub fn new(cfg: TrackListConfig, now_playing: Rc<NowPlaying>) -> Rc<Self> {
         let displayed: Rc<RefCell<Vec<Track>>> = Rc::new(RefCell::new(Vec::new()));
+        let multi_disc: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         // Declared up here (instead of next to `this`) so the per-row icon click
         // handler built in `connect_setup` can capture it.
         let on_activate: ActivateCb = Rc::new(RefCell::new(None));
@@ -107,6 +123,7 @@ impl TrackList {
             let now_playing_setup = Rc::clone(&now_playing);
             let displayed_setup = Rc::clone(&displayed);
             let on_activate_setup = Rc::clone(&on_activate);
+            let multi_disc_setup = Rc::clone(&multi_disc);
             factory.connect_setup(move |_, item| {
                 let item = item.downcast_ref::<ListItem>().unwrap();
 
@@ -170,7 +187,29 @@ impl TrackList {
                 dur.set_visible(cfg.show_duration);
                 row.append(&dur);
 
-                item.set_child(Some(&row));
+                // Disc header: a dim "Disc N" caption above the row, shown by
+                // `connect_bind` only on the first row of each disc of a
+                // multi-disc release. It lives *inside* the item (wrapper Box)
+                // so the ListView positions keep their 1:1 mapping with the
+                // displayed tracks — activation indices and the now-playing
+                // repaint are untouched.
+                if cfg.show_disc_headers {
+                    let header = Label::new(None);
+                    header.add_css_class("caption");
+                    header.add_css_class("dim-label");
+                    header.set_xalign(0.0);
+                    header.set_margin_top(10);
+                    header.set_margin_bottom(2);
+                    header.set_margin_start(12);
+                    header.set_visible(false);
+
+                    let wrapper = GtkBox::new(Orientation::Vertical, 0);
+                    wrapper.append(&header);
+                    wrapper.append(&row);
+                    item.set_child(Some(&wrapper));
+                } else {
+                    item.set_child(Some(&row));
+                }
 
                 // Hover swaps the number for a ▶ on non-playing rows. The hover
                 // state lives in a CSS class so the recycling `connect_bind` can
@@ -182,13 +221,22 @@ impl TrackList {
                     let item_weak = item.downgrade();
                     let np = Rc::clone(&now_playing_setup);
                     let disp = Rc::clone(&displayed_setup);
+                    let multi = Rc::clone(&multi_disc_setup);
                     motion.connect_enter(move |_, _, _| {
                         let (Some(row), Some(item)) = (row_weak.upgrade(), item_weak.upgrade())
                         else {
                             return;
                         };
                         row.add_css_class("row-hover");
-                        repaint_slot_from_item(&row, &item, &np, &disp, cfg.show_track_number);
+                        let per_disc = cfg.show_disc_headers && multi.get();
+                        repaint_slot_from_item(
+                            &row,
+                            &item,
+                            &np,
+                            &disp,
+                            cfg.show_track_number,
+                            per_disc,
+                        );
                     });
                 }
                 {
@@ -196,13 +244,22 @@ impl TrackList {
                     let item_weak = item.downgrade();
                     let np = Rc::clone(&now_playing_setup);
                     let disp = Rc::clone(&displayed_setup);
+                    let multi = Rc::clone(&multi_disc_setup);
                     motion.connect_leave(move |_| {
                         let (Some(row), Some(item)) = (row_weak.upgrade(), item_weak.upgrade())
                         else {
                             return;
                         };
                         row.remove_css_class("row-hover");
-                        repaint_slot_from_item(&row, &item, &np, &disp, cfg.show_track_number);
+                        let per_disc = cfg.show_disc_headers && multi.get();
+                        repaint_slot_from_item(
+                            &row,
+                            &item,
+                            &np,
+                            &disp,
+                            cfg.show_track_number,
+                            per_disc,
+                        );
                     });
                 }
                 row.add_controller(motion);
@@ -243,15 +300,37 @@ impl TrackList {
         {
             let displayed_ref = Rc::clone(&displayed);
             let now_playing_ref = Rc::clone(&now_playing);
+            let multi_disc_ref = Rc::clone(&multi_disc);
             factory.connect_bind(move |_, item| {
                 let item = item.downcast_ref::<ListItem>().unwrap();
                 let pos = item.position() as usize;
                 let disp = displayed_ref.borrow();
                 let Some(track) = disp.get(pos) else { return };
 
-                let Some(row) = item.child().and_downcast::<GtkBox>() else {
+                let Some(child) = item.child() else { return };
+                let Some(row) = track_row_of(&child) else {
                     return;
                 };
+                let per_disc = cfg.show_disc_headers && multi_disc_ref.get();
+                if cfg.show_disc_headers {
+                    if let Some(header) = child
+                        .downcast_ref::<GtkBox>()
+                        .and_then(|w| w.first_child())
+                        .and_downcast::<Label>()
+                    {
+                        let starts_disc = pos == 0
+                            || disp.get(pos - 1).map(|p| p.disc_num) != Some(track.disc_num);
+                        let show = per_disc && starts_disc;
+                        if show {
+                            header.set_text(&format!(
+                                "{} {}",
+                                gettext("Disc"),
+                                track.disc_num.unwrap_or(1)
+                            ));
+                        }
+                        header.set_visible(show);
+                    }
+                }
                 // Stash the bound position so the bus-driven repaint can resolve
                 // this realized row back to its track without the ListItem.
                 unsafe { row.set_data(ROW_POS_KEY, pos) };
@@ -284,7 +363,7 @@ impl TrackList {
                     &now_playing_ref,
                     &track.path,
                     cfg.show_track_number,
-                    pos + 1,
+                    display_no(track, pos, per_disc),
                 );
             });
         }
@@ -389,7 +468,9 @@ impl TrackList {
             root: outer.upcast(),
             model,
             full_tracks: RefCell::new(Vec::new()),
+            search_keys: RefCell::new(Vec::new()),
             displayed: Rc::clone(&displayed),
+            multi_disc: Rc::clone(&multi_disc),
             active_filter: RefCell::new(String::new()),
             on_activate: Rc::clone(&on_activate),
             lbl_count,
@@ -423,12 +504,13 @@ impl TrackList {
             let lv_weak = list_view.downgrade();
             let displayed_c = Rc::clone(&displayed);
             let np_c = Rc::clone(&now_playing);
-            let show_num = cfg.show_track_number;
+            let multi_c = Rc::clone(&multi_disc);
             now_playing.subscribe(move |_path| {
                 let Some(lv) = lv_weak.upgrade() else {
                     return false;
                 };
-                repaint_now_playing(&lv, &displayed_c, &np_c, show_num);
+                let per_disc = cfg.show_disc_headers && multi_c.get();
+                repaint_now_playing(&lv, &displayed_c, &np_c, cfg.show_track_number, per_disc);
                 true
             });
         }
@@ -438,6 +520,7 @@ impl TrackList {
 
     /// Replace the underlying data set. Reapplies the active filter if any.
     pub fn load(&self, tracks: Vec<Track>) {
+        *self.search_keys.borrow_mut() = tracks.iter().map(search_key).collect();
         *self.full_tracks.borrow_mut() = tracks;
         let filter = self.active_filter.borrow().clone();
         self.apply_filter(&filter);
@@ -471,22 +554,59 @@ impl TrackList {
             self.full_tracks.borrow().clone()
         } else {
             let q = query.to_lowercase();
-            self.full_tracks
-                .borrow()
-                .iter()
-                .filter(|t| {
-                    t.display_title().to_lowercase().contains(&q)
-                        || t.display_artist().to_lowercase().contains(&q)
-                        || t.display_album().to_lowercase().contains(&q)
-                })
-                .cloned()
+            let full = self.full_tracks.borrow();
+            let keys = self.search_keys.borrow();
+            full.iter()
+                .zip(keys.iter())
+                .filter(|(_, key)| key.contains(&q))
+                .map(|(t, _)| t.clone())
                 .collect()
         };
         let n = self.model.n_items();
         let additions: Vec<&str> = displayed.iter().map(|_| "").collect();
+        let discs: std::collections::HashSet<i64> =
+            displayed.iter().map(|t| t.disc_num.unwrap_or(1)).collect();
+        self.multi_disc.set(discs.len() > 1);
         *self.displayed.borrow_mut() = displayed;
         self.model.splice(0, n, &additions);
         self.refresh_count();
+    }
+}
+
+/// Lowercased `"title\nartist\nalbum"` haystack for substring search. Typed
+/// queries never contain `\n`, so a single `contains` over the joined string
+/// matches exactly the same rows as OR-ing `contains` across the three fields,
+/// but allocates once at load time instead of three times per row per keystroke.
+fn search_key(track: &Track) -> String {
+    format!(
+        "{}\n{}\n{}",
+        track.display_title().to_lowercase(),
+        track.display_artist().to_lowercase(),
+        track.display_album().to_lowercase()
+    )
+}
+
+/// Resolve the `audra-track-row` Box from a list item's child, which is either
+/// the row itself or (with disc headers enabled) a vertical wrapper holding
+/// `[header label, row]`.
+fn track_row_of(child: &gtk4::Widget) -> Option<GtkBox> {
+    let b = child.clone().downcast::<GtkBox>().ok()?;
+    if b.has_css_class("audra-track-row") {
+        return Some(b);
+    }
+    b.last_child()
+        .and_downcast::<GtkBox>()
+        .filter(|r| r.has_css_class("audra-track-row"))
+}
+
+/// The number painted in a row's left slot: the position within the list, or
+/// the track's own number when a multi-disc release is shown with per-disc
+/// headers (so each disc reads 1, 2, 3… under its header).
+fn display_no(track: &Track, pos: usize, per_disc: bool) -> usize {
+    if per_disc {
+        track.track_num.map(|n| n as usize).unwrap_or(pos + 1)
+    } else {
+        pos + 1
     }
 }
 
@@ -509,17 +629,15 @@ fn repaint_now_playing(
     displayed: &RefCell<Vec<Track>>,
     np: &NowPlaying,
     show_num: bool,
+    per_disc: bool,
 ) {
     let disp = displayed.borrow();
     let mut child = list_view.first_child();
     while let Some(item_widget) = child {
         child = item_widget.next_sibling();
-        let Some(row) = item_widget.first_child().and_downcast::<GtkBox>() else {
+        let Some(row) = item_widget.first_child().as_ref().and_then(track_row_of) else {
             continue;
         };
-        if !row.has_css_class("audra-track-row") {
-            continue;
-        }
         // Position stashed by `connect_bind`; resolves the recycled row back to
         // its track without holding the ListItem.
         let Some(pos) = (unsafe { row.data::<usize>(ROW_POS_KEY) }) else {
@@ -527,7 +645,13 @@ fn repaint_now_playing(
         };
         let pos = unsafe { *pos.as_ref() };
         if let Some(track) = disp.get(pos) {
-            paint_slot(&row, np, &track.path, show_num, pos + 1);
+            paint_slot(
+                &row,
+                np,
+                &track.path,
+                show_num,
+                display_no(track, pos, per_disc),
+            );
         }
     }
 }
@@ -599,6 +723,7 @@ fn repaint_slot_from_item(
     np: &NowPlaying,
     displayed: &RefCell<Vec<Track>>,
     show_num: bool,
+    per_disc: bool,
 ) {
     let pos = item.position();
     if pos == gtk4::INVALID_LIST_POSITION {
@@ -606,6 +731,80 @@ fn repaint_slot_from_item(
     }
     let disp = displayed.borrow();
     if let Some(track) = disp.get(pos as usize) {
-        paint_slot(row, np, &track.path, show_num, pos as usize + 1);
+        paint_slot(
+            row,
+            np,
+            &track.path,
+            show_num,
+            display_no(track, pos as usize, per_disc),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(title: &str, artist: &str, album: &str) -> Track {
+        Track {
+            id: None,
+            path: "/m/x.mp3".into(),
+            title: Some(title.into()),
+            artist: Some(artist.into()),
+            album: Some(album.into()),
+            track_num: Some(1),
+            duration_secs: Some(180),
+            disc_num: None,
+            album_artist: None,
+            mtime: None,
+        }
+    }
+
+    #[test]
+    fn search_key_lowercases_every_field() {
+        let key = search_key(&track("Hey JUDE", "The BEATLES", "Past Masters"));
+        assert_eq!(key, "hey jude\nthe beatles\npast masters");
+    }
+
+    #[test]
+    fn search_key_matches_each_field_case_insensitively() {
+        let key = search_key(&track("Hey Jude", "The Beatles", "Past Masters"));
+        // A query against any one field hits, regardless of the typed case.
+        assert!(key.contains("jude")); // title
+        assert!(key.contains(&"BEATLES".to_lowercase())); // artist
+        assert!(key.contains("past")); // album
+        assert!(!key.contains("zeppelin"));
+    }
+
+    #[test]
+    fn search_key_does_not_match_across_field_boundaries() {
+        // The regression guard: a query spanning the title/artist seam must
+        // not match, because the `\n` separator (never present in a typed
+        // query) breaks the join. This is what keeps the single `contains`
+        // equivalent to OR-ing `contains` over the three fields.
+        let key = search_key(&track("Hey Jude", "The Beatles", "Past Masters"));
+        assert!(!key.contains("jude the"));
+        assert!(!key.contains("judethe"));
+        assert!(!key.contains("beatles past"));
+    }
+
+    #[test]
+    fn search_key_uses_display_fallbacks_for_missing_tags() {
+        // Untagged fields fall back to the localized "Unknown …" labels, so
+        // they are still searchable rather than producing an empty haystack.
+        let mut t = track("", "", "");
+        t.title = None;
+        t.artist = None;
+        t.album = None;
+        let key = search_key(&t);
+        assert_eq!(
+            key,
+            format!(
+                "{}\n{}\n{}",
+                t.display_title().to_lowercase(),
+                t.display_artist().to_lowercase(),
+                t.display_album().to_lowercase()
+            )
+        );
     }
 }
