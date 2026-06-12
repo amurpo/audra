@@ -26,6 +26,9 @@ pub struct AlbumsView {
     pub root: adw::NavigationView,
     flow: FlowBox,
     albums_data: Rc<RefCell<Vec<Album>>>,
+    /// Lowercased `"name\nartist"` haystack per album, in `albums_data` order.
+    /// Precomputed on load so filtering is one `contains` per child.
+    search_keys: Rc<RefCell<Vec<String>>>,
     covers: CoverMap,
     on_play: PlayCb,
     current_filter: Rc<RefCell<String>>,
@@ -97,6 +100,7 @@ impl AlbumsView {
             root: nav,
             flow,
             albums_data,
+            search_keys: Rc::new(RefCell::new(Vec::new())),
             covers,
             on_play,
             current_filter: Rc::new(RefCell::new(String::new())),
@@ -146,6 +150,10 @@ impl AlbumsView {
             need_fetch.push((album.artist.clone(), album.name.clone(), track_paths));
         }
 
+        *self.search_keys.borrow_mut() = albums
+            .iter()
+            .map(|a| format!("{}\n{}", a.name.to_lowercase(), a.artist.to_lowercase()))
+            .collect();
         *self.albums_data.borrow_mut() = albums;
 
         let active = self.current_filter.borrow().clone();
@@ -164,15 +172,12 @@ impl AlbumsView {
             self.flow.set_filter_func(|_| true);
         } else {
             let q = query.to_lowercase();
-            let albums = Rc::clone(&self.albums_data);
+            let keys = Rc::clone(&self.search_keys);
             self.flow.set_filter_func(move |child| {
                 let idx = child.index() as usize;
-                if let Some(album) = albums.borrow().get(idx) {
-                    album.name.to_lowercase().contains(&q)
-                        || album.artist.to_lowercase().contains(&q)
-                } else {
-                    false
-                }
+                keys.borrow()
+                    .get(idx)
+                    .is_some_and(|key| key.contains(&q))
             });
         }
     }

@@ -26,6 +26,9 @@ pub struct ArtistsView {
     pub root: adw::NavigationView,
     flow: FlowBox,
     artists_list: Rc<RefCell<Vec<Artist>>>,
+    /// Lowercased artist name per entry in `artists_list`, in the same order.
+    /// Precomputed on load so filtering is one `contains` per child.
+    search_keys: Rc<RefCell<Vec<String>>>,
     all_albums: Rc<RefCell<Vec<Album>>>,
     on_play: Rc<RefCell<Option<PlayCallback>>>,
     avatars: AvatarMap,
@@ -145,6 +148,7 @@ impl ArtistsView {
             root: nav,
             flow,
             artists_list,
+            search_keys: Rc::new(RefCell::new(Vec::new())),
             all_albums,
             on_play,
             avatars,
@@ -162,14 +166,12 @@ impl ArtistsView {
             self.flow.set_filter_func(|_| true);
         } else {
             let q = query.to_lowercase();
-            let artists = Rc::clone(&self.artists_list);
+            let keys = Rc::clone(&self.search_keys);
             self.flow.set_filter_func(move |child| {
                 let idx = child.index() as usize;
-                if let Some(artist) = artists.borrow().get(idx) {
-                    artist.name.to_lowercase().contains(&q)
-                } else {
-                    false
-                }
+                keys.borrow()
+                    .get(idx)
+                    .is_some_and(|key| key.contains(&q))
             });
         }
     }
@@ -196,6 +198,8 @@ impl ArtistsView {
             names_to_fetch.push(artist.name.clone());
         }
 
+        *self.search_keys.borrow_mut() =
+            artists.iter().map(|a| a.name.to_lowercase()).collect();
         *self.artists_list.borrow_mut() = artists;
         *self.all_albums.borrow_mut() = albums;
 

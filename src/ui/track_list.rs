@@ -91,6 +91,10 @@ pub struct TrackList {
     pub root: gtk4::Widget,
     model: StringList,
     full_tracks: RefCell<Vec<Track>>,
+    /// Lowercased search haystack per entry in `full_tracks`, in the same
+    /// order. Precomputed on `load` so a keystroke only does one `contains`
+    /// per row instead of three fresh `to_lowercase` allocations.
+    search_keys: RefCell<Vec<String>>,
     displayed: Rc<RefCell<Vec<Track>>>,
     /// True when the displayed tracks span more than one disc — the gate for
     /// the per-disc headers and per-disc numbering. Recomputed on every
@@ -464,6 +468,7 @@ impl TrackList {
             root: outer.upcast(),
             model,
             full_tracks: RefCell::new(Vec::new()),
+            search_keys: RefCell::new(Vec::new()),
             displayed: Rc::clone(&displayed),
             multi_disc: Rc::clone(&multi_disc),
             active_filter: RefCell::new(String::new()),
@@ -515,6 +520,7 @@ impl TrackList {
 
     /// Replace the underlying data set. Reapplies the active filter if any.
     pub fn load(&self, tracks: Vec<Track>) {
+        *self.search_keys.borrow_mut() = tracks.iter().map(search_key).collect();
         *self.full_tracks.borrow_mut() = tracks;
         let filter = self.active_filter.borrow().clone();
         self.apply_filter(&filter);
@@ -548,15 +554,12 @@ impl TrackList {
             self.full_tracks.borrow().clone()
         } else {
             let q = query.to_lowercase();
-            self.full_tracks
-                .borrow()
-                .iter()
-                .filter(|t| {
-                    t.display_title().to_lowercase().contains(&q)
-                        || t.display_artist().to_lowercase().contains(&q)
-                        || t.display_album().to_lowercase().contains(&q)
-                })
-                .cloned()
+            let full = self.full_tracks.borrow();
+            let keys = self.search_keys.borrow();
+            full.iter()
+                .zip(keys.iter())
+                .filter(|(_, key)| key.contains(&q))
+                .map(|(t, _)| t.clone())
                 .collect()
         };
         let n = self.model.n_items();
@@ -568,6 +571,19 @@ impl TrackList {
         self.model.splice(0, n, &additions);
         self.refresh_count();
     }
+}
+
+/// Lowercased `"title\nartist\nalbum"` haystack for substring search. Typed
+/// queries never contain `\n`, so a single `contains` over the joined string
+/// matches exactly the same rows as OR-ing `contains` across the three fields,
+/// but allocates once at load time instead of three times per row per keystroke.
+fn search_key(track: &Track) -> String {
+    format!(
+        "{}\n{}\n{}",
+        track.display_title().to_lowercase(),
+        track.display_artist().to_lowercase(),
+        track.display_album().to_lowercase()
+    )
 }
 
 /// Resolve the `audra-track-row` Box from a list item's child, which is either
@@ -721,6 +737,74 @@ fn repaint_slot_from_item(
             &track.path,
             show_num,
             display_no(track, pos as usize, per_disc),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(title: &str, artist: &str, album: &str) -> Track {
+        Track {
+            id: None,
+            path: "/m/x.mp3".into(),
+            title: Some(title.into()),
+            artist: Some(artist.into()),
+            album: Some(album.into()),
+            track_num: Some(1),
+            duration_secs: Some(180),
+            disc_num: None,
+            album_artist: None,
+            mtime: None,
+        }
+    }
+
+    #[test]
+    fn search_key_lowercases_every_field() {
+        let key = search_key(&track("Hey JUDE", "The BEATLES", "Past Masters"));
+        assert_eq!(key, "hey jude\nthe beatles\npast masters");
+    }
+
+    #[test]
+    fn search_key_matches_each_field_case_insensitively() {
+        let key = search_key(&track("Hey Jude", "The Beatles", "Past Masters"));
+        // A query against any one field hits, regardless of the typed case.
+        assert!(key.contains("jude")); // title
+        assert!(key.contains(&"BEATLES".to_lowercase())); // artist
+        assert!(key.contains("past")); // album
+        assert!(!key.contains("zeppelin"));
+    }
+
+    #[test]
+    fn search_key_does_not_match_across_field_boundaries() {
+        // The regression guard: a query spanning the title/artist seam must
+        // not match, because the `\n` separator (never present in a typed
+        // query) breaks the join. This is what keeps the single `contains`
+        // equivalent to OR-ing `contains` over the three fields.
+        let key = search_key(&track("Hey Jude", "The Beatles", "Past Masters"));
+        assert!(!key.contains("jude the"));
+        assert!(!key.contains("judethe"));
+        assert!(!key.contains("beatles past"));
+    }
+
+    #[test]
+    fn search_key_uses_display_fallbacks_for_missing_tags() {
+        // Untagged fields fall back to the localized "Unknown …" labels, so
+        // they are still searchable rather than producing an empty haystack.
+        let mut t = track("", "", "");
+        t.title = None;
+        t.artist = None;
+        t.album = None;
+        let key = search_key(&t);
+        assert_eq!(
+            key,
+            format!(
+                "{}\n{}\n{}",
+                t.display_title().to_lowercase(),
+                t.display_artist().to_lowercase(),
+                t.display_album().to_lowercase()
+            )
         );
     }
 }
