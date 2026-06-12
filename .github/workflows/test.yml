@@ -41,13 +41,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # Style checks are informational: emit GitHub warning annotations
-      # instead of failing so they appear as yellow triangles, not red X.
+      # Formatting is informational: emit a GitHub warning annotation
+      # instead of failing so it appears as a yellow triangle, not a red X.
       - name: Formato (advisory)
         run: cargo fmt --all -- --check || echo "::warning::Formatting issues — run cargo fmt"
 
-      - name: Clippy (advisory)
-        run: cargo clippy --all-targets -- -D warnings || echo "::warning::Clippy warnings found"
+      # Clippy gates the merge: warnings fail the build.
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Tests
         run: cargo test --verbose
