@@ -36,13 +36,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Compilar
+      - name: Build
         shell: msys2 {0}
         run: cargo build --release
         env:
           RUST_BACKTRACE: 1
 
-      - name: Copiar DLLs
+      - name: Copy DLLs
         shell: msys2 {0}
         run: |
           mkdir -p dist/audra
@@ -50,11 +50,11 @@ jobs:
 
           cp /clang64/bin/*.dll dist/audra/
 
-          # Schemas de GLib
+          # GLib schemas
           mkdir -p dist/audra/share/glib-2.0/schemas
           cp /clang64/share/glib-2.0/schemas/* dist/audra/share/glib-2.0/schemas/
 
-          # Tema de iconos Adwaita
+          # Adwaita icon theme
           mkdir -p dist/audra/share/icons
           cp -r /clang64/share/icons/Adwaita dist/audra/share/icons/
           cp -r /clang64/share/icons/hicolor dist/audra/share/icons/
@@ -80,7 +80,7 @@ jobs:
 
           cp /clang64/lib/gdk-pixbuf-2.0/2.10.0/loaders/*.dll dist/audra/lib/gdk-pixbuf-2.0/2.10.0/loaders/ || true
 
-          # Catálogo de traducción (gettext)
+          # Translation catalog (gettext)
           mkdir -p dist/audra/share/locale/es/LC_MESSAGES
           msgfmt po/es.po -o dist/audra/share/locale/es/LC_MESSAGES/audra.mo
 
@@ -100,18 +100,18 @@ jobs:
           gtk-theme-name=Adwaita
           EOF
 
-      - name: Instalar Inno Setup
+      - name: Install Inno Setup
         shell: pwsh
         run: |
           choco install innosetup --no-progress -y
 
-      - name: Crear instalador
+      - name: Create installer
         shell: pwsh
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           & $iscc /DMyAppVersion=$env:VER packaging\audra.iss
 
-      - name: Subir artefactos
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts

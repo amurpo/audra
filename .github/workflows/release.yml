@@ -45,17 +45,17 @@ jobs:
 
   release:
     needs: [version, build-fedora, build-windows, build-deb]
-    name: Publicar Release
+    name: Publish Release
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Descargar artefactos
+      - name: Download artifacts
         uses: actions/download-artifact@v7
         with:
           path: dist/
           merge-multiple: true
-      - name: Crear Release en GitHub
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.version.outputs.ver }}

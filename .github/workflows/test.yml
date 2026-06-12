@@ -31,7 +31,7 @@ jobs:
             alsa-lib-devel fontconfig-devel \
             gettext
 
-      - name: Instalar Rust (rustup)
+      - name: Install Rust (rustup)
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
             --default-toolchain stable \
@@ -43,7 +43,7 @@ jobs:
 
       # Formatting is informational: emit a GitHub warning annotation
       # instead of failing so it appears as a yellow triangle, not a red X.
-      - name: Formato (advisory)
+      - name: Format (advisory)
         run: cargo fmt --all -- --check || echo "::warning::Formatting issues — run cargo fmt"
 
       # Clippy gates the merge: warnings fail the build.
