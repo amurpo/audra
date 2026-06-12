@@ -17,6 +17,14 @@ color-thief = "0.2"
 
 # Audio
 rodio = { version = "0.20", features = ["mp3", "flac", "vorbis", "wav"] }
+# Used directly for a fault-tolerant decoder (rodio's built-in one gives up
+# after 3 decode errors, which kills real-world MP3 rips). This is the SAME
+# crate rodio already pulls in, so Cargo unifies it to one shared version and
+# there's no extra build cost beyond the chosen codecs.
+# KEEP IN SYNC WITH RODIO: when bumping rodio, check which symphonia it uses
+# (`cargo tree -i symphonia`) and match this version, otherwise Cargo will
+# build two symphonias. `cargo tree -d` must show no duplicate symphonia.
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "flac", "vorbis", "ogg", "wav", "pcm"] }
 
 # Metadata
 lofty = "0.22"
