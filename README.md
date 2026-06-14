@@ -23,6 +23,59 @@ Native music player for Linux, built with GTK4 and libadwaita.
 - Automatic album and artist grouping that handles inconsistent tags — accent normalization is still partial
 - Native interface following GNOME design guidelines
 
+## Performance
+
+Audra is built to stay light, and the claim is measured rather than asserted.
+The numbers below were captured on Fedora with a real library of **3,831 tracks
+/ 380 albums / 179 artists**, using `sysprof` and `/proc/<pid>/smaps_rollup`.
+
+- **Memory:** ~178 MiB proportional set size (PSS — the app's real cost; the
+  ~294 MiB RSS most monitors report includes GTK libraries shared with the rest
+  of the desktop). Usage is bounded by library size and stays flat over time —
+  no leak.
+- **CPU:** ~0.7% during playback. Audio decoding itself is ~0.3% of samples; the
+  rest of the time the app is essentially idle.
+- **Rendering:** GPU-accelerated through GTK4's Vulkan renderer. Typical frame
+  times are ~1–3 ms — well under the 16.6 ms budget for 60 fps — so scrolling
+  and the dynamic gradient background stay smooth without loading the CPU.
+
+### Known trade-off and planned work
+
+- The album grid uses a `GtkFlowBox`, which realizes every card up front. That
+  keeps one scaled cover texture per album in memory and causes a single ~0.5 s
+  layout hitch the first time the library view opens. Both are bounded by
+  library size and negligible at a few hundred albums, but grow linearly — a
+  migration to a virtualized `GtkGridView` is planned for large libraries.
+- Decoding uses a tolerant Symphonia-based pipeline that recovers from malformed
+  MP3 frames other players reject. A GStreamer backend is under consideration if
+  more codec edge-cases surface.
+
+### Reproducing the measurements
+
+Build a profiling binary with frame pointers and line info:
+
+```bash
+RUSTFLAGS="-C force-frame-pointers=yes -C debuginfo=1" cargo build --release
+```
+
+Then, on Fedora (`sudo dnf install sysprof`):
+
+```bash
+# Honest memory cost of a running instance (PSS, private dirty)
+grep -E 'Rss|Pss|Private_Dirty' /proc/$(pidof audra)/smaps_rollup
+
+# CPU profile
+sysprof-cli cpu.syscap -- ./target/release/audra
+
+# Frame timings (GTK frame clock + main loop)
+sysprof-cli --gtk --speedtrack ui.syscap -- ./target/release/audra
+
+# Allocation profile
+sysprof-cli --memprof mem.syscap -- ./target/release/audra
+```
+
+Open the resulting `.syscap` files with `sysprof`.
+
 ## Requirements
 
 Runtime: GTK4, libadwaita, ALSA.
@@ -120,6 +173,7 @@ To also wipe all per-user data, delete these directories manually:
 
 ```bash
 rm -rf ~/.local/share/audra   # library database and downloaded covers
+rm -rf ~/.cache/audra         # media-controls thumbnail cache
 rm -rf ~/.config/audra        # bundled fonts and settings
 ```
 
