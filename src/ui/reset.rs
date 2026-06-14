@@ -18,9 +18,10 @@ pub fn show_reset_dialog(
     let dialog = adw::AlertDialog::new(
         Some(&gettext("Reset library?")),
         Some(&gettext(
-            "This permanently deletes all scanned tracks and cached cover art. \
+            "This permanently deletes all scanned tracks, downloaded cover art \
+             and the media-controls thumbnail cache, then rescans the library. \
              Your music files, the selected folder and your Last.fm session are \
-             not affected. The library is rescanned afterwards.",
+             not affected.",
         )),
     );
     dialog.add_response("cancel", &gettext("Cancel"));
@@ -45,6 +46,7 @@ pub fn show_reset_dialog(
                     let _ = views.db.lock().unwrap().clear_library();
                 }
                 library::metadata::clear_cover_cache();
+                crate::player::mpris::clear_cover_cache();
                 let folder = views.db.lock().unwrap().music_folder();
                 if let Some(folder) = folder {
                     start_scan(folder, views.clone(), loading_box.clone(), spinner.clone());
