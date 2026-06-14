@@ -1,7 +1,7 @@
 use crate::i18n::{gettext, ngettext};
 use crate::library::db::Database;
 use crate::library::{Album, Artist, Track};
-use crate::ui::albums_view::{make_album_card, make_album_detail_page, CARD_SIZE};
+use crate::ui::albums_view::{append_in_batches, make_album_card, make_album_detail_page, CARD_SIZE};
 use crate::ui::image_apply::{apply_image, ImageTarget};
 use crate::ui::image_loader::{self, FetchOutcome, ImagePipelineConfig};
 use crate::ui::now_playing::NowPlaying;
@@ -12,7 +12,7 @@ use gtk4::{
     Align, Box as GtkBox, FlowBox, FlowBoxChild, Label, Orientation, ScrolledWindow, SelectionMode,
 };
 use libadwaita as adw;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -33,6 +33,9 @@ pub struct ArtistsView {
     on_play: Rc<RefCell<Option<PlayCallback>>>,
     avatars: AvatarMap,
     current_filter: Rc<RefCell<String>>,
+    /// Bumped on every `load_artists` so a chunked append still in flight from a
+    /// previous load stops instead of dropping stale cards into the new grid.
+    load_gen: Rc<Cell<u64>>,
 }
 
 impl ArtistsView {
@@ -153,6 +156,7 @@ impl ArtistsView {
             on_play,
             avatars,
             current_filter: Rc::new(RefCell::new(String::new())),
+            load_gen: Rc::new(Cell::new(0)),
         }
     }
 
@@ -182,7 +186,13 @@ impl ArtistsView {
         }
         self.avatars.borrow_mut().clear();
 
+        // Supersede any chunked append still running from a previous load so it
+        // can't append stale cards into the grid we just cleared.
+        let gen = self.load_gen.get().wrapping_add(1);
+        self.load_gen.set(gen);
+
         let mut names_to_fetch: Vec<String> = Vec::new();
+        let mut cards: Vec<FlowBoxChild> = Vec::with_capacity(artists.len());
 
         for artist in &artists {
             let (card, avatar) = make_artist_card(artist);
@@ -191,12 +201,23 @@ impl ArtistsView {
                 artist.name.clone(),
                 avatar.clone(),
             );
+            // Populate the avatar map for every artist up front (cheap, no
+            // realize) so the async photo fetch always finds its target even
+            // for cards that have not been appended yet.
             self.avatars
                 .borrow_mut()
                 .insert(artist.name.clone(), avatar);
-            self.flow.append(&card);
+            cards.push(card);
             names_to_fetch.push(artist.name.clone());
         }
+
+        // Append in small batches across the main loop instead of all at once:
+        // FlowBox does not virtualize, so appending thousands in one frame
+        // hitches the UI. Same mechanism as the Albums grid.
+        let flow = self.flow.clone();
+        append_in_batches(cards, Rc::clone(&self.load_gen), gen, move |card| {
+            flow.append(&card)
+        });
 
         *self.search_keys.borrow_mut() =
             artists.iter().map(|a| a.name.to_lowercase()).collect();
