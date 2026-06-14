@@ -25,6 +25,49 @@ flowboxchild.mosaic-child:hover {
 flowboxchild.mosaic-child > overlay {
     border-radius: 10px;
 }
+
+/* GridView variant of the album grid (the recycling main grid). Unlike
+ * FlowBox, GridView/ListView carry the theme's `.view` style, whose
+ * `background-color: @view_bg_color` (dark) covers the window's album-art tint.
+ * Reset background-color to transparent EXPLICITLY (the `background: none`
+ * shorthand can leave the inherited view color behind, which only dims the tint
+ * instead of clearing it) so the tint shows through identically to the FlowBox,
+ * which has no view background at all. */
+gridview.audra-album-grid,
+gridview.audra-album-grid > child {
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    outline: none;
+    border: none;
+}
+gridview.audra-album-grid > child {
+    padding: 0;
+    margin: 7px 0;
+}
+gridview.audra-album-grid > child:hover,
+gridview.audra-album-grid > child:focus,
+gridview.audra-album-grid > child:focus-within,
+gridview.audra-album-grid > child:active,
+gridview.audra-album-grid > child:selected {
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    outline: none;
+}
+/* The hover/focus cue lives on the cover overlay itself: a slight fade plus an
+ * accent ring drawn inside the rounded corners (inset so `overflow: hidden`
+ * doesn't clip it). */
+overlay.album-cover {
+    border-radius: 10px;
+    transition: opacity 120ms, box-shadow 120ms;
+}
+gridview.audra-album-grid > child:hover overlay.album-cover,
+gridview.audra-album-grid > child:focus overlay.album-cover,
+gridview.audra-album-grid > child:focus-within overlay.album-cover {
+    opacity: 0.92;
+    box-shadow: inset 0 0 0 2px @accent_color;
+}
 .album-overlay-box {
     padding: 28px 8px 7px 8px;
     background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0.72));

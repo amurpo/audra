@@ -52,16 +52,19 @@ struct PickerCtx {
     candidates: CandidatesFn,
 }
 
-/// Add a right-click gesture to an album card opening the cover menu.
-pub fn install_album_cover_gesture(
-    child: &gtk4::FlowBoxChild,
+/// Build the album cover [`PickerCtx`] from the album's data and target
+/// widgets. Shared by the FlowBox installer (`install_album_cover_gesture`,
+/// used by the artists view) and the GridView factory (`show_album_cover_menu`),
+/// which resolves the album only at click time because its card widget is
+/// recycled across many albums.
+fn album_picker_ctx(
     db: Arc<Mutex<Database>>,
     artist: String,
     album: String,
     track_path: String,
     stack: Stack,
     picture: Picture,
-) {
+) -> PickerCtx {
     let target = ImageTarget::AlbumCover { picture, stack };
     let apply: ApplyFn = Rc::new(move |d| apply_image(target.clone(), d, CARD_SIZE));
 
@@ -93,16 +96,50 @@ pub fn install_album_cover_gesture(
         })
     };
 
+    PickerCtx {
+        title: gettext("Choose cover"),
+        default_query: album,
+        apply,
+        persist,
+        candidates,
+    }
+}
+
+/// Add a right-click gesture to a FlowBox album card (artists view) opening the
+/// cover menu. The card is built per album, so the data is captured up front.
+pub fn install_album_cover_gesture(
+    child: &gtk4::FlowBoxChild,
+    db: Arc<Mutex<Database>>,
+    artist: String,
+    album: String,
+    track_path: String,
+    stack: Stack,
+    picture: Picture,
+) {
     install_gesture(
         child,
-        PickerCtx {
-            title: gettext("Choose cover"),
-            default_query: album,
-            apply,
-            persist,
-            candidates,
-        },
+        album_picker_ctx(db, artist, album, track_path, stack, picture),
     );
+}
+
+/// Open the album cover menu anchored at `(x, y)` inside `parent`, resolving the
+/// album's data now. Used by the recycling GridView factory: its card widget
+/// outlives the album it currently shows, so — unlike `install_album_cover_gesture`
+/// — the menu cannot capture the album when the gesture is installed.
+#[allow(clippy::too_many_arguments)]
+pub fn show_album_cover_menu(
+    parent: &impl IsA<gtk4::Widget>,
+    x: f64,
+    y: f64,
+    db: Arc<Mutex<Database>>,
+    artist: String,
+    album: String,
+    track_path: String,
+    stack: Stack,
+    picture: Picture,
+) {
+    let ctx = album_picker_ctx(db, artist, album, track_path, stack, picture);
+    show_menu(parent.upcast_ref(), x, y, &ctx);
 }
 
 /// Add a right-click gesture to an artist card opening the photo menu.
@@ -141,12 +178,12 @@ fn install_gesture(child: &gtk4::FlowBoxChild, ctx: PickerCtx) {
     let child_w = child.clone();
     gesture.connect_pressed(move |g, _, x, y| {
         g.set_state(gtk4::EventSequenceState::Claimed);
-        show_menu(&child_w, x, y, &ctx);
+        show_menu(child_w.upcast_ref(), x, y, &ctx);
     });
     child.add_controller(gesture);
 }
 
-fn show_menu(parent: &gtk4::FlowBoxChild, x: f64, y: f64, ctx: &PickerCtx) {
+fn show_menu(parent: &gtk4::Widget, x: f64, y: f64, ctx: &PickerCtx) {
     let ctx = ctx.clone();
     let pop = gtk4::Popover::new();
     pop.add_css_class("audra-shaded");
@@ -221,7 +258,7 @@ fn show_load_error(window: Option<&gtk4::Window>) {
 
 /// Let the user pick any image from disk and use it as the art. Reuses the
 /// same `persist`/`apply` strategies, so it is just another byte source.
-fn pick_custom_image(parent: &gtk4::FlowBoxChild, ctx: &PickerCtx) {
+fn pick_custom_image(parent: &gtk4::Widget, ctx: &PickerCtx) {
     let (apply, persist) = (Rc::clone(&ctx.apply), Arc::clone(&ctx.persist));
     let window = parent.root().and_downcast::<gtk4::Window>();
 
@@ -258,7 +295,7 @@ fn pick_custom_image(parent: &gtk4::FlowBoxChild, ctx: &PickerCtx) {
     });
 }
 
-fn open_picker(parent: &gtk4::FlowBoxChild, ctx: &PickerCtx) {
+fn open_picker(parent: &gtk4::Widget, ctx: &PickerCtx) {
     let PickerCtx {
         title,
         default_query,
