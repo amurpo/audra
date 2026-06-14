@@ -41,11 +41,11 @@ The numbers below were captured on Fedora with a real library of **3,831 tracks
 
 ### Known trade-off and planned work
 
-- The album grid uses a `GtkFlowBox`, which realizes every card up front. That
-  keeps one scaled cover texture per album in memory and causes a single ~0.5 s
-  layout hitch the first time the library view opens. Both are bounded by
-  library size and negligible at a few hundred albums, but grow linearly — a
-  migration to a virtualized `GtkGridView` is planned for large libraries.
+- The main album grid uses a virtualized `GtkGridView`: only the cards on screen
+  are realized, so opening the library is instant with no layout hitch, even for
+  large collections. The artists grid still uses a `GtkFlowBox` (which realizes
+  every card up front); its appends are batched across the main loop so that view
+  stays responsive too.
 - Decoding uses a tolerant Symphonia-based pipeline that recovers from malformed
   MP3 frames other players reject. A GStreamer backend is under consideration if
   more codec edge-cases surface.
