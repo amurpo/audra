@@ -38,7 +38,12 @@ impl AudioEngine {
     }
 
     pub fn set_volume(&self, volume: f32) {
-        self.sink.set_volume(volume.clamp(0.0, 1.0));
+        let v = volume.clamp(0.0, 1.0);
+        // Perceptual (cubic) taper, matching PulseAudio: a linear slider sounds
+        // linear to the ear instead of saturating across the lower half. Without
+        // it, 0.5 is only -6 dB and still plays loud, which is especially obvious
+        // on Windows where WASAPI applies no perceptual curve of its own.
+        self.sink.set_volume(v * v * v);
     }
 
     pub fn seek(&self, pos: std::time::Duration) {
