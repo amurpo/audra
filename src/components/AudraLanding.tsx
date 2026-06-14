@@ -1,19 +1,38 @@
+import type { MouseEvent } from "react";
 import { useI18n } from "../i18n";
 import heroBg from "../assets/bg.jpg";
 import screenshot1 from "../assets/screenshot1.png";
 import screenshot2 from "../assets/screenshot2.png";
 import { AppScreenshot } from "./AppScreenshot";
+import { Aurora } from "./Aurora";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Logo } from "./Logo";
+import { useScrollEffects } from "../hooks/useScrollEffects";
 
 const GITHUB_URL = "https://github.com/amurpo/audra";
 const RELEASES_URL = "https://github.com/amurpo/audra/releases";
+const ISSUES_URL = "https://github.com/amurpo/audra/issues";
+
+/** Tracks the cursor over a glass card so its sheen follows the pointer. */
+function trackSheen(event: MouseEvent<HTMLDivElement>) {
+  const rect = event.currentTarget.getBoundingClientRect();
+  event.currentTarget.style.setProperty(
+    "--mx",
+    `${((event.clientX - rect.left) / rect.width) * 100}%`,
+  );
+  event.currentTarget.style.setProperty(
+    "--my",
+    `${((event.clientY - rect.top) / rect.height) * 100}%`,
+  );
+}
 
 export function AudraLanding() {
   const { copy } = useI18n();
+  useScrollEffects();
 
   return (
-    <div className="bg-audra-dark text-audra-white">
+    <div className="text-audra-white">
+      <Aurora />
       <a href="#main-content" className="skip-link">
         {copy.a11y.skipToContent}
       </a>
@@ -34,8 +53,8 @@ export function AudraLanding() {
           style={{ backgroundImage: `url(${heroBg})` }}
         >
           <div className="hero-overlay" aria-hidden="true" />
-          <div className="page-container hero-content">
-            <div className="mx-auto max-w-3xl">
+          <div className="page-container hero-content" data-parallax="-0.08">
+            <div className="mx-auto max-w-3xl" data-reveal>
               <h1 className="heading-1 mb-6"><Logo size={128} /></h1>
               <p className="body-large mb-8 opacity-85">{copy.hero.subtitle}</p>
               <p className="body-large mb-12 max-w-2xl opacity-75">
@@ -66,7 +85,7 @@ export function AudraLanding() {
         <section className="section-divider section-spacing" data-od-id="overview">
           <div className="page-container">
             <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2">
-              <div>
+              <div data-reveal>
                 <h2 className="heading-2 mb-8">{copy.overview.title}</h2>
                 <p className="body-text mb-6 opacity-85">{copy.overview.p1}</p>
                 <p className="body-text opacity-85">{copy.overview.p2}</p>
@@ -78,10 +97,17 @@ export function AudraLanding() {
 
         <section className="section-divider section-spacing" data-od-id="features">
           <div className="page-container">
-            <h2 className="heading-2 mb-16">{copy.features.title}</h2>
+            <h2 className="heading-2 mb-16" data-reveal>
+              {copy.features.title}
+            </h2>
             <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
               {copy.features.items.map((feature) => (
-                <div key={feature.title} className="card">
+                <div
+                  key={feature.title}
+                  className="card"
+                  data-reveal
+                  onMouseMove={trackSheen}
+                >
                   <h3 className="heading-3 mb-3">{feature.title}</h3>
                   <p className="body-text opacity-75">{feature.desc}</p>
                 </div>
@@ -93,10 +119,12 @@ export function AudraLanding() {
         <section className="section-divider section-spacing" data-od-id="why-audra">
           <div className="page-container">
             <div className="max-w-3xl">
-              <h2 className="heading-2 mb-8">{copy.whyAudra.title}</h2>
+              <h2 className="heading-2 mb-8" data-reveal>
+                {copy.whyAudra.title}
+              </h2>
               <div className="space-y-6">
                 {copy.whyAudra.items.map((item) => (
-                  <div key={item.title}>
+                  <div key={item.title} data-reveal>
                     <h3 className="heading-3 mb-3 text-audra-blue">
                       {item.title}
                     </h3>
@@ -113,11 +141,13 @@ export function AudraLanding() {
           data-od-id="how-it-works"
         >
           <div className="page-container">
-            <h2 className="heading-2 mb-16">{copy.howItWorks.title}</h2>
+            <h2 className="heading-2 mb-16" data-reveal>
+              {copy.howItWorks.title}
+            </h2>
             <div className="grid grid-cols-1 gap-12 lg:grid-cols-2 lg:items-start">
               <div className="max-w-3xl space-y-6">
                 {copy.howItWorks.steps.map((step) => (
-                  <div key={step.num} className="flex gap-6">
+                  <div key={step.num} className="flex gap-6" data-reveal>
                     <div className="step-badge">{step.num}</div>
                     <div className="pt-1">
                       <h3 className="heading-3 mb-2">{step.title}</h3>
@@ -133,9 +163,11 @@ export function AudraLanding() {
 
         <section className="section-divider section-spacing" data-od-id="installation">
           <div className="page-container">
-            <h2 className="heading-2 mb-12">{copy.installation.title}</h2>
+            <h2 className="heading-2 mb-12" data-reveal>
+              {copy.installation.title}
+            </h2>
             <div className="grid grid-cols-1 gap-12 lg:grid-cols-2">
-              <div>
+              <div data-reveal>
                 <h3 className="heading-3-lg mb-6">
                   {copy.installation.gettingStarted.title}
                 </h3>
@@ -149,7 +181,7 @@ export function AudraLanding() {
                   {copy.installation.gettingStarted.p3}
                 </p>
               </div>
-              <div>
+              <div data-reveal>
                 <h3 className="heading-3-lg mb-6">
                   {copy.installation.buildCommands.title}
                 </h3>
@@ -212,11 +244,13 @@ export function AudraLanding() {
                 >
                   {copy.footer.github}
                 </a>
-                <a href="#" className="footer-link body-small">
+                <a
+                  href={ISSUES_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="footer-link body-small"
+                >
                   {copy.footer.issues}
-                </a>
-                <a href="#" className="footer-link body-small">
-                  {copy.footer.discussions}
                 </a>
               </div>
             </div>

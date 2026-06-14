@@ -76,7 +76,6 @@ export interface SiteCopy {
     copyright: string;
     github: string;
     issues: string;
-    discussions: string;
   };
   language: {
     label: string;
