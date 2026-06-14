@@ -64,6 +64,37 @@ pub(crate) fn reload_all_views(views: &Views) {
     views.artists.load_artists(artists, albums);
 }
 
+/// Incremental scan of `scan_path` plus DB reconcile: read only new/changed
+/// files (skipped by stored mtime), upsert them, record the folder, and purge
+/// rows whose files are gone. Runs on a worker thread and returns whether the
+/// library actually changed (any track upserted or any stale row removed) so
+/// callers can skip a pointless view reload. Shared by the manual refresh and
+/// the startup background reconcile.
+fn scan_and_sync(db: &Arc<Mutex<Database>>, scan_path: &str) -> Result<bool, String> {
+    // Incremental rescan: files whose stored mtime matches are not re-read;
+    // only new/changed files pay the tag-parsing cost.
+    let known_mtimes = db.lock().unwrap().path_mtimes().unwrap_or_default();
+    let result = scanner::scan_folder(scan_path, &known_mtimes);
+    let db_g = db.lock().unwrap();
+    // A failed write here is the difference between "library" and "silently
+    // empty library", so it is reported, not discarded.
+    match db_g.upsert_tracks(&result.tracks) {
+        Ok(()) => {
+            let norm_folder: std::path::PathBuf =
+                std::path::Path::new(scan_path).components().collect();
+            let _ = db_g.set_music_folder(&norm_folder.to_string_lossy());
+            let removed = db_g
+                .remove_missing_from_folder(scan_path, &result.found_paths)
+                .unwrap_or(0);
+            if removed > 0 {
+                log::info!("sync: eliminados {} registros obsoletos", removed);
+            }
+            Ok(!result.tracks.is_empty() || removed > 0)
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 pub(crate) fn start_scan(
     folder_path: String,
     views: Views,
@@ -78,33 +109,9 @@ pub(crate) fn start_scan(
     // once the worker signals it is done.
     let scan_path = folder_path;
     let db_worker = Arc::clone(&views.db);
-    let (tx, rx) = async_channel::bounded::<Result<(), String>>(1);
+    let (tx, rx) = async_channel::bounded::<Result<bool, String>>(1);
     std::thread::spawn(move || {
-        // Incremental rescan: files whose stored mtime matches are not
-        // re-read; only new/changed files pay the tag-parsing cost.
-        let known_mtimes = db_worker.lock().unwrap().path_mtimes().unwrap_or_default();
-        let result = scanner::scan_folder(&scan_path, &known_mtimes);
-        let outcome = {
-            let db_g = db_worker.lock().unwrap();
-            // A failed write here is the difference between "library" and
-            // "silently empty library", so it is reported, not discarded.
-            match db_g.upsert_tracks(&result.tracks) {
-                Ok(()) => {
-                    let norm_folder: std::path::PathBuf =
-                        std::path::Path::new(&scan_path).components().collect();
-                    let _ = db_g.set_music_folder(&norm_folder.to_string_lossy());
-                    let removed = db_g
-                        .remove_missing_from_folder(&scan_path, &result.found_paths)
-                        .unwrap_or(0);
-                    if removed > 0 {
-                        log::info!("sync: eliminados {} registros obsoletos", removed);
-                    }
-                    Ok(())
-                }
-                Err(e) => Err(e.to_string()),
-            }
-        };
-        let _ = tx.send_blocking(outcome);
+        let _ = tx.send_blocking(scan_and_sync(&db_worker, &scan_path));
     });
 
     // No polling: this future sleeps in the main loop until the worker sends
@@ -114,10 +121,38 @@ pub(crate) fn start_scan(
         loading_box.set_visible(false);
         spinner.stop();
         match outcome {
-            Ok(Ok(())) => reload_all_views(&views),
+            // Manual refresh always reloads, even when nothing changed, so the
+            // user gets a predictable, fully-rebuilt view for the action.
+            Ok(Ok(_)) => reload_all_views(&views),
             Ok(Err(detail)) => show_scan_error(&loading_box, &detail),
             // The sender was dropped without a message: the worker panicked.
             Err(_) => show_scan_error(&loading_box, &gettext("The scan stopped unexpectedly.")),
+        }
+    });
+}
+
+/// Reconcile the library with the filesystem in the background at startup.
+///
+/// There is no filesystem watcher and the initial view load comes straight
+/// from the DB, so files added or deleted while the app was closed would
+/// otherwise linger until a manual refresh. This runs the same incremental
+/// scan on a worker thread (which exits when done — no steady-state threads)
+/// and refreshes the views only if something actually changed, so the common
+/// "nothing changed" launch neither reloads nor re-fetches covers. Silent: no
+/// loading overlay, since the views are already populated; a startup scan error
+/// is logged and left for the manual refresh to surface loudly.
+fn rescan_in_background(folder: String, views: Views) {
+    let db_worker = Arc::clone(&views.db);
+    let (tx, rx) = async_channel::bounded::<Result<bool, String>>(1);
+    std::thread::spawn(move || {
+        let _ = tx.send_blocking(scan_and_sync(&db_worker, &folder));
+    });
+    glib::spawn_future_local(async move {
+        match rx.recv().await {
+            Ok(Ok(true)) => reload_all_views(&views),
+            Ok(Ok(false)) => {}
+            Ok(Err(detail)) => log::warn!("startup rescan failed: {detail}"),
+            Err(_) => log::warn!("startup rescan stopped unexpectedly"),
         }
     });
 }
@@ -366,7 +401,13 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     };
 
     // --- Carga inicial ---
+    // Populate the views instantly from the DB, then reconcile with the
+    // filesystem in the background so files added or deleted while the app was
+    // closed show up without waiting for a manual refresh (no watcher needed).
     reload_all_views(&views);
+    if let Some(folder) = db.lock().unwrap().music_folder() {
+        rescan_in_background(folder, views.clone());
+    }
 
     // --- ViewStack ---
     let view_stack = adw::ViewStack::new();

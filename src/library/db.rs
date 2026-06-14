@@ -254,6 +254,16 @@ impl Database {
         folder: &str,
         existing_paths: &[String],
     ) -> Result<usize> {
+        // Safety guard against a catastrophic wipe. A scan that reports zero
+        // files on disk almost always means the library folder is unavailable
+        // (unmounted drive, renamed or moved folder) — not that the user
+        // deleted their whole collection. Without this, every row would match
+        // the under-folder / `!exists` purge clause below and the entire
+        // catalog would be deleted, taking cover associations with it. Keep the
+        // rows; an intentional full wipe goes through "Reset library".
+        if existing_paths.is_empty() {
+            return Ok(0);
+        }
         let norm_folder: std::path::PathBuf =
             std::path::Path::new(&normalize_path(folder)).to_path_buf();
         let existing_set: std::collections::HashSet<String> =
@@ -547,6 +557,22 @@ mod tests {
         assert_eq!(paths, expected);
 
         let _ = std::fs::remove_file(&outside_real);
+    }
+
+    #[test]
+    fn remove_missing_from_folder_keeps_everything_when_scan_found_nothing() {
+        let db = db();
+        db.upsert_tracks(&[track("/music/a/1.mp3", "A", "X", 1)])
+            .unwrap();
+        db.upsert_tracks(&[track("/music/b/2.mp3", "B", "Y", 1)])
+            .unwrap();
+
+        // An empty `existing_paths` means the scan walked an empty tree —
+        // typically an unmounted/renamed folder, not a real empty library.
+        // The guard must keep every row instead of wiping the catalog.
+        let removed = db.remove_missing_from_folder("/music", &[]).unwrap();
+        assert_eq!(removed, 0);
+        assert_eq!(db.all_tracks().unwrap().len(), 2);
     }
 
     #[test]
