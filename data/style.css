@@ -26,15 +26,21 @@ flowboxchild.mosaic-child > overlay {
     border-radius: 10px;
 }
 
-/* GridView variant of the album grid (the recycling main grid). Unlike
- * FlowBox, GridView/ListView carry the theme's `.view` style, whose
- * `background-color: @view_bg_color` (dark) covers the window's album-art tint.
- * Reset background-color to transparent EXPLICITLY (the `background: none`
- * shorthand can leave the inherited view color behind, which only dims the tint
- * instead of clearing it) so the tint shows through identically to the FlowBox,
- * which has no view background at all. */
-gridview.audra-album-grid,
-gridview.audra-album-grid > child {
+/* Shared base for every virtualized grid (the album + artist GridViews both add
+ * `audra-grid`). GTK gives every GridView/ListView the theme's `.view`
+ * background (dark), which would cover the window's album-art tint. Reset it to
+ * transparent EXPLICITLY (the `background: none` shorthand can leave the
+ * inherited view color behind, which only dims the tint instead of clearing it)
+ * in every interactive state, so the tint shows through identically to a
+ * FlowBox, which has no view background at all. The per-grid classes below add
+ * only their own spacing and hover cue. */
+gridview.audra-grid,
+gridview.audra-grid > child,
+gridview.audra-grid > child:hover,
+gridview.audra-grid > child:focus,
+gridview.audra-grid > child:focus-within,
+gridview.audra-grid > child:active,
+gridview.audra-grid > child:selected {
     background-color: transparent;
     background-image: none;
     box-shadow: none;
@@ -48,16 +54,6 @@ gridview.audra-album-grid > child {
      * columns back to the 4 airy columns the homogeneous FlowBox used. Vertical
      * 7px each side = the old `row_spacing: 14`. */
     margin: 7px 2px;
-}
-gridview.audra-album-grid > child:hover,
-gridview.audra-album-grid > child:focus,
-gridview.audra-album-grid > child:focus-within,
-gridview.audra-album-grid > child:active,
-gridview.audra-album-grid > child:selected {
-    background-color: transparent;
-    background-image: none;
-    box-shadow: none;
-    outline: none;
 }
 /* The hover/focus cue lives on the cover overlay itself: a slight fade plus an
  * accent ring drawn inside the rounded corners (inset so `overflow: hidden`
@@ -98,34 +94,11 @@ gridview.audra-album-grid > child:focus-within overlay.album-cover {
     background-color: alpha(currentColor, 0.05);
 }
 
-/* --- Artist grid (GridView) ---
- * Like the album grid above, GridView carries the theme's `.view` background
- * (dark) that would cover the window's album-art tint, so reset it to
- * transparent EXPLICITLY (the `background: none` shorthand can leave the view
- * color behind, which only dims the tint instead of clearing it). NoSelection
- * means no cell is ever "selected", but the focus/active states are neutralized
- * too so no theme chrome paints over the photos. */
-gridview.audra-artist-grid,
-gridview.audra-artist-grid > child {
-    background-color: transparent;
-    background-image: none;
-    box-shadow: none;
-    outline: none;
-    border: none;
-}
-gridview.audra-artist-grid > child:hover,
-gridview.audra-artist-grid > child:focus,
-gridview.audra-artist-grid > child:focus-within,
-gridview.audra-artist-grid > child:active,
-gridview.audra-artist-grid > child:selected {
-    background-color: transparent;
-    background-image: none;
-    box-shadow: none;
-    outline: none;
-}
-/* Inter-card gap. The old FlowBox spread cards with column/row spacing; the
- * GridView needs it as an explicit margin on each cell (the card's own padding
- * is part of the highlight, so it can't double as the gap). */
+/* --- Artist grid (GridView) --- the `.view` background reset lives in the
+ * shared `audra-grid` rule above; here only the inter-card gap. The old FlowBox
+ * spread cards with column/row spacing; the GridView needs it as an explicit
+ * margin on each cell (the card's own padding is part of the highlight, so it
+ * can't double as the gap). */
 gridview.audra-artist-grid > child {
     margin: 4px 2px;
 }

@@ -158,6 +158,9 @@ impl ArtistsView {
         }
 
         let grid = GridView::new(Some(selection), Some(factory));
+        // `audra-grid`: shared base class carrying the `.view` background reset
+        // (see style.css). `audra-artist-grid`: this grid's own spacing + hover.
+        grid.add_css_class("audra-grid");
         grid.add_css_class("audra-artist-grid");
         // Same packing range as the old FlowBox (2–8 columns).
         grid.set_min_columns(2);

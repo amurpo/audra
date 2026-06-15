@@ -196,6 +196,9 @@ impl AlbumsView {
         }
 
         let grid = GridView::new(Some(selection), Some(factory));
+        // `audra-grid`: shared base class carrying the `.view` background reset
+        // (see style.css). `audra-album-grid`: this grid's own spacing + hover.
+        grid.add_css_class("audra-grid");
         grid.add_css_class("audra-album-grid");
         // Same packing range as the old FlowBox (2–12 columns).
         grid.set_min_columns(2);
