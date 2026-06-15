@@ -6,3 +6,10 @@
 /.flatpak-builder
 /flatpak-build
 /flatpak-repo
+
+# Web landing-page build artifacts. The site itself lives on the `web` branch
+# (Vite/React); these are ignored there, so switching back to this branch leaves
+# them behind in the working tree (git never touches ignored files). Ignore them
+# here too so they don't show up as untracked or sneak into a commit.
+/node_modules
+/dist
