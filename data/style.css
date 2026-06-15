@@ -43,7 +43,11 @@ gridview.audra-album-grid > child {
 }
 gridview.audra-album-grid > child {
     padding: 0;
-    margin: 7px 0;
+    /* Horizontal margin restores the old FlowBox `column_spacing: 4` (2px each
+     * side) AND, by widening each cell past 880/5, drops the grid from 5 cramped
+     * columns back to the 4 airy columns the homogeneous FlowBox used. Vertical
+     * 7px each side = the old `row_spacing: 14`. */
+    margin: 7px 2px;
 }
 gridview.audra-album-grid > child:hover,
 gridview.audra-album-grid > child:focus,
