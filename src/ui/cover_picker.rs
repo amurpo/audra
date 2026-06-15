@@ -142,12 +142,11 @@ pub fn show_album_cover_menu(
     show_menu(parent.upcast_ref(), x, y, &ctx);
 }
 
-/// Add a right-click gesture to an artist card opening the photo menu.
-pub fn install_artist_photo_gesture(
-    child: &gtk4::FlowBoxChild,
-    artist: String,
-    avatar: adw::Avatar,
-) {
+/// Build the artist photo [`PickerCtx`] from the artist name and target avatar.
+/// Shared by the recycling artists `GridView` (`show_artist_photo_menu`), which
+/// resolves the artist only at click time because its card widget is recycled
+/// across many artists.
+fn artist_photo_ctx(artist: String, avatar: adw::Avatar) -> PickerCtx {
     let target = ImageTarget::ArtistPhoto { avatar };
     let apply: ApplyFn = Rc::new(move |d| apply_image(target.clone(), d, AVATAR_SIZE));
 
@@ -160,16 +159,28 @@ pub fn install_artist_photo_gesture(
     let candidates: CandidatesFn =
         Arc::new(move |query: &str| metadata::fetch_artist_photo_candidates(query));
 
-    install_gesture(
-        child,
-        PickerCtx {
-            title: gettext("Choose photo"),
-            default_query: artist,
-            apply,
-            persist,
-            candidates,
-        },
-    );
+    PickerCtx {
+        title: gettext("Choose photo"),
+        default_query: artist,
+        apply,
+        persist,
+        candidates,
+    }
+}
+
+/// Open the artist photo menu anchored at `(x, y)` inside `parent`, resolving the
+/// artist's data now. Used by the recycling artists GridView factory: its card
+/// widget outlives the artist it currently shows, so — like
+/// `show_album_cover_menu` — the menu cannot capture the artist at setup time.
+pub fn show_artist_photo_menu(
+    parent: &impl IsA<gtk4::Widget>,
+    x: f64,
+    y: f64,
+    artist: String,
+    avatar: adw::Avatar,
+) {
+    let ctx = artist_photo_ctx(artist, avatar);
+    show_menu(parent.upcast_ref(), x, y, &ctx);
 }
 
 fn install_gesture(child: &gtk4::FlowBoxChild, ctx: PickerCtx) {

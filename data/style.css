@@ -94,13 +94,51 @@ gridview.audra-album-grid > child:focus-within overlay.album-cover {
     background-color: alpha(currentColor, 0.05);
 }
 
-/* --- Artist card --- */
-flowboxchild.artist-card {
-    border-radius: 12px;
-    transition: background-color 150ms;
-    padding: 4px;
+/* --- Artist grid (GridView) ---
+ * Like the album grid above, GridView carries the theme's `.view` background
+ * (dark) that would cover the window's album-art tint, so reset it to
+ * transparent EXPLICITLY (the `background: none` shorthand can leave the view
+ * color behind, which only dims the tint instead of clearing it). NoSelection
+ * means no cell is ever "selected", but the focus/active states are neutralized
+ * too so no theme chrome paints over the photos. */
+gridview.audra-artist-grid,
+gridview.audra-artist-grid > child {
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    outline: none;
+    border: none;
 }
-flowboxchild.artist-card:hover {
+gridview.audra-artist-grid > child:hover,
+gridview.audra-artist-grid > child:focus,
+gridview.audra-artist-grid > child:focus-within,
+gridview.audra-artist-grid > child:active,
+gridview.audra-artist-grid > child:selected {
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    outline: none;
+}
+/* Inter-card gap. The old FlowBox spread cards with column/row spacing; the
+ * GridView needs it as an explicit margin on each cell (the card's own padding
+ * is part of the highlight, so it can't double as the gap). */
+gridview.audra-artist-grid > child {
+    margin: 4px 2px;
+}
+/* The hover cue lives on the card box itself (same idea as the album overlay):
+ * a subtle wash that hugs the avatar + labels, since the card stays sized to
+ * its content rather than filling the whole column. The padding here reproduces
+ * the old FlowBox highlight, whose `.artist-card` wrapped both the card's 4px
+ * padding AND the vbox margins (top 8 / bottom 12 / sides 6) — so the wash is
+ * the same size as before instead of hugging the bare avatar + labels. */
+.artist-card {
+    border-radius: 12px;
+    padding: 12px 10px 16px 10px;
+    transition: background-color 150ms;
+}
+gridview.audra-artist-grid > child:hover .artist-card,
+gridview.audra-artist-grid > child:focus .artist-card,
+gridview.audra-artist-grid > child:focus-within .artist-card {
     background-color: alpha(currentColor, 0.07);
 }
 

@@ -13,18 +13,12 @@ use gtk4::{
     StackTransitionType, StringList,
 };
 use libadwaita as adw;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 pub(crate) const CARD_SIZE: i32 = 176;
-
-/// How many cards a FlowBox-backed grid appends per main-loop turn. The main
-/// Albums grid is a virtualized `GridView` and does not need this, but the
-/// artists grid stays on FlowBox (which realizes everything up front), so it
-/// still batches its appends through [`append_in_batches`].
-pub(crate) const APPEND_BATCH: usize = 64;
 
 /// Widget data key: each realized cell stashes its last-bound model position so
 /// the async-cover repaint can resolve a recycled cell back to its album
@@ -603,143 +597,4 @@ pub fn make_album_card(album: &Album, show_artist: bool) -> (FlowBoxChild, Stack
     child.set_valign(Align::Center);
 
     (child, card.stack, card.picture)
-}
-
-/// Append `items` through `append`: the first [`APPEND_BATCH`] synchronously
-/// (so the caller's view is never blank on the first frame), the rest spread
-/// across the main loop one batch per idle tick. Used by the FlowBox-backed
-/// artists grid; the Albums `GridView` virtualizes and does not need it.
-///
-/// `load_gen`/`gen` let a later load supersede a drain still in flight: each
-/// load bumps the shared `load_gen` and passes its own `gen`. When the two stop
-/// matching, the pending drain breaks instead of appending stale cards into a
-/// grid that was already cleared and refilled by the newer load.
-pub(crate) fn append_in_batches<T: 'static>(
-    items: Vec<T>,
-    load_gen: Rc<Cell<u64>>,
-    gen: u64,
-    mut append: impl FnMut(T) + 'static,
-) {
-    let mut items = items.into_iter();
-    // First batch synchronously. A grid that fits in one batch is fully appended
-    // here and schedules no idle source at all.
-    for _ in 0..APPEND_BATCH {
-        match items.next() {
-            Some(item) => append(item),
-            None => return,
-        }
-    }
-    let pending = Rc::new(RefCell::new(items));
-    glib::idle_add_local(move || {
-        if load_gen.get() != gen {
-            return glib::ControlFlow::Break; // superseded by a newer load
-        }
-        let mut items = pending.borrow_mut();
-        for _ in 0..APPEND_BATCH {
-            match items.next() {
-                Some(item) => append(item),
-                None => return glib::ControlFlow::Break,
-            }
-        }
-        glib::ControlFlow::Continue
-    });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Mutex;
-
-    // `idle_add_local` always attaches its source to (and acquires) the global
-    // default `MainContext`, so these tests must drive that one context — and
-    // must not run concurrently, or their `acquire` calls race. This lock
-    // serializes them; each run drains the context clean on entry and exit.
-    static MAIN_LOOP_LOCK: Mutex<()> = Mutex::new(());
-
-    fn with_main_loop<F: FnOnce(&glib::MainContext)>(body: F) {
-        let _serial = MAIN_LOOP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let ctx = glib::MainContext::default();
-        let _owner = ctx.acquire().expect("own the default main context");
-        while ctx.iteration(false) {} // start from a clean slate
-        body(&ctx);
-        while ctx.iteration(false) {} // leave it clean for the next test
-    }
-
-    #[test]
-    fn append_in_batches_applies_first_batch_synchronously() {
-        with_main_loop(|_ctx| {
-            let out: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
-            let sink = Rc::clone(&out);
-            // More than one batch, so a drain is scheduled but has not run yet.
-            append_in_batches(
-                (0..APPEND_BATCH * 3).collect::<Vec<_>>(),
-                Rc::new(Cell::new(1)),
-                1,
-                move |x| sink.borrow_mut().push(x),
-            );
-            // Exactly the first batch landed before the loop was ever pumped.
-            assert_eq!(out.borrow().len(), APPEND_BATCH);
-        });
-    }
-
-    #[test]
-    fn append_in_batches_drains_every_item_in_order() {
-        with_main_loop(|ctx| {
-            let total = APPEND_BATCH * 3 + 7; // not a multiple of the batch size
-            let out: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
-            let sink = Rc::clone(&out);
-            append_in_batches(
-                (0..total).collect::<Vec<_>>(),
-                Rc::new(Cell::new(1)),
-                1,
-                move |x| sink.borrow_mut().push(x),
-            );
-            // Pump the real main loop until the idle drain is exhausted.
-            while out.borrow().len() < total && ctx.iteration(false) {}
-            assert_eq!(*out.borrow(), (0..total).collect::<Vec<_>>());
-        });
-    }
-
-    #[test]
-    fn append_in_batches_stops_when_superseded() {
-        with_main_loop(|ctx| {
-            let out: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
-            let sink = Rc::clone(&out);
-            let gen = Rc::new(Cell::new(1));
-            append_in_batches(
-                (0..APPEND_BATCH * 10).collect::<Vec<_>>(),
-                Rc::clone(&gen),
-                1,
-                move |x| sink.borrow_mut().push(x),
-            );
-            assert_eq!(out.borrow().len(), APPEND_BATCH, "only the sync batch so far");
-            // A newer load bumps the generation: the in-flight drain must stop
-            // instead of appending the remaining stale items.
-            gen.set(2);
-            while ctx.iteration(false) {}
-            assert_eq!(
-                out.borrow().len(),
-                APPEND_BATCH,
-                "no items appended past the first batch after supersede"
-            );
-        });
-    }
-
-    #[test]
-    fn append_in_batches_small_input_schedules_no_idle() {
-        with_main_loop(|ctx| {
-            let out: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
-            let sink = Rc::clone(&out);
-            append_in_batches(
-                (0..10).collect::<Vec<_>>(),
-                Rc::new(Cell::new(1)),
-                1,
-                move |x| sink.borrow_mut().push(x),
-            );
-            assert_eq!(out.borrow().len(), 10, "all applied synchronously");
-            // Nothing was scheduled: pumping the loop appends no further items.
-            while ctx.iteration(false) {}
-            assert_eq!(out.borrow().len(), 10, "no idle drain was scheduled");
-        });
-    }
 }
