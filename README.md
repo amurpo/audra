@@ -26,18 +26,10 @@ Native music player for Linux, built with GTK4 and libadwaita.
 ## Performance
 
 Audra is built to stay light, and the claim is measured rather than asserted.
-The numbers below were captured on Fedora with a real library of **3,831 tracks
-/ 380 albums / 179 artists**, using `sysprof` and `/proc/<pid>/smaps_rollup`.
-
-- **Memory:** ~178 MiB proportional set size (PSS — the app's real cost; the
-  ~294 MiB RSS most monitors report includes GTK libraries shared with the rest
-  of the desktop). Usage is bounded by library size and stays flat over time —
-  no leak.
-- **CPU:** ~0.7% during playback. Audio decoding itself is ~0.3% of samples; the
-  rest of the time the app is essentially idle.
-- **Rendering:** GPU-accelerated through GTK4's Vulkan renderer. Typical frame
-  times are ~1–3 ms — well under the 16.6 ms budget for 60 fps — so scrolling
-  and the dynamic gradient background stay smooth without loading the CPU.
+Its memory footprint is small and leak-free — bounded by library size, not by
+uptime — it spends almost no CPU during playback, and it renders through GTK4's
+Vulkan backend so scrolling and the dynamic gradient background stay smooth on
+the GPU without loading the CPU.
 
 ### Known trade-off and planned work
 
@@ -50,31 +42,9 @@ The numbers below were captured on Fedora with a real library of **3,831 tracks
   MP3 frames other players reject. A GStreamer backend is under consideration if
   more codec edge-cases surface.
 
-### Reproducing the measurements
-
-Build a profiling binary with frame pointers and line info:
-
-```bash
-RUSTFLAGS="-C force-frame-pointers=yes -C debuginfo=1" cargo build --release
-```
-
-Then, on Fedora (`sudo dnf install sysprof`):
-
-```bash
-# Honest memory cost of a running instance (PSS, private dirty)
-grep -E 'Rss|Pss|Private_Dirty' /proc/$(pidof audra)/smaps_rollup
-
-# CPU profile
-sysprof-cli cpu.syscap -- ./target/release/audra
-
-# Frame timings (GTK frame clock + main loop)
-sysprof-cli --gtk --speedtrack ui.syscap -- ./target/release/audra
-
-# Allocation profile
-sysprof-cli --memprof mem.syscap -- ./target/release/audra
-```
-
-Open the resulting `.syscap` files with `sysprof`.
+The measured numbers — memory, CPU, frame timings — the test rig, and how to
+reproduce them are tracked in
+[docs/PERFORMANCE_HISTORY.md](docs/PERFORMANCE_HISTORY.md).
 
 ## Requirements
 
