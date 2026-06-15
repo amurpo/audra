@@ -53,6 +53,11 @@ impl ArtistsView {
         flow.set_margin_end(4);
         flow.set_min_children_per_line(2);
         flow.set_max_children_per_line(8);
+        // Anchor cards top-left, matching the Albums GridView. Without this the
+        // FlowBox defaults to Fill and, being homogeneous, stretches the few
+        // present columns across the whole width — so a handful of artists look
+        // spread out and centered instead of packed to the left like albums.
+        flow.set_halign(Align::Start);
         flow.set_activate_on_single_click(true);
 
         // Same Clamp parameters as TrackList and AlbumsView so all surfaces
@@ -281,6 +286,8 @@ fn make_artist_detail_page(
     flow.set_margin_end(4);
     flow.set_min_children_per_line(2);
     flow.set_max_children_per_line(12);
+    // Anchor top-left like the Albums GridView (see the main artists grid).
+    flow.set_halign(Align::Start);
     flow.set_activate_on_single_click(true);
 
     for album in &albums {
