@@ -676,3 +676,146 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         mpris_cell,
     );
 }
+
+#[cfg(test)]
+mod sync_tests {
+    //! Regression tests for the scan/reconcile path, driving the real
+    //! [`scan_and_sync`] against on-disk fixtures. Born from the bug where a
+    //! renamed album folder plus newly-copied tracks stayed invisible until the
+    //! library folder was re-selected: a plain "Refresh" rescans the *stored*
+    //! folder, so once it is renamed away the scan finds nothing and silently
+    //! changes nothing.
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// Unique scratch directory under the OS temp dir, cleaned up on drop.
+    struct TmpDir(PathBuf);
+    impl TmpDir {
+        fn new() -> Self {
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let p = std::env::temp_dir().join(format!("audra_sync_{}_{}", std::process::id(), n));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpDir(p)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TmpDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Minimal probe-able 16-bit PCM mono WAV (mirrors `scanner::tests::write_wav`
+    /// so the scanner reads a real, taggable file).
+    fn write_wav(path: &Path) {
+        let sample_rate: u32 = 8000;
+        let samples: u32 = 800; // 0.1 s of silence
+        let data_len = samples * 2;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav.extend_from_slice(&1u16.to_le_bytes()); // mono
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
+        wav.extend_from_slice(&2u16.to_le_bytes()); // block align
+        wav.extend_from_slice(&16u16.to_le_bytes()); // bits/sample
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        wav.extend(std::iter::repeat_n(0u8, data_len as usize));
+        std::fs::write(path, wav).unwrap();
+    }
+
+    fn mem_db() -> Arc<Mutex<Database>> {
+        Arc::new(Mutex::new(Database::open(":memory:").unwrap()))
+    }
+
+    /// Sorted list of every stored track path.
+    fn db_paths(db: &Arc<Mutex<Database>>) -> Vec<String> {
+        let mut p: Vec<String> = db
+            .lock()
+            .unwrap()
+            .all_tracks()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.path)
+            .collect();
+        p.sort();
+        p
+    }
+
+    /// The FF9 scenario: scan a folder, then rename it AND drop in a freshly
+    /// copied track, and rescan the new path. Every path changes at once, so the
+    /// reconcile must purge the renamed-away rows, re-insert the moved tracks,
+    /// and surface the brand-new file — leaving no stale ghosts behind.
+    #[test]
+    fn rescan_after_folder_rename_and_added_file_converges() {
+        let root = TmpDir::new();
+        let old = root.path().join("Old Name");
+        std::fs::create_dir_all(&old).unwrap();
+        write_wav(&old.join("track1.wav"));
+        write_wav(&old.join("track2.wav"));
+
+        let db = mem_db();
+        let changed = scan_and_sync(&db, old.to_str().unwrap()).unwrap();
+        assert!(changed, "the first scan inserts the two tracks");
+        assert_eq!(db_paths(&db).len(), 2);
+
+        // Rename the album folder and copy in a new track, then rescan the new
+        // path — exactly what left FF9's first tracks invisible.
+        let new = root.path().join("New Name");
+        std::fs::rename(&old, &new).unwrap();
+        write_wav(&new.join("track0_added.wav"));
+
+        let changed = scan_and_sync(&db, new.to_str().unwrap()).unwrap();
+        assert!(changed, "a rename plus an added file must register as a change");
+
+        let after = db_paths(&db);
+        assert_eq!(after.len(), 3, "two moved tracks + one added, no stragglers");
+        assert!(
+            after.iter().all(|p| p.contains("New Name")),
+            "every row must live under the new folder; surviving old-path rows are the bug: {after:?}"
+        );
+        assert!(
+            after.iter().any(|p| p.ends_with("track0_added.wav")),
+            "the newly-copied file must appear after the rescan: {after:?}"
+        );
+    }
+
+    /// Pins the weak spot behind the "no matter how many syncs" symptom: a
+    /// "Refresh" rescans the *stored* folder, so after a rename that path is
+    /// gone, the scan finds nothing, the anti-wipe guard keeps the rows, and the
+    /// call reports no change — a silent no-op that never reaches the new files.
+    /// Documents current behavior so any future fix (e.g. detecting the missing
+    /// folder and prompting a re-select) must consciously update this test.
+    #[test]
+    fn refresh_on_renamed_away_folder_is_a_silent_noop() {
+        let root = TmpDir::new();
+        let old = root.path().join("Old Name");
+        std::fs::create_dir_all(&old).unwrap();
+        write_wav(&old.join("track1.wav"));
+
+        let db = mem_db();
+        scan_and_sync(&db, old.to_str().unwrap()).unwrap();
+        assert_eq!(db_paths(&db).len(), 1);
+
+        // Rename the folder away, then rescan the stale stored path.
+        std::fs::rename(&old, root.path().join("New Name")).unwrap();
+        let changed = scan_and_sync(&db, old.to_str().unwrap()).unwrap();
+
+        assert!(!changed, "a vanished folder yields no detectable change");
+        assert_eq!(
+            db_paths(&db).len(),
+            1,
+            "the anti-wipe guard keeps the catalog when the folder is unavailable"
+        );
+    }
+}
