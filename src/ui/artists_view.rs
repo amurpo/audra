@@ -1,10 +1,11 @@
 use crate::i18n::{gettext, ngettext};
 use crate::library::db::Database;
 use crate::library::{Album, Artist, Track};
-use crate::ui::albums_view::{make_album_card, make_album_detail_page, CARD_SIZE};
+use crate::ui::albums_view::{album_key, make_album_card, make_album_detail_page, CARD_SIZE};
 use crate::ui::image_apply::{apply_image, ImageTarget};
 use crate::ui::image_loader::{self, FetchOutcome, ImagePipelineConfig};
 use crate::ui::now_playing::NowPlaying;
+use crate::ui::track_list::TrackList;
 use crate::ui::widgets::{content_clamp, page_title_row, play_all_button};
 use adw::prelude::*;
 use gtk4::prelude::*;
@@ -27,6 +28,13 @@ const POS_KEY: &str = "audra-artist-pos";
 
 type PlayCallback = Box<dyn Fn(Vec<Track>, usize)>;
 type PlayCb = Rc<RefCell<Option<PlayCallback>>>;
+
+/// The album-detail song list currently pushed on the artists nav, if any:
+/// the artist whose page it was opened from, the album key (also the page tag),
+/// and the `TrackList` widget. Lets a rescan refresh the open song list in
+/// place. The artist is kept because an artist page shows only *that* artist's
+/// tracks within an album (compilations), so the refresh must re-filter.
+type OpenSongList = (String, String, Rc<TrackList>);
 
 pub struct ArtistsView {
     pub root: adw::NavigationView,
@@ -51,6 +59,12 @@ pub struct ArtistsView {
     all_albums: Rc<RefCell<Vec<Album>>>,
     on_play: PlayCb,
     current_filter: Rc<RefCell<String>>,
+    /// Library handle, kept so a rescan can recompute an open album detail's
+    /// (artist-filtered) track list — covers are looked up here.
+    db: Arc<Mutex<Database>>,
+    /// The album-detail song list currently open on this view's nav, if any.
+    /// Drives the in-place refresh in [`ArtistsView::refresh_open_detail`].
+    open_detail: Rc<RefCell<Option<OpenSongList>>>,
 }
 
 impl ArtistsView {
@@ -70,6 +84,7 @@ impl ArtistsView {
         let all_albums: Rc<RefCell<Vec<Album>>> = Rc::new(RefCell::new(Vec::new()));
         let on_play: PlayCb = Rc::new(RefCell::new(None));
         let current_filter = Rc::new(RefCell::new(String::new()));
+        let open_detail: Rc<RefCell<Option<OpenSongList>>> = Rc::new(RefCell::new(None));
 
         // --- setup: build one empty, reusable artist card + its right-click menu ---
         {
@@ -199,6 +214,7 @@ impl ArtistsView {
             let on_play_a = Rc::clone(&on_play);
             let now_playing_a = Rc::clone(&now_playing);
             let db_a = Arc::clone(&db);
+            let open_detail_a = Rc::clone(&open_detail);
             grid.connect_activate(move |_, pos| {
                 // A fast double-click activates twice; only push while this grid
                 // is still the visible page so the second activation can't stack
@@ -215,49 +231,7 @@ impl ArtistsView {
                     None => return,
                 };
 
-                // Two kinds of hits:
-                //   * Direct: album.artist == name → keep the whole album.
-                //   * Compilation: album.artist != name but some tracks do match
-                //     (Various Artists / OSTs) → keep only the artist's tracks
-                //     under that album, with the original album name preserved so
-                //     the cover still resolves.
-                // Both comparisons are case-insensitive so tags like "Comes With
-                // The Fall" vs "Comes With the Fall" resolve to the same artist.
-                let name_lower = name.to_lowercase();
-                let mut artist_albums: Vec<Album> = albums_a
-                    .borrow()
-                    .iter()
-                    .filter_map(|a| {
-                        if a.artist.to_lowercase() == name_lower {
-                            return Some(a.clone());
-                        }
-                        let tracks: Vec<Track> = a
-                            .tracks
-                            .iter()
-                            .filter(|t| t.display_artist().to_lowercase() == name_lower)
-                            .cloned()
-                            .collect();
-                        if tracks.is_empty() {
-                            None
-                        } else {
-                            Some(Album {
-                                name: a.name.clone(),
-                                artist: a.artist.clone(),
-                                tracks,
-                                cover: a.cover.clone(),
-                            })
-                        }
-                    })
-                    .collect();
-
-                {
-                    let db_g = db_a.lock().unwrap();
-                    for album in &mut artist_albums {
-                        if album.cover.is_none() {
-                            album.cover = db_g.get_cover(&album.artist, &album.name);
-                        }
-                    }
-                }
+                let artist_albums = albums_for_artist(&name, &albums_a.borrow(), &db_a);
 
                 let page = make_artist_detail_page(
                     nav_c.clone(),
@@ -266,6 +240,7 @@ impl ArtistsView {
                     Rc::clone(&on_play_a),
                     Rc::clone(&now_playing_a),
                     Arc::clone(&db_a),
+                    Rc::clone(&open_detail_a),
                 );
                 nav_c.push(&page);
             });
@@ -282,6 +257,8 @@ impl ArtistsView {
             all_albums,
             on_play,
             current_filter,
+            db,
+            open_detail,
         }
     }
 
@@ -328,8 +305,49 @@ impl ArtistsView {
         let active = self.current_filter.borrow().clone();
         self.apply_filter(&active);
 
+        // If the user is sitting inside an album's song list (reached through an
+        // artist), reload it in place from the fresh data instead of leaving it
+        // stale behind the rebuilt grid.
+        self.refresh_open_detail();
+
         if !names_to_fetch.is_empty() {
             self.start_photo_fetch(names_to_fetch);
+        }
+    }
+
+    /// Reload an open album-detail song list (pushed from an artist page) from
+    /// the current library data, re-applying the artist filter so compilations
+    /// still show only this artist's tracks. The nav stack is untouched, so the
+    /// user stays where they are; if the album is gone, fall back to the
+    /// artist's album grid.
+    fn refresh_open_detail(&self) {
+        let Some(tag) = self.root.visible_page().and_then(|p| p.tag()) else {
+            return;
+        };
+        // Only a song list is refreshable here; the grids ("artists-root" /
+        // "artist-detail") are already rebuilt by the model splice above.
+        if tag.as_str() == "artists-root" || tag.as_str() == "artist-detail" {
+            return;
+        }
+        let open = self.open_detail.borrow();
+        let Some((artist, key, list)) = open.as_ref() else {
+            return;
+        };
+        if key.as_str() != tag.as_str() {
+            return;
+        }
+        let tracks = albums_for_artist(artist, &self.all_albums.borrow(), &self.db)
+            .into_iter()
+            .find(|a| &album_key(a) == key)
+            .map(|a| a.tracks);
+        match tracks {
+            Some(tracks) => list.load(tracks),
+            None => {
+                drop(open);
+                // Album gone from the library: step back to the artist's grid,
+                // not all the way to the artist list.
+                self.root.pop_to_tag("artist-detail");
+            }
         }
     }
 
@@ -462,6 +480,51 @@ fn repaint_photos(
     }
 }
 
+/// Collect the albums to show on an artist's detail page. Two kinds of hits:
+///   * Direct: `album.artist == name` → keep the whole album.
+///   * Compilation: `album.artist != name` but some tracks match (Various
+///     Artists / OSTs) → keep only the artist's tracks under that album, with
+///     the original album name preserved so the cover still resolves.
+///
+/// Both comparisons are case-insensitive so tags like "Comes With The Fall" vs
+/// "Comes With the Fall" resolve to the same artist. Missing covers are filled
+/// from the DB. Shared by the initial open and the in-place rescan refresh.
+fn albums_for_artist(name: &str, all_albums: &[Album], db: &Arc<Mutex<Database>>) -> Vec<Album> {
+    let name_lower = name.to_lowercase();
+    let mut artist_albums: Vec<Album> = all_albums
+        .iter()
+        .filter_map(|a| {
+            if a.artist.to_lowercase() == name_lower {
+                return Some(a.clone());
+            }
+            let tracks: Vec<Track> = a
+                .tracks
+                .iter()
+                .filter(|t| t.display_artist().to_lowercase() == name_lower)
+                .cloned()
+                .collect();
+            if tracks.is_empty() {
+                None
+            } else {
+                Some(Album {
+                    name: a.name.clone(),
+                    artist: a.artist.clone(),
+                    tracks,
+                    cover: a.cover.clone(),
+                })
+            }
+        })
+        .collect();
+
+    let db_g = db.lock().unwrap();
+    for album in &mut artist_albums {
+        if album.cover.is_none() {
+            album.cover = db_g.get_cover(&album.artist, &album.name);
+        }
+    }
+    artist_albums
+}
+
 fn make_artist_detail_page(
     nav: adw::NavigationView,
     artist_name: &str,
@@ -469,6 +532,7 @@ fn make_artist_detail_page(
     on_play: PlayCb,
     now_playing: Rc<NowPlaying>,
     db: Arc<Mutex<Database>>,
+    open_detail: Rc<RefCell<Option<OpenSongList>>>,
 ) -> adw::NavigationPage {
     // No HeaderBar — the back arrow sits inline next to the artist name,
     // matching Songs / album-detail layouts exactly. NavigationPage still
@@ -552,6 +616,8 @@ fn make_artist_detail_page(
         let on_play_c = Rc::clone(&on_play);
         let nav_c = nav.clone();
         let now_playing_c = Rc::clone(&now_playing);
+        let open_detail_c = Rc::clone(&open_detail);
+        let artist = artist_name.to_string();
         flow.connect_child_activated(move |_, child| {
             // Double-click guard: see the equivalent check in AlbumsView.
             if nav_c.visible_page().and_then(|p| p.tag()).as_deref() != Some("artist-detail") {
@@ -559,8 +625,14 @@ fn make_artist_detail_page(
             }
             let idx = child.index() as usize;
             if let Some(album) = albums_c.get(idx) {
-                let page =
+                let (page, list) =
                     make_album_detail_page(album, Rc::clone(&on_play_c), Rc::clone(&now_playing_c));
+                // Tag + remember the song list so a rescan can refresh it in
+                // place (see ArtistsView::refresh_open_detail). The artist is
+                // stored so the refresh re-applies the compilation filter.
+                let key = album_key(album);
+                page.set_tag(Some(&key));
+                *open_detail_c.borrow_mut() = Some((artist.clone(), key, list));
                 nav_c.push(&page);
             }
         });

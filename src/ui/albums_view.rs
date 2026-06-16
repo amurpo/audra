@@ -27,6 +27,10 @@ const POS_KEY: &str = "audra-album-pos";
 
 type PlayCb = Rc<RefCell<Option<Box<dyn Fn(Vec<Track>, usize)>>>>;
 
+/// The album-detail page currently pushed on the nav, if any: its album key
+/// (`"artist|name"`, also the page tag) and the song list it shows.
+type OpenDetail = (String, Rc<TrackList>);
+
 /// The inner widgets of one album card, returned by [`build_album_card`] so both
 /// the recycling `GridView` factory and the FlowBox `make_album_card` (artists
 /// view) share the exact same visuals.
@@ -64,6 +68,11 @@ pub struct AlbumsView {
     db: Rc<RefCell<Option<Arc<Mutex<Database>>>>>,
     on_play: PlayCb,
     current_filter: Rc<RefCell<String>>,
+    /// The album-detail page currently pushed on `root`, if any: its album key
+    /// (`"artist|name"`, also the page tag) and the `TrackList` it shows. Lets
+    /// `load_albums` refresh an open detail *in place* on a rescan — updating
+    /// the song list without popping the user back to the grid.
+    open_detail: Rc<RefCell<Option<OpenDetail>>>,
 }
 
 impl AlbumsView {
@@ -83,6 +92,7 @@ impl AlbumsView {
         let db: Rc<RefCell<Option<Arc<Mutex<Database>>>>> = Rc::new(RefCell::new(None));
         let on_play: PlayCb = Rc::new(RefCell::new(None));
         let current_filter = Rc::new(RefCell::new(String::new()));
+        let open_detail: Rc<RefCell<Option<OpenDetail>>> = Rc::new(RefCell::new(None));
 
         // --- setup: build one empty, reusable card + its right-click gesture ---
         {
@@ -237,6 +247,7 @@ impl AlbumsView {
             let albums_a = Rc::clone(&albums_data);
             let on_play_c = Rc::clone(&on_play);
             let now_playing_c = Rc::clone(&now_playing);
+            let open_detail_a = Rc::clone(&open_detail);
             grid.connect_activate(move |_, pos| {
                 // A fast double-click activates twice; only push while this grid
                 // is still the visible page so the second activation can't stack
@@ -250,11 +261,16 @@ impl AlbumsView {
                 };
                 let album = albums_a.borrow().get(idx).cloned();
                 if let Some(album) = album {
-                    let page = make_album_detail_page(
+                    let (page, list) = make_album_detail_page(
                         &album,
                         Rc::clone(&on_play_c),
                         Rc::clone(&now_playing_c),
                     );
+                    // Tag the page with the album key and remember its song list
+                    // so a later rescan can refresh it in place (see load_albums).
+                    let key = album_key(&album);
+                    page.set_tag(Some(&key));
+                    *open_detail_a.borrow_mut() = Some((key, list));
                     nav_c.push(&page);
                 }
             });
@@ -271,6 +287,7 @@ impl AlbumsView {
             db,
             on_play,
             current_filter,
+            open_detail,
         }
     }
 
@@ -307,8 +324,49 @@ impl AlbumsView {
         let active = self.current_filter.borrow().clone();
         self.apply_filter(&active);
 
+        // Keep an open album detail in sync without leaving it: if the user is
+        // viewing a song list, reload it from the fresh data instead of letting
+        // the rescan only touch the grid behind it. If the album is gone (e.g.
+        // its files were deleted), fall back to the grid.
+        self.refresh_open_detail();
+
         if !need_fetch.is_empty() {
             self.start_cover_fetch(need_fetch, db);
+        }
+    }
+
+    /// Reload the pushed album-detail page's song list from the current
+    /// `albums_data`, leaving the navigation stack untouched so the user stays
+    /// on the album they were viewing. A no-op when the grid is the visible
+    /// page; pops to the grid only if the open album no longer exists.
+    fn refresh_open_detail(&self) {
+        // Only act when a detail page is actually on top, matched by its tag
+        // (the album key) to the page we remembered when pushing it.
+        let Some(tag) = self.root.visible_page().and_then(|p| p.tag()) else {
+            return;
+        };
+        if tag.as_str() == "albums-root" {
+            return;
+        }
+        let open = self.open_detail.borrow();
+        let Some((key, list)) = open.as_ref() else { return };
+        if key.as_str() != tag.as_str() {
+            return;
+        }
+        let found = self
+            .albums_data
+            .borrow()
+            .iter()
+            .find(|a| &album_key(a) == key)
+            .map(|a| a.tracks.clone());
+        match found {
+            Some(tracks) => list.load(tracks),
+            None => {
+                // The album vanished from the library; drop the borrow before
+                // popping so the nav change can't alias `open_detail`.
+                drop(open);
+                self.root.pop_to_tag("albums-root");
+            }
         }
     }
 
@@ -408,8 +466,9 @@ impl AlbumsView {
     }
 }
 
-/// Stable cover-cache key for an album: `"artist|name"`.
-fn album_key(album: &Album) -> String {
+/// Stable cover-cache key for an album: `"artist|name"`. Also used as the
+/// detail page's navigation tag so a rescan can find the open page again.
+pub(crate) fn album_key(album: &Album) -> String {
     format!("{}|{}", album.artist, album.name)
 }
 
@@ -547,7 +606,7 @@ pub fn make_album_detail_page(
     album: &Album,
     on_play: PlayCb,
     now_playing: Rc<NowPlaying>,
-) -> adw::NavigationPage {
+) -> (adw::NavigationPage, Rc<TrackList>) {
     let track_list = TrackList::new(TrackListConfig::album_detail(), now_playing);
     track_list.load(album.tracks.clone());
 
@@ -580,7 +639,8 @@ pub fn make_album_detail_page(
     content.append(&title_clamp);
     content.append(&track_list.root);
 
-    adw::NavigationPage::new(&content, &album.name)
+    let page = adw::NavigationPage::new(&content, &album.name);
+    (page, track_list)
 }
 
 /// Build a FlowBox album card with data already set. Still used by the artists
