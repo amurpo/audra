@@ -113,9 +113,14 @@ gridview.audra-artist-grid > child {
     padding: 12px 10px 16px 10px;
     transition: background-color 150ms;
 }
-gridview.audra-artist-grid > child:hover .artist-card,
-gridview.audra-artist-grid > child:focus .artist-card,
-gridview.audra-artist-grid > child:focus-within .artist-card {
+/* Hover ONLY — never :focus / :focus-within. This grid is mouse-driven
+ * (NoSelection + single-click-activate, no selection chrome). Focus state is
+ * unreliable on a virtualized GridView: the focused cell keeps its highlight
+ * after activating an artist, and because cells are recycled on scroll that
+ * stale focus rides onto a cell now showing a different artist — so a phantom
+ * card stays lit and a second one lights up on hover. Hover guarantees at most
+ * one highlight, at the pointer. */
+gridview.audra-artist-grid > child:hover .artist-card {
     background-color: alpha(currentColor, 0.07);
 }
 
