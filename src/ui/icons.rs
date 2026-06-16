@@ -53,7 +53,9 @@ impl Icon {
             Icon::ArrowLeft => "go-previous-symbolic",
             Icon::User => "avatar-default-symbolic",
             Icon::Loader => "network-transmit-receive-symbolic",
-            Icon::CheckCircle => "emblem-ok-symbolic",
+            // Adwaita ships no `emblem-ok-symbolic`, so the "connected" status
+            // page rendered blank; `object-select-symbolic` is its checkmark.
+            Icon::CheckCircle => "object-select-symbolic",
             Icon::FolderMusic => "folder-music-symbolic",
             Icon::Refresh => "view-refresh-symbolic",
             Icon::DeleteBin => "user-trash-symbolic",
