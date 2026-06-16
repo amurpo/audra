@@ -179,17 +179,14 @@ fn window_handle(_window: &adw::ApplicationWindow) -> Option<*mut std::ffi::c_vo
 }
 
 /// Directory holding the downscaled MPRIS thumbnail files. Cache, not data:
-/// regenerable on play, so it lives where cache cleaners may reap it.
+/// regenerable on play, so it lives where cache cleaners may reap it. The
+/// library reset deliberately leaves this alone — it refills itself as tracks
+/// play, so there is nothing to clear.
 pub fn cover_cache_dir() -> std::path::PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("audra")
         .join("mpris")
-}
-
-/// Wipe the MPRIS thumbnail cache (called by the library reset).
-pub fn clear_cover_cache() {
-    let _ = std::fs::remove_dir_all(cover_cache_dir());
 }
 
 /// Re-encode `bytes` as a JPEG whose longest side is at most `max` px,
