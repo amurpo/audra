@@ -33,11 +33,12 @@ the GPU without loading the CPU.
 
 ### Known trade-off and planned work
 
-- The main album grid uses a virtualized `GtkGridView`: only the cards on screen
-  are realized, so opening the library is instant with no layout hitch, even for
-  large collections. The artists grid still uses a `GtkFlowBox` (which realizes
-  every card up front); its appends are batched across the main loop so that view
-  stays responsive too.
+- Both main grids — albums and artists — use a virtualized `GtkGridView`: only
+  the cards on screen are realized, so opening the library is instant with no
+  layout hitch, even for large collections. The only remaining `GtkFlowBox` is
+  the small album sub-grid inside an artist's detail page, which is deliberate: a
+  single artist never has thousands of albums, so there is no scrolling hitch to
+  virtualize away there.
 - Decoding uses a tolerant Symphonia-based pipeline that recovers from malformed
   MP3 frames other players reject. A GStreamer backend is under consideration if
   more codec edge-cases surface.
