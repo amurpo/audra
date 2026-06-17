@@ -86,6 +86,22 @@ export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:/opt/homebrew/share/pkgconfi
 
 See [docs/BUILD-macos-arm64.md](docs/BUILD-macos-arm64.md) for the full macOS arm64 build, run, and verify steps.
 
+## Tested on
+
+Audra is regularly built and run on the setups below. Any GTK4-capable desktop
+should work; these are simply the combinations that have been verified.
+
+| Distribution | Desktop(s) | Install | Notes |
+| --- | --- | --- | --- |
+| Debian 13 (Trixie) | GNOME, KDE Plasma, Xfce, LXDE | `.deb` | On LXDE the window has square corners — Openbox runs no compositor, so the client-side rounded corners aren't drawn |
+| Linux Mint 22.3 | Cinnamon | `.deb` | |
+| Ubuntu 25.10 | GNOME | `.deb` | |
+| Fedora 44 Workstation | GNOME | source / `.rpm` | primary development platform |
+| Manjaro | GNOME | source | built without `LASTFM_PROXY_URL`, so the Last.fm features are disabled |
+
+Other desktops on these distributions (e.g. KDE Plasma on Fedora) are expected
+to work but haven't all been individually checked.
+
 ## Installation
 
 ### RPM (Fedora / RHEL)
