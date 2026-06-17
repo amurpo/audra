@@ -230,3 +230,21 @@ msgstr "Parcial"
 
 msgid "Full"
 msgstr "Total"
+
+msgid "Change language?"
+msgstr "¿Cambiar idioma?"
+
+msgid "The window will reload to apply the new language and playback will stop."
+msgstr "La ventana se recargará para aplicar el nuevo idioma y se detendrá la reproducción."
+
+msgid "Change"
+msgstr "Cambiar"
+
+msgid "Library reset"
+msgstr "Biblioteca restablecida"
+
+msgid "Cover art reset"
+msgstr "Carátulas restablecidas"
+
+msgid "Library and cover art reset"
+msgstr "Biblioteca y carátulas restablecidas"

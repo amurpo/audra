@@ -22,6 +22,7 @@ pub fn show_reset_dialog(
     views: Views,
     loading_box: gtk4::Box,
     spinner: gtk4::Spinner,
+    toast_overlay: adw::ToastOverlay,
 ) {
     let dialog = adw::AlertDialog::new(
         Some(&gettext("Reset library?")),
@@ -49,6 +50,8 @@ pub fn show_reset_dialog(
             loading_box,
             #[strong]
             spinner,
+            #[strong]
+            toast_overlay,
             move |_, resp| {
                 // Helper: repopulate tracks by rescanning the configured folder,
                 // or just reload the views when no folder is set yet.
@@ -60,10 +63,15 @@ pub fn show_reset_dialog(
                         reload_all_views(views);
                     }
                 };
+                // Confirm the action is done. For Library/Everything a rescan
+                // spinner takes over; the toast still tells the user the reset
+                // itself went through.
+                let toast = |msg: &str| toast_overlay.add_toast(adw::Toast::new(msg));
                 match resp {
                     "library" => {
                         let _ = views.db.lock().unwrap().clear_tracks();
                         rescan(&views);
+                        toast(&gettext("Library reset"));
                     }
                     "covers" => {
                         let _ = views.db.lock().unwrap().clear_album_covers();
@@ -72,11 +80,13 @@ pub fn show_reset_dialog(
                         // views re-runs the cover fetch against the now-empty
                         // cache, re-deriving embedded art and re-downloading.
                         reload_all_views(&views);
+                        toast(&gettext("Cover art reset"));
                     }
                     "all" => {
                         let _ = views.db.lock().unwrap().clear_library();
                         library::metadata::clear_cover_cache();
                         rescan(&views);
+                        toast(&gettext("Library and cover art reset"));
                     }
                     _ => {}
                 }

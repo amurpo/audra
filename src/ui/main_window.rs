@@ -514,7 +514,11 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     scan_loading_box.append(&scan_card);
     scan_overlay.add_overlay(&scan_loading_box);
 
-    window.set_content(Some(&scan_overlay));
+    // Toasts (e.g. the post-reset confirmation) anchor to this overlay, which
+    // wraps everything so they float above the content and the scan spinner.
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&scan_overlay));
+    window.set_content(Some(&toast_overlay));
 
     // Settings popover: built here (not with the header) because its handlers
     // capture the views and the scan widgets, which only now exist. Packing
@@ -524,6 +528,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         views: views.clone(),
         scan_loading_box: scan_loading_box.clone(),
         scan_spinner: scan_spinner.clone(),
+        toast_overlay: toast_overlay.clone(),
         lastfm: Arc::clone(&lastfm),
         player: Rc::clone(&player),
         apply_language: Rc::clone(&apply_language),
