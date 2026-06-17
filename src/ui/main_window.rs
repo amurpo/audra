@@ -328,6 +328,29 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let header = adw::HeaderBar::new();
     header.add_css_class("audra-header-bar");
 
+    // Strip just the window-menu app icon from the decoration layout the
+    // desktop hands us, keeping its button placement (which side, min/max)
+    // intact. KDE — and the older GTK/libadwaita the .deb runs against on
+    // Debian/Ubuntu — render the `icon`/`menu`/`appmenu` token as an app icon
+    // at the start of the header; standard GNOME apps show no such icon, so we
+    // drop that one token everywhere and leave the real window controls alone.
+    if let Some(settings) = gtk4::Settings::default() {
+        if let Some(layout) = settings.gtk_decoration_layout() {
+            let stripped = layout
+                .as_str()
+                .split(':')
+                .map(|side| {
+                    side.split(',')
+                        .filter(|t| !matches!(*t, "icon" | "menu" | "appmenu"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .collect::<Vec<_>>()
+                .join(":");
+            header.set_decoration_layout(Some(&stripped));
+        }
+    }
+
     let btn_search = ToggleButton::new();
     let search_icon = crate::ui::icons::image(crate::ui::icons::Icon::Search, 20);
     btn_search.set_child(Some(&search_icon));
