@@ -297,12 +297,35 @@ fn register_font(path: &std::path::Path) {
     }
 }
 
+/// Drop Pango's cached default font map so the next `PangoContext` (and thus
+/// every widget built afterwards) is created from the *current* FontConfig,
+/// picking up the bundled font we just added with `FcConfigAppFontAddFile`.
+///
+/// Without this, older Pango (Debian/Ubuntu, where the .deb runs) keeps the
+/// font map it built at GTK init and never re-scans the runtime font addition,
+/// so 'Jost' is invisible and the CSS silently falls back to the system font.
+/// Newer Pango (Fedora) re-scans on its own — which is exactly why the font
+/// only broke on the .deb and worked everywhere else. Must run before our
+/// widgets exist (we call it from `setup_css`, before the window is built).
+fn refresh_font_map() {
+    use std::ffi::c_void;
+    extern "C" {
+        fn pango_cairo_font_map_set_default(fontmap: *mut c_void);
+    }
+    unsafe { pango_cairo_font_map_set_default(std::ptr::null_mut()) };
+}
+
 pub fn setup_css(use_jost: bool) {
     USE_JOST.with(|c| *c.borrow_mut() = use_jost);
-    if use_jost {
-        if let Some(path) = extract_font() {
-            register_font(&path);
-        }
+    // Always make the bundled font available to Pango, even when the user
+    // currently prefers the system font. Registering it is harmless (the CSS
+    // decides whether it's actually applied) and it means the in-app toggle can
+    // switch to Jost instantly without touching FontConfig again. The font-map
+    // refresh right after guarantees the addition is visible on every distro;
+    // doing it here, before any widget builds its Pango context, makes it stick.
+    if let Some(path) = extract_font() {
+        register_font(&path);
+        refresh_font_map();
     }
     let provider = gtk4::CssProvider::new();
     provider.load_from_string(&build_css());
@@ -318,11 +341,10 @@ pub fn setup_css(use_jost: bool) {
 
 pub fn update_font(use_jost: bool) {
     USE_JOST.with(|c| *c.borrow_mut() = use_jost);
-    if use_jost {
-        if let Some(path) = extract_font() {
-            register_font(&path);
-        }
-    }
+    // The font is registered once (and the font map refreshed) in `setup_css`
+    // at startup, so by now 'Jost' already lives in every widget's font map.
+    // Switching is therefore a pure CSS change — no FontConfig work, and no
+    // font-map reset (which wouldn't reach the already-created widgets anyway).
     reload();
 }
 
