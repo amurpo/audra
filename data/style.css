@@ -359,3 +359,26 @@ listview.audra-track-list > row {
     );
 }
 
+/* --- Text fields inside shaded (dynamically tinted) dialogs/popovers ---
+ *
+ * The cover-art picker's search field lives in a `.audra-shaded` dialog, so the
+ * dynamic background tint sits behind it. The tint can land on any hue, and in
+ * Full mode it even redefines `@accent_bg_color` from the cover — which is what
+ * paints the text-selection band. The result was contrast that depended on the
+ * cover: with a dark cover the selection band nearly vanished into the field, so
+ * picking text to edit or delete was a guessing game.
+ *
+ * Pin these entries to a solid neutral surface, independent of the tint, and
+ * give the selection a reverse-video band (foreground/background swapped) that
+ * is guaranteed to read on any theme and any cover. Scoped to `entry` so it
+ * never touches list/grid selections. */
+.audra-shaded entry,
+.audra-shaded entry > text {
+    background-color: @view_bg_color;
+    color: @view_fg_color;
+}
+.audra-shaded entry selection {
+    background-color: @view_fg_color;
+    color: @view_bg_color;
+}
+

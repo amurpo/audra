@@ -36,6 +36,16 @@ type PlayCb = Rc<RefCell<Option<PlayCallback>>>;
 /// tracks within an album (compilations), so the refresh must re-filter.
 type OpenSongList = (String, String, Rc<TrackList>);
 
+/// The artist-detail page currently pushed on the nav, if any: the artist name,
+/// its album `FlowBox`, the "N albums" caption, and the shared album list the
+/// page's "Play all" / card-click handlers read. Unlike the main grids, this
+/// sub-grid is a plain (non-virtualized) `FlowBox`, so a rescan can't refresh it
+/// through a model splice — it has to rebuild the children. Remembering these
+/// handles lets [`ArtistsView::refresh_open_artist_detail`] do exactly that in
+/// place, so a newly-added album by the open artist shows up without leaving the
+/// page.
+type OpenArtistDetail = (String, FlowBox, Label, Rc<RefCell<Vec<Album>>>);
+
 pub struct ArtistsView {
     pub root: adw::NavigationView,
     grid: GridView,
@@ -65,6 +75,9 @@ pub struct ArtistsView {
     /// The album-detail song list currently open on this view's nav, if any.
     /// Drives the in-place refresh in [`ArtistsView::refresh_open_detail`].
     open_detail: Rc<RefCell<Option<OpenSongList>>>,
+    /// The artist-detail page currently open on this view's nav, if any. Drives
+    /// the in-place rebuild in [`ArtistsView::refresh_open_artist_detail`].
+    open_artist_detail: Rc<RefCell<Option<OpenArtistDetail>>>,
 }
 
 impl ArtistsView {
@@ -85,6 +98,8 @@ impl ArtistsView {
         let on_play: PlayCb = Rc::new(RefCell::new(None));
         let current_filter = Rc::new(RefCell::new(String::new()));
         let open_detail: Rc<RefCell<Option<OpenSongList>>> = Rc::new(RefCell::new(None));
+        let open_artist_detail: Rc<RefCell<Option<OpenArtistDetail>>> =
+            Rc::new(RefCell::new(None));
 
         // --- setup: build one empty, reusable artist card + its right-click menu ---
         {
@@ -215,6 +230,7 @@ impl ArtistsView {
             let now_playing_a = Rc::clone(&now_playing);
             let db_a = Arc::clone(&db);
             let open_detail_a = Rc::clone(&open_detail);
+            let open_artist_detail_a = Rc::clone(&open_artist_detail);
             grid.connect_activate(move |_, pos| {
                 // A fast double-click activates twice; only push while this grid
                 // is still the visible page so the second activation can't stack
@@ -241,6 +257,7 @@ impl ArtistsView {
                     Rc::clone(&now_playing_a),
                     Arc::clone(&db_a),
                     Rc::clone(&open_detail_a),
+                    Rc::clone(&open_artist_detail_a),
                 );
                 nav_c.push(&page);
             });
@@ -259,6 +276,7 @@ impl ArtistsView {
             current_filter,
             db,
             open_detail,
+            open_artist_detail,
         }
     }
 
@@ -309,6 +327,9 @@ impl ArtistsView {
         // artist), reload it in place from the fresh data instead of leaving it
         // stale behind the rebuilt grid.
         self.refresh_open_detail();
+        // Likewise, if an artist's detail page (its album FlowBox) is open,
+        // rebuild it so a newly-added album by that artist shows up live.
+        self.refresh_open_artist_detail();
 
         if !names_to_fetch.is_empty() {
             self.start_photo_fetch(names_to_fetch);
@@ -324,8 +345,9 @@ impl ArtistsView {
         let Some(tag) = self.root.visible_page().and_then(|p| p.tag()) else {
             return;
         };
-        // Only a song list is refreshable here; the grids ("artists-root" /
-        // "artist-detail") are already rebuilt by the model splice above.
+        // Only a song list is handled here. "artists-root" is rebuilt by the
+        // model splice above; "artist-detail" (the album FlowBox) is rebuilt by
+        // `refresh_open_artist_detail`.
         if tag.as_str() == "artists-root" || tag.as_str() == "artist-detail" {
             return;
         }
@@ -349,6 +371,40 @@ impl ArtistsView {
                 self.root.pop_to_tag("artist-detail");
             }
         }
+    }
+
+    /// Rebuild the open artist-detail page's album `FlowBox` from the current
+    /// library, so a rescan that added or removed albums by that artist shows up
+    /// without leaving the page. A no-op when no artist detail is open. The
+    /// FlowBox isn't virtualized, so its children are rebuilt directly — the
+    /// model-splice trick the main grids rely on doesn't apply here, which is
+    /// exactly why a plain rescan left this page stale until the user navigated
+    /// out and back in.
+    fn refresh_open_artist_detail(&self) {
+        let open = self.open_artist_detail.borrow();
+        let Some((artist, flow, lbl_count, albums_rc)) = open.as_ref() else {
+            return;
+        };
+        // The detail page was already popped: its widgets are detached, nothing
+        // on screen to update (a later artist detail will overwrite this entry).
+        if self.root.find_page("artist-detail").is_none() {
+            return;
+        }
+        let fresh = albums_for_artist(artist, &self.all_albums.borrow(), &self.db);
+        if fresh.is_empty() {
+            // The artist's files are all gone: step back to the artist list
+            // rather than leave an empty detail page on screen.
+            drop(open);
+            self.root.pop_to_tag("artists-root");
+            return;
+        }
+        populate_artist_albums(flow, &fresh, &self.db);
+        lbl_count.set_text(&format!(
+            "{} {}",
+            fresh.len(),
+            ngettext("album", "albums", fresh.len() as u32)
+        ));
+        *albums_rc.borrow_mut() = fresh;
     }
 
     /// Drive the shared two-pass image pipeline for artist photos.
@@ -518,13 +574,31 @@ fn albums_for_artist(name: &str, all_albums: &[Album], db: &Arc<Mutex<Database>>
 
     let db_g = db.lock().unwrap();
     for album in &mut artist_albums {
-        if album.cover.is_none() {
-            album.cover = db_g.get_cover(&album.artist, &album.name);
+        if album.cover.is_some() {
+            continue;
+        }
+        // Stored cover wins, including the empty "user removed it on purpose"
+        // marker (kept as Some so the embedded fallback below doesn't undo it).
+        if let Some(bytes) = db_g.get_cover(&album.artist, &album.name) {
+            album.cover = Some(bytes);
+            continue;
+        }
+        // Not cached yet — typically an album just copied in and rescanned, so
+        // the async grid fetch hasn't run. Read the embedded art directly (the
+        // same fast lane the main grid uses) and persist it, so a brand-new
+        // album shows its cover immediately instead of only after revisiting.
+        for track in &album.tracks {
+            if let Some(bytes) = crate::library::art::read_cover_art(&track.path) {
+                let _ = db_g.set_cover(&album.artist, &album.name, &bytes);
+                album.cover = Some(bytes);
+                break;
+            }
         }
     }
     artist_albums
 }
 
+#[allow(clippy::too_many_arguments)]
 fn make_artist_detail_page(
     nav: adw::NavigationView,
     artist_name: &str,
@@ -533,6 +607,7 @@ fn make_artist_detail_page(
     now_playing: Rc<NowPlaying>,
     db: Arc<Mutex<Database>>,
     open_detail: Rc<RefCell<Option<OpenSongList>>>,
+    open_artist_detail: Rc<RefCell<Option<OpenArtistDetail>>>,
 ) -> adw::NavigationPage {
     // No HeaderBar — the back arrow sits inline next to the artist name,
     // matching Songs / album-detail layouts exactly. NavigationPage still
@@ -562,11 +637,10 @@ fn make_artist_detail_page(
     flow.set_halign(Align::Start);
     flow.set_activate_on_single_click(true);
 
-    for album in &albums {
-        flow.append(&make_artist_album_card(album, Arc::clone(&db)));
-    }
-
-    let albums_rc = Rc::new(albums);
+    // Shared, mutable so a rescan can swap in the artist's fresh album list and
+    // the "Play all" / card-click handlers below keep working off current data.
+    let albums_rc = Rc::new(RefCell::new(albums));
+    populate_artist_albums(&flow, &albums_rc.borrow(), &db);
 
     // Action row: `[N albums]  spacer  [▶ Play all]`. Same visual recipe as
     // TrackList's action row (heading + dim-label on the left, suggested
@@ -580,8 +654,8 @@ fn make_artist_detail_page(
 
     let lbl_count = Label::new(Some(&format!(
         "{} {}",
-        albums_rc.len(),
-        ngettext("album", "albums", albums_rc.len() as u32)
+        albums_rc.borrow().len(),
+        ngettext("album", "albums", albums_rc.borrow().len() as u32)
     )));
     lbl_count.add_css_class("heading");
     lbl_count.add_css_class("dim-label");
@@ -602,6 +676,7 @@ fn make_artist_detail_page(
         let on_play_c = Rc::clone(&on_play);
         btn_play_all.connect_clicked(move |_| {
             let all_tracks: Vec<Track> = albums_c
+                .borrow()
                 .iter()
                 .flat_map(|a| a.tracks.iter().cloned())
                 .collect();
@@ -624,13 +699,17 @@ fn make_artist_detail_page(
                 return;
             }
             let idx = child.index() as usize;
-            if let Some(album) = albums_c.get(idx) {
-                let (page, list) =
-                    make_album_detail_page(album, Rc::clone(&on_play_c), Rc::clone(&now_playing_c));
+            let album = albums_c.borrow().get(idx).cloned();
+            if let Some(album) = album {
+                let (page, list) = make_album_detail_page(
+                    &album,
+                    Rc::clone(&on_play_c),
+                    Rc::clone(&now_playing_c),
+                );
                 // Tag + remember the song list so a rescan can refresh it in
                 // place (see ArtistsView::refresh_open_detail). The artist is
                 // stored so the refresh re-applies the compilation filter.
-                let key = album_key(album);
+                let key = album_key(&album);
                 page.set_tag(Some(&key));
                 *open_detail_c.borrow_mut() = Some((artist.clone(), key, list));
                 nav_c.push(&page);
@@ -667,7 +746,29 @@ fn make_artist_detail_page(
     // visible one before pushing an album detail. Unique in the stack: the
     // artists-root guard ensures at most one artist detail at a time.
     page.set_tag(Some("artist-detail"));
+
+    // Remember the live widgets so a rescan can rebuild this FlowBox in place
+    // (see ArtistsView::refresh_open_artist_detail). The artists-root guard
+    // keeps a single artist detail in the stack, so overwriting is correct.
+    *open_artist_detail.borrow_mut() = Some((
+        artist_name.to_string(),
+        flow.clone(),
+        lbl_count.clone(),
+        Rc::clone(&albums_rc),
+    ));
     page
+}
+
+/// (Re)fill an artist-detail album `FlowBox` with one card per album, clearing
+/// any existing children first. Shared by the initial page build and the
+/// in-place rescan refresh so both produce identical cards.
+fn populate_artist_albums(flow: &FlowBox, albums: &[Album], db: &Arc<Mutex<Database>>) {
+    while let Some(child) = flow.first_child() {
+        flow.remove(&child);
+    }
+    for album in albums {
+        flow.append(&make_artist_album_card(album, Arc::clone(db)));
+    }
 }
 
 fn make_artist_album_card(album: &Album, db: Arc<Mutex<Database>>) -> FlowBoxChild {
