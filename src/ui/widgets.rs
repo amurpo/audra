@@ -4,6 +4,7 @@ use glib::clone;
 use gtk4::prelude::*;
 use gtk4::{Align, Box as GtkBox, Button, Label, Orientation, ToggleButton};
 use libadwaita as adw;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::i18n::gettext;
@@ -228,6 +229,96 @@ pub fn segmented_setting_row<T: Copy + PartialEq + 'static>(
             if b.is_active() {
                 cb(value);
             }
+        });
+        seg.append(&btn);
+    }
+
+    row.append(&lbl);
+    row.append(&seg);
+    row
+}
+
+/// Like [`segmented_setting_row`], but the change is *deferred* so it can be
+/// confirmed first. When the user picks a different segment, `on_request` runs
+/// with the new value plus two callbacks: `commit` records the new value as the
+/// active one, and `revert` snaps the selection back to the last committed value
+/// without re-firing. Use it for changes heavy enough to warrant a prompt —
+/// e.g. Language, which tears down and rebuilds the whole window. The caller
+/// shows the dialog and calls `commit` on accept or `revert` on cancel.
+pub fn segmented_setting_row_confirm<T: Copy + PartialEq + 'static>(
+    label: &str,
+    options: &[(String, T)],
+    initial: T,
+    on_request: impl Fn(T, Rc<dyn Fn()>, Rc<dyn Fn()>) + 'static,
+) -> GtkBox {
+    let row = GtkBox::new(Orientation::Vertical, 4);
+    row.set_margin_top(4);
+    row.set_margin_bottom(4);
+    row.set_margin_start(8);
+    row.set_margin_end(8);
+
+    let lbl = Label::new(Some(label));
+    lbl.set_xalign(0.0);
+    lbl.add_css_class("caption");
+    lbl.add_css_class("dim-label");
+
+    let seg = GtkBox::new(Orientation::Horizontal, 0);
+    seg.add_css_class("linked");
+
+    let on_request = Rc::new(on_request);
+    // The currently applied value, the one `revert` returns to.
+    let committed = Rc::new(Cell::new(initial));
+    // Set while we programmatically move the selection back, so the resulting
+    // `toggled` fire on the committed segment is swallowed instead of treated
+    // as a fresh user request (which would re-open the dialog forever).
+    let suppress = Rc::new(Cell::new(false));
+    // value -> button, so `revert` can re-activate the committed segment.
+    let buttons: Rc<RefCell<Vec<(T, ToggleButton)>>> = Rc::new(RefCell::new(Vec::new()));
+
+    let mut group_leader: Option<ToggleButton> = None;
+    for (text, value) in options {
+        let btn = ToggleButton::with_label(text);
+        match &group_leader {
+            Some(leader) => btn.set_group(Some(leader)),
+            None => group_leader = Some(btn.clone()),
+        }
+        if *value == initial {
+            btn.set_active(true);
+        }
+        buttons.borrow_mut().push((*value, btn.clone()));
+        let value = *value;
+        let on_request = Rc::clone(&on_request);
+        let committed = Rc::clone(&committed);
+        let suppress = Rc::clone(&suppress);
+        let buttons = Rc::clone(&buttons);
+        btn.connect_toggled(move |b| {
+            if !b.is_active() {
+                return;
+            }
+            if suppress.get() {
+                suppress.set(false);
+                return;
+            }
+            if value == committed.get() {
+                return;
+            }
+            let commit: Rc<dyn Fn()> = {
+                let committed = Rc::clone(&committed);
+                Rc::new(move || committed.set(value))
+            };
+            let revert: Rc<dyn Fn()> = {
+                let committed = Rc::clone(&committed);
+                let suppress = Rc::clone(&suppress);
+                let buttons = Rc::clone(&buttons);
+                Rc::new(move || {
+                    let target = committed.get();
+                    if let Some((_, b)) = buttons.borrow().iter().find(|(v, _)| *v == target) {
+                        suppress.set(true);
+                        b.set_active(true);
+                    }
+                })
+            };
+            on_request(value, commit, revert);
         });
         seg.append(&btn);
     }

@@ -156,8 +156,17 @@ msgstr "Daniel Avila"
 msgid "Reset"
 msgstr "Reiniciar"
 
-msgid "This permanently deletes all scanned tracks and cached cover art. Your music files, the selected folder and your Last.fm session are not affected. The library is rescanned afterwards."
-msgstr "Esto elimina de forma permanente todas las pistas escaneadas y las carátulas en caché. Tus archivos de música, la carpeta seleccionada y tu sesión de Last.fm no se ven afectados. La biblioteca se vuelve a escanear al terminar."
+msgid "Choose what to clear and rebuild. Your music files, the selected folder and your Last.fm session are never affected.\n\n• Library only: re-reads tracks from disk, keeps downloaded art.\n• Cover art only: re-fetches all artwork, keeps the track list.\n• Everything: both."
+msgstr "Elige qué borrar y reconstruir. Tus archivos de música, la carpeta seleccionada y tu sesión de Last.fm nunca se ven afectados.\n\n• Solo biblioteca: vuelve a leer las pistas del disco, conserva el arte descargado.\n• Solo carátulas: vuelve a obtener todo el arte, conserva la lista de pistas.\n• Todo: ambas cosas."
+
+msgid "Library only"
+msgstr "Solo biblioteca"
+
+msgid "Cover art only"
+msgstr "Solo carátulas"
+
+msgid "Everything"
+msgstr "Todo"
 
 msgid "Change image…"
 msgstr "Cambiar imagen…"
@@ -221,3 +230,21 @@ msgstr "Parcial"
 
 msgid "Full"
 msgstr "Total"
+
+msgid "Change language?"
+msgstr "¿Cambiar idioma?"
+
+msgid "The window will reload to apply the new language and playback will stop."
+msgstr "La ventana se recargará para aplicar el nuevo idioma y se detendrá la reproducción."
+
+msgid "Change"
+msgstr "Cambiar"
+
+msgid "Library reset"
+msgstr "Biblioteca restablecida"
+
+msgid "Cover art reset"
+msgstr "Carátulas restablecidas"
+
+msgid "Library and cover art reset"
+msgstr "Biblioteca y carátulas restablecidas"

@@ -24,7 +24,7 @@ use crate::ui::lastfm_dialog::show_lastfm_dialog;
 use crate::ui::main_window::{start_scan, Views};
 use crate::ui::reset::show_reset_dialog;
 use crate::ui::theme::{set_tint_mode, update_font, TintMode};
-use crate::ui::widgets::segmented_setting_row;
+use crate::ui::widgets::{segmented_setting_row, segmented_setting_row_confirm};
 
 /// Everything the popover rows and handlers capture. All fields are cheap
 /// `Rc`/`Arc`/GObject clones; the `*_init` fields are the persisted settings
@@ -35,6 +35,7 @@ pub(crate) struct SettingsMenuCtx {
     pub views: Views,
     pub scan_loading_box: gtk4::Box,
     pub scan_spinner: gtk4::Spinner,
+    pub toast_overlay: adw::ToastOverlay,
     pub lastfm: Arc<Mutex<Option<LastFmClient>>>,
     pub player: Rc<RefCell<Player>>,
     pub apply_language: Rc<dyn Fn(Option<&'static str>)>,
@@ -52,6 +53,7 @@ pub(crate) fn build(ctx: SettingsMenuCtx) -> MenuButton {
         views,
         scan_loading_box,
         scan_spinner,
+        toast_overlay,
         lastfm,
         player,
         apply_language,
@@ -238,7 +240,10 @@ pub(crate) fn build(ctx: SettingsMenuCtx) -> MenuButton {
     pop_sep3.set_margin_top(14);
     pop_sep3.set_margin_bottom(3);
 
-    let lang_row = segmented_setting_row(
+    // Language is deferred behind a confirmation: applying it rebuilds the whole
+    // window and stops playback, so we ask first and snap the selector back if
+    // the user cancels.
+    let lang_row = segmented_setting_row_confirm(
         &gettext("Language"),
         &[
             ("Auto".to_string(), None),
@@ -248,7 +253,38 @@ pub(crate) fn build(ctx: SettingsMenuCtx) -> MenuButton {
         lang_init,
         {
             let apply_language = Rc::clone(&apply_language);
-            move |lang| apply_language(lang)
+            let window = window.clone();
+            // Weak so the row's handler doesn't keep the popover (its own
+            // ancestor) alive in a reference cycle.
+            let popover = popover.downgrade();
+            move |lang, commit, revert| {
+                // Close the settings popover so it doesn't sit over the dialog.
+                if let Some(popover) = popover.upgrade() {
+                    popover.popdown();
+                }
+                let dialog = adw::AlertDialog::new(
+                    Some(&gettext("Change language?")),
+                    Some(&gettext(
+                        "The window will reload to apply the new language and \
+                         playback will stop.",
+                    )),
+                );
+                dialog.add_response("cancel", &gettext("Cancel"));
+                dialog.add_response("change", &gettext("Change"));
+                dialog.set_response_appearance("change", adw::ResponseAppearance::Suggested);
+                dialog.set_default_response(Some("change"));
+                dialog.set_close_response("cancel");
+                let apply_language = Rc::clone(&apply_language);
+                dialog.connect_response(None, move |_, resp| {
+                    if resp == "change" {
+                        commit();
+                        apply_language(lang);
+                    } else {
+                        revert();
+                    }
+                });
+                dialog.present(Some(&window));
+            }
         },
     );
 
@@ -284,6 +320,8 @@ pub(crate) fn build(ctx: SettingsMenuCtx) -> MenuButton {
         scan_loading_box,
         #[strong]
         scan_spinner,
+        #[strong]
+        toast_overlay,
         #[weak]
         popover,
         move |_| {
@@ -293,6 +331,7 @@ pub(crate) fn build(ctx: SettingsMenuCtx) -> MenuButton {
                 views.clone(),
                 scan_loading_box.clone(),
                 scan_spinner.clone(),
+                toast_overlay.clone(),
             );
         }
     ));

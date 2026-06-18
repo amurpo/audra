@@ -599,15 +599,15 @@ fn track_row_of(child: &gtk4::Widget) -> Option<GtkBox> {
         .filter(|r| r.has_css_class("audra-track-row"))
 }
 
-/// The number painted in a row's left slot: the position within the list, or
-/// the track's own number when a multi-disc release is shown with per-disc
-/// headers (so each disc reads 1, 2, 3… under its header).
-fn display_no(track: &Track, pos: usize, per_disc: bool) -> usize {
-    if per_disc {
-        track.track_num.map(|n| n as usize).unwrap_or(pos + 1)
-    } else {
-        pos + 1
-    }
+/// The number painted in a row's left slot: the track's own number from its
+/// tag, falling back to the row position only when the tag carries none.
+/// Multi-disc releases still read 1, 2, 3… under each "Disc N" header because
+/// their tags number per disc; single-disc albums show their real tag numbers
+/// too, so a partial album reads 6, 7, 8… rather than a misleading 1, 2, 3…
+/// (`per_disc` no longer changes the number — it stays a param only because the
+/// disc-header logic shares these call sites).
+fn display_no(track: &Track, pos: usize, _per_disc: bool) -> usize {
+    track.track_num.map(|n| n as usize).unwrap_or(pos + 1)
 }
 
 // Listener cleanup is automatic: when the list widget is destroyed (page

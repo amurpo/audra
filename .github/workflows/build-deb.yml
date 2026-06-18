@@ -31,30 +31,30 @@ jobs:
 
       - uses: actions/checkout@v6
 
-      - name: Instalar Rust (rustup)
+      - name: Install Rust (rustup)
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Verificar secret del proxy
+      - name: Check proxy secret
         run: |
           if [ -z "$LASTFM_PROXY_URL" ]; then
-            echo "::error::LASTFM_PROXY_URL no está configurado; el binario no tendrá scrobbling."
+            echo "::error::LASTFM_PROXY_URL is not set; the binary will have no scrobbling."
             exit 1
           fi
 
-      - name: Compilar
+      - name: Build
         run: cargo build --release
         env:
           RUST_BACKTRACE: 1
           LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
 
-      - name: Empaquetar DEB
+      - name: Package DEB
         run: bash packaging/build-deb.sh
 
-      - name: Subir artefacto
+      - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: linux-deb

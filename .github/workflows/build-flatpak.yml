@@ -26,12 +26,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Verificar secret del proxy
+      - name: Check proxy secret
         # No proxy URL means scrobbling is dead in the bundle, so refuse to
         # build rather than ship a broken .flatpak.
         run: |
           if [ -z "$LASTFM_PROXY_URL" ]; then
-            echo "::error::LASTFM_PROXY_URL no esta configurado; se aborta el build de Flatpak."
+            echo "::error::LASTFM_PROXY_URL is not set; aborting the Flatpak build."
             exit 1
           fi
 
@@ -46,7 +46,7 @@ jobs:
           flatpak remote-add --user --if-not-exists \
             flathub https://flathub.org/repo/flathub.flatpakrepo
 
-      - name: Generar manifest para CI
+      - name: Generate CI manifest
         # The committed manifest pins a git commit (for Flathub) and does not
         # carry the proxy URL. For a CI bundle we build the checked-out tree
         # and bake LASTFM_PROXY_URL into build-options.env so build.rs picks
@@ -56,7 +56,7 @@ jobs:
           import os, sys, yaml
           proxy = os.environ.get('LASTFM_PROXY_URL', '')
           if not proxy:
-              sys.exit('LASTFM_PROXY_URL vacio: no se genera el manifest.')
+              sys.exit('LASTFM_PROXY_URL empty: manifest not generated.')
           with open('io.github.amurpo.audra.yml') as f:
               manifest = yaml.safe_load(f)
           module = manifest['modules'][0]
@@ -90,7 +90,7 @@ jobs:
             "audra-${VER}-x86_64.flatpak" \
             io.github.amurpo.audra
 
-      - name: Subir artefacto
+      - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: flatpak-bundle

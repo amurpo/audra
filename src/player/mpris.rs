@@ -79,14 +79,10 @@ impl Mpris {
         {
             return None;
         }
-        let cover_dir = dirs::data_local_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("audra")
-            .join("mpris");
         Some(Self {
             controls,
             last_track: None,
-            cover_dir,
+            cover_dir: cover_cache_dir(),
         })
     }
 
@@ -98,10 +94,16 @@ impl Mpris {
             return None; // user removed the art on purpose
         }
         let _ = std::fs::create_dir_all(&self.cover_dir);
+        // Name by the ORIGINAL bytes so identical art reuses one file without
+        // re-decoding, but write a downscaled copy: covers are often huge
+        // originals (megapixels) and MPRIS only shows them thumbnail-sized.
         let name = format!("{:x}.img", md5::compute(bytes));
         let path = self.cover_dir.join(name);
-        if !path.exists() && std::fs::write(&path, bytes).is_err() {
-            return None;
+        if !path.exists() {
+            let data = downscale_jpeg(bytes, 512).unwrap_or_else(|| bytes.to_vec());
+            if std::fs::write(&path, &data).is_err() {
+                return None;
+            }
         }
         Some(format!("file://{}", path.display()))
     }
@@ -174,4 +176,38 @@ fn window_handle(window: &adw::ApplicationWindow) -> Option<*mut std::ffi::c_voi
 fn window_handle(_window: &adw::ApplicationWindow) -> Option<*mut std::ffi::c_void> {
     // Linux (MPRIS) and macOS do not need a native handle.
     None
+}
+
+/// Directory holding the downscaled MPRIS thumbnail files. Cache, not data:
+/// regenerable on play, so it lives where cache cleaners may reap it. The
+/// library reset deliberately leaves this alone — it refills itself as tracks
+/// play, so there is nothing to clear.
+pub fn cover_cache_dir() -> std::path::PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("audra")
+        .join("mpris")
+}
+
+/// Re-encode `bytes` as a JPEG whose longest side is at most `max` px,
+/// preserving aspect ratio. Returns `None` (so the caller keeps the original)
+/// when the image already fits or cannot be decoded — re-encoding a small
+/// cover only loses quality for no size win.
+fn downscale_jpeg(bytes: &[u8], max: i32) -> Option<Vec<u8>> {
+    use gdk_pixbuf::prelude::PixbufLoaderExt;
+    let loader = gdk_pixbuf::PixbufLoader::new();
+    loader.write(bytes).ok()?;
+    loader.close().ok()?;
+    let src = loader.pixbuf()?;
+    let (w, h) = (src.width(), src.height());
+    if w <= 0 || h <= 0 || (w <= max && h <= max) {
+        return None;
+    }
+    let (nw, nh) = if w >= h {
+        (max, (max * h / w).max(1))
+    } else {
+        ((max * w / h).max(1), max)
+    };
+    let scaled = src.scale_simple(nw, nh, gdk_pixbuf::InterpType::Bilinear)?;
+    scaled.save_to_bufferv("jpeg", &[("quality", "85")]).ok()
 }

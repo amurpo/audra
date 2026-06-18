@@ -17,7 +17,9 @@ pub enum PlayerState {
 }
 
 pub struct Player {
-    engine: AudioEngine,
+    // `None` only in headless tests, where no audio device is opened and the
+    // playback methods become no-ops. Production always holds `Some`.
+    engine: Option<AudioEngine>,
     pub queue: Vec<Track>,
     pub index: Option<usize>,
     pub shuffle: bool,
@@ -32,7 +34,7 @@ pub struct Player {
 impl Player {
     pub fn new() -> Result<Self> {
         Ok(Self {
-            engine: AudioEngine::new()?,
+            engine: Some(AudioEngine::new()?),
             queue: Vec::new(),
             index: None,
             shuffle: false,
@@ -77,28 +79,36 @@ impl Player {
             Some(mode) => read_gain(&track.path, mode),
             None => 1.0,
         };
-        if let Err(e) = self.engine.play_with_gain(&track.path, gain) {
-            log::error!("playback failed for {}: {e:#}", track.path);
-            return Err(e);
+        if let Some(engine) = &self.engine {
+            if let Err(e) = engine.play_with_gain(&track.path, gain) {
+                log::error!("playback failed for {}: {e:#}", track.path);
+                return Err(e);
+            }
+            engine.set_volume(self.volume);
         }
-        self.engine.set_volume(self.volume);
         self.state = PlayerState::Playing;
         Ok(self.queue.get(idx))
     }
 
     pub fn stop(&mut self) {
-        self.engine.stop();
+        if let Some(engine) = &self.engine {
+            engine.stop();
+        }
         self.state = PlayerState::Stopped;
     }
 
     pub fn pause_resume(&mut self) {
         match self.state {
             PlayerState::Playing => {
-                self.engine.pause();
+                if let Some(engine) = &self.engine {
+                    engine.pause();
+                }
                 self.state = PlayerState::Paused;
             }
             PlayerState::Paused => {
-                self.engine.resume();
+                if let Some(engine) = &self.engine {
+                    engine.resume();
+                }
                 self.state = PlayerState::Playing;
             }
             _ => {}
@@ -157,12 +167,16 @@ impl Player {
     }
 
     pub fn seek(&self, secs: f64) {
-        self.engine.seek(std::time::Duration::from_secs_f64(secs));
+        if let Some(engine) = &self.engine {
+            engine.seek(std::time::Duration::from_secs_f64(secs));
+        }
     }
 
     pub fn set_volume(&mut self, v: f32) {
         self.volume = v;
-        self.engine.set_volume(v);
+        if let Some(engine) = &self.engine {
+            engine.set_volume(v);
+        }
     }
 
     pub fn current_track(&self) -> Option<&Track> {
@@ -170,11 +184,13 @@ impl Player {
     }
 
     pub fn is_finished(&self) -> bool {
-        self.engine.is_finished()
+        self.engine.as_ref().is_none_or(|e| e.is_finished())
     }
 
     pub fn position(&self) -> std::time::Duration {
-        self.engine.get_pos()
+        self.engine
+            .as_ref()
+            .map_or(std::time::Duration::ZERO, |e| e.get_pos())
     }
 }
 
@@ -197,22 +213,27 @@ mod tests {
         }
     }
 
-    /// CI runners have no audio device, so `Player::new()` fails there. These
-    /// tests exercise only queue/shuffle bookkeeping (no playback), and skip
-    /// cleanly when no output device is available.
-    fn player_or_skip() -> Option<Player> {
-        match Player::new() {
-            Ok(p) => Some(p),
-            Err(_) => {
-                eprintln!("skipping: no audio output device available");
-                None
-            }
+    /// CI runners have no audio device (and opening one can hang), so these
+    /// tests build a `Player` with no engine. They exercise only queue/shuffle
+    /// bookkeeping; the playback methods are no-ops when `engine` is `None`.
+    fn headless_player() -> Player {
+        Player {
+            engine: None,
+            queue: Vec::new(),
+            index: None,
+            shuffle: false,
+            repeat_one: false,
+            replaygain_mode: None,
+            state: PlayerState::Stopped,
+            volume: 0.5,
+            shuffled_order: Vec::new(),
+            shuffle_cursor: 0,
         }
     }
 
     #[test]
     fn defaults_are_sane() {
-        let Some(p) = player_or_skip() else { return };
+        let p = headless_player();
         assert_eq!(p.state, PlayerState::Stopped);
         assert!(!p.shuffle);
         assert!(!p.repeat_one);
@@ -223,9 +244,7 @@ mod tests {
 
     #[test]
     fn load_queue_sets_index_and_resets_shuffle_state() {
-        let Some(mut p) = player_or_skip() else {
-            return;
-        };
+        let mut p = headless_player();
         p.load_queue((0..5).map(mk_track).collect(), 2);
         assert_eq!(p.queue.len(), 5);
         assert_eq!(p.index, Some(2));
@@ -245,9 +264,7 @@ mod tests {
 
     #[test]
     fn reshuffle_is_a_permutation_with_current_first() {
-        let Some(mut p) = player_or_skip() else {
-            return;
-        };
+        let mut p = headless_player();
         p.load_queue((0..10).map(mk_track).collect(), 4);
         p.reshuffle();
 
@@ -263,9 +280,7 @@ mod tests {
 
     #[test]
     fn reshuffle_on_empty_queue_is_safe() {
-        let Some(mut p) = player_or_skip() else {
-            return;
-        };
+        let mut p = headless_player();
         p.load_queue(vec![], 0);
         p.reshuffle();
         assert!(p.shuffled_order.is_empty());
@@ -273,18 +288,14 @@ mod tests {
 
     #[test]
     fn set_volume_updates_state() {
-        let Some(mut p) = player_or_skip() else {
-            return;
-        };
+        let mut p = headless_player();
         p.set_volume(0.25);
         assert_eq!(p.volume, 0.25);
     }
 
     #[test]
     fn next_at_end_of_queue_stops_and_returns_none() {
-        let Some(mut p) = player_or_skip() else {
-            return;
-        };
+        let mut p = headless_player();
         p.load_queue((0..3).map(mk_track).collect(), 2);
         // next() from the last track must stop playback, not advance.
         let result = p.next().unwrap();
@@ -295,9 +306,7 @@ mod tests {
 
     #[test]
     fn previous_at_start_clamps_to_index_zero() {
-        let Some(mut p) = player_or_skip() else {
-            return;
-        };
+        let mut p = headless_player();
         p.load_queue((0..3).map(mk_track).collect(), 0);
         // previous() from index 0 saturates — index stays at 0.
         let _ = p.previous(); // may Err (file doesn't exist), ignore result
@@ -306,9 +315,7 @@ mod tests {
 
     #[test]
     fn next_on_empty_queue_returns_none() {
-        let Some(mut p) = player_or_skip() else {
-            return;
-        };
+        let mut p = headless_player();
         assert!(p.next().unwrap().is_none());
     }
 }

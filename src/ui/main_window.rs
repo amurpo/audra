@@ -64,6 +64,37 @@ pub(crate) fn reload_all_views(views: &Views) {
     views.artists.load_artists(artists, albums);
 }
 
+/// Incremental scan of `scan_path` plus DB reconcile: read only new/changed
+/// files (skipped by stored mtime), upsert them, record the folder, and purge
+/// rows whose files are gone. Runs on a worker thread and returns whether the
+/// library actually changed (any track upserted or any stale row removed) so
+/// callers can skip a pointless view reload. Shared by the manual refresh and
+/// the startup background reconcile.
+fn scan_and_sync(db: &Arc<Mutex<Database>>, scan_path: &str) -> Result<bool, String> {
+    // Incremental rescan: files whose stored mtime matches are not re-read;
+    // only new/changed files pay the tag-parsing cost.
+    let known_mtimes = db.lock().unwrap().path_mtimes().unwrap_or_default();
+    let result = scanner::scan_folder(scan_path, &known_mtimes);
+    let db_g = db.lock().unwrap();
+    // A failed write here is the difference between "library" and "silently
+    // empty library", so it is reported, not discarded.
+    match db_g.upsert_tracks(&result.tracks) {
+        Ok(()) => {
+            let norm_folder: std::path::PathBuf =
+                std::path::Path::new(scan_path).components().collect();
+            let _ = db_g.set_music_folder(&norm_folder.to_string_lossy());
+            let removed = db_g
+                .remove_missing_from_folder(scan_path, &result.found_paths)
+                .unwrap_or(0);
+            if removed > 0 {
+                log::info!("sync: eliminados {} registros obsoletos", removed);
+            }
+            Ok(!result.tracks.is_empty() || removed > 0)
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 pub(crate) fn start_scan(
     folder_path: String,
     views: Views,
@@ -78,33 +109,9 @@ pub(crate) fn start_scan(
     // once the worker signals it is done.
     let scan_path = folder_path;
     let db_worker = Arc::clone(&views.db);
-    let (tx, rx) = async_channel::bounded::<Result<(), String>>(1);
+    let (tx, rx) = async_channel::bounded::<Result<bool, String>>(1);
     std::thread::spawn(move || {
-        // Incremental rescan: files whose stored mtime matches are not
-        // re-read; only new/changed files pay the tag-parsing cost.
-        let known_mtimes = db_worker.lock().unwrap().path_mtimes().unwrap_or_default();
-        let result = scanner::scan_folder(&scan_path, &known_mtimes);
-        let outcome = {
-            let db_g = db_worker.lock().unwrap();
-            // A failed write here is the difference between "library" and
-            // "silently empty library", so it is reported, not discarded.
-            match db_g.upsert_tracks(&result.tracks) {
-                Ok(()) => {
-                    let norm_folder: std::path::PathBuf =
-                        std::path::Path::new(&scan_path).components().collect();
-                    let _ = db_g.set_music_folder(&norm_folder.to_string_lossy());
-                    let removed = db_g
-                        .remove_missing_from_folder(&scan_path, &result.found_paths)
-                        .unwrap_or(0);
-                    if removed > 0 {
-                        log::info!("sync: eliminados {} registros obsoletos", removed);
-                    }
-                    Ok(())
-                }
-                Err(e) => Err(e.to_string()),
-            }
-        };
-        let _ = tx.send_blocking(outcome);
+        let _ = tx.send_blocking(scan_and_sync(&db_worker, &scan_path));
     });
 
     // No polling: this future sleeps in the main loop until the worker sends
@@ -114,10 +121,38 @@ pub(crate) fn start_scan(
         loading_box.set_visible(false);
         spinner.stop();
         match outcome {
-            Ok(Ok(())) => reload_all_views(&views),
+            // Manual refresh always reloads, even when nothing changed, so the
+            // user gets a predictable, fully-rebuilt view for the action.
+            Ok(Ok(_)) => reload_all_views(&views),
             Ok(Err(detail)) => show_scan_error(&loading_box, &detail),
             // The sender was dropped without a message: the worker panicked.
             Err(_) => show_scan_error(&loading_box, &gettext("The scan stopped unexpectedly.")),
+        }
+    });
+}
+
+/// Reconcile the library with the filesystem in the background at startup.
+///
+/// There is no filesystem watcher and the initial view load comes straight
+/// from the DB, so files added or deleted while the app was closed would
+/// otherwise linger until a manual refresh. This runs the same incremental
+/// scan on a worker thread (which exits when done — no steady-state threads)
+/// and refreshes the views only if something actually changed, so the common
+/// "nothing changed" launch neither reloads nor re-fetches covers. Silent: no
+/// loading overlay, since the views are already populated; a startup scan error
+/// is logged and left for the manual refresh to surface loudly.
+fn rescan_in_background(folder: String, views: Views) {
+    let db_worker = Arc::clone(&views.db);
+    let (tx, rx) = async_channel::bounded::<Result<bool, String>>(1);
+    std::thread::spawn(move || {
+        let _ = tx.send_blocking(scan_and_sync(&db_worker, &folder));
+    });
+    glib::spawn_future_local(async move {
+        match rx.recv().await {
+            Ok(Ok(true)) => reload_all_views(&views),
+            Ok(Ok(false)) => {}
+            Ok(Err(detail)) => log::warn!("startup rescan failed: {detail}"),
+            Err(_) => log::warn!("startup rescan stopped unexpectedly"),
         }
     });
 }
@@ -293,6 +328,29 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     let header = adw::HeaderBar::new();
     header.add_css_class("audra-header-bar");
 
+    // Strip just the window-menu app icon from the decoration layout the
+    // desktop hands us, keeping its button placement (which side, min/max)
+    // intact. KDE — and the older GTK/libadwaita the .deb runs against on
+    // Debian/Ubuntu — render the `icon`/`menu`/`appmenu` token as an app icon
+    // at the start of the header; standard GNOME apps show no such icon, so we
+    // drop that one token everywhere and leave the real window controls alone.
+    if let Some(settings) = gtk4::Settings::default() {
+        if let Some(layout) = settings.gtk_decoration_layout() {
+            let stripped = layout
+                .as_str()
+                .split(':')
+                .map(|side| {
+                    side.split(',')
+                        .filter(|t| !matches!(*t, "icon" | "menu" | "appmenu"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .collect::<Vec<_>>()
+                .join(":");
+            header.set_decoration_layout(Some(&stripped));
+        }
+    }
+
     let btn_search = ToggleButton::new();
     let search_icon = crate::ui::icons::image(crate::ui::icons::Icon::Search, 20);
     btn_search.set_child(Some(&search_icon));
@@ -366,7 +424,13 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     };
 
     // --- Carga inicial ---
+    // Populate the views instantly from the DB, then reconcile with the
+    // filesystem in the background so files added or deleted while the app was
+    // closed show up without waiting for a manual refresh (no watcher needed).
     reload_all_views(&views);
+    if let Some(folder) = db.lock().unwrap().music_folder() {
+        rescan_in_background(folder, views.clone());
+    }
 
     // --- ViewStack ---
     let view_stack = adw::ViewStack::new();
@@ -450,7 +514,11 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
     scan_loading_box.append(&scan_card);
     scan_overlay.add_overlay(&scan_loading_box);
 
-    window.set_content(Some(&scan_overlay));
+    // Toasts (e.g. the post-reset confirmation) anchor to this overlay, which
+    // wraps everything so they float above the content and the scan spinner.
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&scan_overlay));
+    window.set_content(Some(&toast_overlay));
 
     // Settings popover: built here (not with the header) because its handlers
     // capture the views and the scan widgets, which only now exist. Packing
@@ -460,6 +528,7 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         views: views.clone(),
         scan_loading_box: scan_loading_box.clone(),
         scan_spinner: scan_spinner.clone(),
+        toast_overlay: toast_overlay.clone(),
         lastfm: Arc::clone(&lastfm),
         player: Rc::clone(&player),
         apply_language: Rc::clone(&apply_language),
@@ -634,4 +703,147 @@ pub fn build_window(app: &adw::Application, db: Arc<Mutex<Database>>) {
         window.downgrade(),
         mpris_cell,
     );
+}
+
+#[cfg(test)]
+mod sync_tests {
+    //! Regression tests for the scan/reconcile path, driving the real
+    //! [`scan_and_sync`] against on-disk fixtures. Born from the bug where a
+    //! renamed album folder plus newly-copied tracks stayed invisible until the
+    //! library folder was re-selected: a plain "Refresh" rescans the *stored*
+    //! folder, so once it is renamed away the scan finds nothing and silently
+    //! changes nothing.
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// Unique scratch directory under the OS temp dir, cleaned up on drop.
+    struct TmpDir(PathBuf);
+    impl TmpDir {
+        fn new() -> Self {
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let p = std::env::temp_dir().join(format!("audra_sync_{}_{}", std::process::id(), n));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpDir(p)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TmpDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Minimal probe-able 16-bit PCM mono WAV (mirrors `scanner::tests::write_wav`
+    /// so the scanner reads a real, taggable file).
+    fn write_wav(path: &Path) {
+        let sample_rate: u32 = 8000;
+        let samples: u32 = 800; // 0.1 s of silence
+        let data_len = samples * 2;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav.extend_from_slice(&1u16.to_le_bytes()); // mono
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
+        wav.extend_from_slice(&2u16.to_le_bytes()); // block align
+        wav.extend_from_slice(&16u16.to_le_bytes()); // bits/sample
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        wav.extend(std::iter::repeat_n(0u8, data_len as usize));
+        std::fs::write(path, wav).unwrap();
+    }
+
+    fn mem_db() -> Arc<Mutex<Database>> {
+        Arc::new(Mutex::new(Database::open(":memory:").unwrap()))
+    }
+
+    /// Sorted list of every stored track path.
+    fn db_paths(db: &Arc<Mutex<Database>>) -> Vec<String> {
+        let mut p: Vec<String> = db
+            .lock()
+            .unwrap()
+            .all_tracks()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.path)
+            .collect();
+        p.sort();
+        p
+    }
+
+    /// The FF9 scenario: scan a folder, then rename it AND drop in a freshly
+    /// copied track, and rescan the new path. Every path changes at once, so the
+    /// reconcile must purge the renamed-away rows, re-insert the moved tracks,
+    /// and surface the brand-new file — leaving no stale ghosts behind.
+    #[test]
+    fn rescan_after_folder_rename_and_added_file_converges() {
+        let root = TmpDir::new();
+        let old = root.path().join("Old Name");
+        std::fs::create_dir_all(&old).unwrap();
+        write_wav(&old.join("track1.wav"));
+        write_wav(&old.join("track2.wav"));
+
+        let db = mem_db();
+        let changed = scan_and_sync(&db, old.to_str().unwrap()).unwrap();
+        assert!(changed, "the first scan inserts the two tracks");
+        assert_eq!(db_paths(&db).len(), 2);
+
+        // Rename the album folder and copy in a new track, then rescan the new
+        // path — exactly what left FF9's first tracks invisible.
+        let new = root.path().join("New Name");
+        std::fs::rename(&old, &new).unwrap();
+        write_wav(&new.join("track0_added.wav"));
+
+        let changed = scan_and_sync(&db, new.to_str().unwrap()).unwrap();
+        assert!(changed, "a rename plus an added file must register as a change");
+
+        let after = db_paths(&db);
+        assert_eq!(after.len(), 3, "two moved tracks + one added, no stragglers");
+        assert!(
+            after.iter().all(|p| p.contains("New Name")),
+            "every row must live under the new folder; surviving old-path rows are the bug: {after:?}"
+        );
+        assert!(
+            after.iter().any(|p| p.ends_with("track0_added.wav")),
+            "the newly-copied file must appear after the rescan: {after:?}"
+        );
+    }
+
+    /// Pins the weak spot behind the "no matter how many syncs" symptom: a
+    /// "Refresh" rescans the *stored* folder, so after a rename that path is
+    /// gone, the scan finds nothing, the anti-wipe guard keeps the rows, and the
+    /// call reports no change — a silent no-op that never reaches the new files.
+    /// Documents current behavior so any future fix (e.g. detecting the missing
+    /// folder and prompting a re-select) must consciously update this test.
+    #[test]
+    fn refresh_on_renamed_away_folder_is_a_silent_noop() {
+        let root = TmpDir::new();
+        let old = root.path().join("Old Name");
+        std::fs::create_dir_all(&old).unwrap();
+        write_wav(&old.join("track1.wav"));
+
+        let db = mem_db();
+        scan_and_sync(&db, old.to_str().unwrap()).unwrap();
+        assert_eq!(db_paths(&db).len(), 1);
+
+        // Rename the folder away, then rescan the stale stored path.
+        std::fs::rename(&old, root.path().join("New Name")).unwrap();
+        let changed = scan_and_sync(&db, old.to_str().unwrap()).unwrap();
+
+        assert!(!changed, "a vanished folder yields no detectable change");
+        assert_eq!(
+            db_paths(&db).len(),
+            1,
+            "the anti-wipe guard keeps the catalog when the folder is unavailable"
+        );
+    }
 }

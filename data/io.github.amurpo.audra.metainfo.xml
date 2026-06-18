@@ -51,6 +51,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.2.6" date="2026-06-18">
+      <description>
+        <p>Both main grids are now virtualized for smoother scrolling and lower memory use on large libraries. Library rescans run on startup and refresh the open album or artist view in place, with a guard against wiping an unavailable folder. Adds granular reset options (library-only, cover-only or full) with confirmation, a perceptual volume taper, and several UI and theming fixes.</p>
+      </description>
+    </release>
     <release version="0.2.5" date="2026-06-12">
       <description>
         <p>Fixes MP3 tracks that silently refused to play by tolerating undecodable leading frames. Folds real-world multi-disc rips into a single album with per-disc headers in the album view, makes search and library rescans faster, and adds several UI, navigation, and scanning fixes.</p>

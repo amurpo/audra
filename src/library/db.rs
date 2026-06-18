@@ -229,8 +229,26 @@ impl Database {
 
     /// Wipe the scanned library and cached cover BLOBs. Settings (selected
     /// folder, Last.fm session) and playlists are intentionally preserved.
+    /// Equivalent to [`clear_tracks`](Self::clear_tracks) +
+    /// [`clear_album_covers`](Self::clear_album_covers); used by the full reset.
     pub fn clear_library(&self) -> Result<()> {
         self.conn.execute("DELETE FROM tracks", [])?;
+        self.conn.execute("DELETE FROM album_covers", [])?;
+        Ok(())
+    }
+
+    /// Wipe only the scanned tracks, leaving cached cover BLOBs in place so a
+    /// library-only reset keeps art and re-shows it the moment the rescan
+    /// repopulates the matching albums.
+    pub fn clear_tracks(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM tracks", [])?;
+        Ok(())
+    }
+
+    /// Wipe only the cached cover BLOBs, leaving the scanned tracks in place so
+    /// a cover-only reset forces art to be re-derived/re-downloaded without
+    /// touching the library.
+    pub fn clear_album_covers(&self) -> Result<()> {
         self.conn.execute("DELETE FROM album_covers", [])?;
         Ok(())
     }
@@ -254,6 +272,16 @@ impl Database {
         folder: &str,
         existing_paths: &[String],
     ) -> Result<usize> {
+        // Safety guard against a catastrophic wipe. A scan that reports zero
+        // files on disk almost always means the library folder is unavailable
+        // (unmounted drive, renamed or moved folder) — not that the user
+        // deleted their whole collection. Without this, every row would match
+        // the under-folder / `!exists` purge clause below and the entire
+        // catalog would be deleted, taking cover associations with it. Keep the
+        // rows; an intentional full wipe goes through "Reset library".
+        if existing_paths.is_empty() {
+            return Ok(0);
+        }
         let norm_folder: std::path::PathBuf =
             std::path::Path::new(&normalize_path(folder)).to_path_buf();
         let existing_set: std::collections::HashSet<String> =
@@ -547,6 +575,55 @@ mod tests {
         assert_eq!(paths, expected);
 
         let _ = std::fs::remove_file(&outside_real);
+    }
+
+    #[test]
+    fn remove_missing_from_folder_keeps_everything_when_scan_found_nothing() {
+        let db = db();
+        db.upsert_tracks(&[track("/music/a/1.mp3", "A", "X", 1)])
+            .unwrap();
+        db.upsert_tracks(&[track("/music/b/2.mp3", "B", "Y", 1)])
+            .unwrap();
+
+        // An empty `existing_paths` means the scan walked an empty tree —
+        // typically an unmounted/renamed folder, not a real empty library.
+        // The guard must keep every row instead of wiping the catalog.
+        let removed = db.remove_missing_from_folder("/music", &[]).unwrap();
+        assert_eq!(removed, 0);
+        assert_eq!(db.all_tracks().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn clear_tracks_removes_tracks_but_keeps_covers() {
+        let db = db();
+        db.upsert_tracks(&[track("/m/a.mp3", "A", "X", 1)]).unwrap();
+        db.set_cover("A", "X", &[1, 2, 3]).unwrap();
+
+        db.clear_tracks().unwrap();
+        assert!(db.all_tracks().unwrap().is_empty(), "tracks wiped");
+        assert_eq!(db.get_cover("A", "X"), Some(vec![1, 2, 3]), "covers kept");
+    }
+
+    #[test]
+    fn clear_album_covers_removes_covers_but_keeps_tracks() {
+        let db = db();
+        db.upsert_tracks(&[track("/m/a.mp3", "A", "X", 1)]).unwrap();
+        db.set_cover("A", "X", &[1, 2, 3]).unwrap();
+
+        db.clear_album_covers().unwrap();
+        assert_eq!(db.all_tracks().unwrap().len(), 1, "tracks kept");
+        assert_eq!(db.get_cover("A", "X"), None, "covers wiped");
+    }
+
+    #[test]
+    fn clear_library_removes_both() {
+        let db = db();
+        db.upsert_tracks(&[track("/m/a.mp3", "A", "X", 1)]).unwrap();
+        db.set_cover("A", "X", &[1, 2, 3]).unwrap();
+
+        db.clear_library().unwrap();
+        assert!(db.all_tracks().unwrap().is_empty(), "tracks wiped");
+        assert_eq!(db.get_cover("A", "X"), None, "covers wiped");
     }
 
     #[test]

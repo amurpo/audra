@@ -23,6 +23,30 @@ Native music player for Linux, built with GTK4 and libadwaita.
 - Automatic album and artist grouping that handles inconsistent tags — accent normalization is still partial
 - Native interface following GNOME design guidelines
 
+## Performance
+
+Audra is built to stay light, and the claim is measured rather than asserted.
+Its memory footprint is small and leak-free — bounded by library size, not by
+uptime — it spends almost no CPU during playback, and it renders through GTK4's
+Vulkan backend so scrolling and the dynamic gradient background stay smooth on
+the GPU without loading the CPU.
+
+### Known trade-off and planned work
+
+- Both main grids — albums and artists — use a virtualized `GtkGridView`: only
+  the cards on screen are realized, so opening the library is instant with no
+  layout hitch, even for large collections. The only remaining `GtkFlowBox` is
+  the small album sub-grid inside an artist's detail page, which is deliberate: a
+  single artist never has thousands of albums, so there is no scrolling hitch to
+  virtualize away there.
+- Decoding uses a tolerant Symphonia-based pipeline that recovers from malformed
+  MP3 frames other players reject. A GStreamer backend is under consideration if
+  more codec edge-cases surface.
+
+The measured numbers — memory, CPU, frame timings — the test rig, and how to
+reproduce them are tracked in
+[docs/PERFORMANCE_HISTORY.md](docs/PERFORMANCE_HISTORY.md).
+
 ## Requirements
 
 Runtime: GTK4, libadwaita, ALSA.
@@ -61,6 +85,22 @@ export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:/opt/homebrew/share/pkgconfi
 ```
 
 See [docs/BUILD-macos-arm64.md](docs/BUILD-macos-arm64.md) for the full macOS arm64 build, run, and verify steps.
+
+## Tested on
+
+Audra is regularly built and run on the setups below. Any GTK4-capable desktop
+should work; these are simply the combinations that have been verified.
+
+| Distribution | Desktop(s) | Install | Notes |
+| --- | --- | --- | --- |
+| Debian 13 (Trixie) | GNOME, KDE Plasma, Xfce, LXDE | `.deb` | On LXDE the window has square corners — Openbox runs no compositor, so the client-side rounded corners aren't drawn |
+| Linux Mint 22.3 | Cinnamon | `.deb` | |
+| Ubuntu 26.04 | GNOME | `.deb` | |
+| Fedora 44 Workstation | GNOME | source / `.rpm` | primary development platform |
+| Manjaro 26.0.4| GNOME | source | built without `LASTFM_PROXY_URL`, so the Last.fm features are disabled |
+
+Other desktops on these distributions (e.g. KDE Plasma on Fedora) are expected
+to work but haven't all been individually checked.
 
 ## Installation
 
@@ -120,6 +160,7 @@ To also wipe all per-user data, delete these directories manually:
 
 ```bash
 rm -rf ~/.local/share/audra   # library database and downloaded covers
+rm -rf ~/.cache/audra         # media-controls thumbnail cache
 rm -rf ~/.config/audra        # bundled fonts and settings
 ```
 
