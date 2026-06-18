@@ -287,6 +287,21 @@ impl ArtistsView {
     pub fn filter(&self, query: &str) {
         *self.current_filter.borrow_mut() = query.to_string();
         self.apply_filter(query);
+        // If an album song list (reached through an artist) is the page on top,
+        // filter its tracks too — otherwise searching while inside it does
+        // nothing, since `apply_filter` only touches the artist grid behind it.
+        // The artist-detail album sub-grid (FlowBox) isn't searchable, so skip
+        // both it and the root.
+        let on_song_list = self
+            .root
+            .visible_page()
+            .and_then(|p| p.tag())
+            .is_some_and(|t| t.as_str() != "artists-root" && t.as_str() != "artist-detail");
+        if on_song_list {
+            if let Some((_, _, list)) = self.open_detail.borrow().as_ref() {
+                list.filter(query);
+            }
+        }
     }
 
     /// Recompute `displayed` from `artists_data`/`search_keys` and splice the
