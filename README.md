@@ -95,9 +95,9 @@ should work; these are simply the combinations that have been verified.
 | --- | --- | --- | --- |
 | Debian 13 (Trixie) | GNOME, KDE Plasma, Xfce, LXDE | `.deb` | On LXDE the window has square corners — Openbox runs no compositor, so the client-side rounded corners aren't drawn |
 | Linux Mint 22.3 | Cinnamon | `.deb` | |
-| Ubuntu 25.10 | GNOME | `.deb` | |
+| Ubuntu 26.04 | GNOME | `.deb` | |
 | Fedora 44 Workstation | GNOME | source / `.rpm` | primary development platform |
-| Manjaro | GNOME | source | built without `LASTFM_PROXY_URL`, so the Last.fm features are disabled |
+| Manjaro 26.0.4| GNOME | source | built without `LASTFM_PROXY_URL`, so the Last.fm features are disabled |
 
 Other desktops on these distributions (e.g. KDE Plasma on Fedora) are expected
 to work but haven't all been individually checked.
