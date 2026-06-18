@@ -1,13 +1,21 @@
 use std::cell::RefCell;
 
-static JOST_FONT: &[u8] = include_bytes!("../../data/fonts/JostVariable.ttf");
+static BUNDLED_FONT: &[u8] = include_bytes!("../../data/fonts/InterVariable.ttf");
+
+/// File name used both for the FontConfig extraction path and as the variable
+/// font's internal family name (`fc-query` reports "Inter Variable").
+const BUNDLED_FONT_FILE: &str = "InterVariable.ttf";
 
 /// All visual styling lives in this CSS file. Keep tweaks there, not inline.
 const APP_CSS_BASE: &str = include_str!("../../data/style.css");
 
-const JOST_FONT_CSS: &str = "
+// The variable TTF registers its family as "Inter Variable"; fall back to a
+// system "Inter" and then the generic sans if neither is present.
+// The variable TTF registers its family as "Inter Variable"; fall back to a
+// system "Inter" and then the generic sans if neither is present.
+const BUNDLED_FONT_CSS: &str = "
 * {
-    font-family: 'Jost', sans-serif;
+    font-family: 'Inter Variable', 'Inter', sans-serif;
 }
 ";
 
@@ -42,7 +50,7 @@ impl TintMode {
 
 thread_local! {
     static PROVIDER: RefCell<Option<gtk4::CssProvider>> = const { RefCell::new(None) };
-    static USE_JOST: RefCell<bool> = const { RefCell::new(false) };
+    static USE_BUNDLED_FONT: RefCell<bool> = const { RefCell::new(false) };
     static TINT_PALETTE: RefCell<Option<Vec<(u8, u8, u8)>>> = const { RefCell::new(None) };
     static TINT_MODE: RefCell<TintMode> = const { RefCell::new(TintMode::Partial) };
 }
@@ -240,8 +248,8 @@ fn dynamic_tint_css(palette: &[(u8, u8, u8)], mode: TintMode) -> String {
 
 fn build_css() -> String {
     let mut css = String::from(APP_CSS_BASE);
-    if USE_JOST.with(|c| *c.borrow()) {
-        css.push_str(JOST_FONT_CSS);
+    if USE_BUNDLED_FONT.with(|c| *c.borrow()) {
+        css.push_str(BUNDLED_FONT_CSS);
     }
     let mode = TINT_MODE.with(|c| *c.borrow());
     let tint = TINT_PALETTE.with(|c| {
@@ -276,9 +284,9 @@ fn reload() {
 fn extract_font() -> Option<std::path::PathBuf> {
     let font_dir = dirs::config_dir()?.join("audra").join("fonts");
     std::fs::create_dir_all(&font_dir).ok()?;
-    let font_path = font_dir.join("JostVariable.ttf");
+    let font_path = font_dir.join(BUNDLED_FONT_FILE);
     if !font_path.exists() {
-        std::fs::write(&font_path, JOST_FONT).ok()?;
+        std::fs::write(&font_path, BUNDLED_FONT).ok()?;
     }
     Some(font_path)
 }
@@ -303,7 +311,7 @@ fn register_font(path: &std::path::Path) {
 ///
 /// Without this, older Pango (Debian/Ubuntu, where the .deb runs) keeps the
 /// font map it built at GTK init and never re-scans the runtime font addition,
-/// so 'Jost' is invisible and the CSS silently falls back to the system font.
+/// so 'Inter' is invisible and the CSS silently falls back to the system font.
 /// Newer Pango (Fedora) re-scans on its own — which is exactly why the font
 /// only broke on the .deb and worked everywhere else. Must run before our
 /// widgets exist (we call it from `setup_css`, before the window is built).
@@ -315,12 +323,12 @@ fn refresh_font_map() {
     unsafe { pango_cairo_font_map_set_default(std::ptr::null_mut()) };
 }
 
-pub fn setup_css(use_jost: bool) {
-    USE_JOST.with(|c| *c.borrow_mut() = use_jost);
+pub fn setup_css(use_bundled_font: bool) {
+    USE_BUNDLED_FONT.with(|c| *c.borrow_mut() = use_bundled_font);
     // Always make the bundled font available to Pango, even when the user
     // currently prefers the system font. Registering it is harmless (the CSS
     // decides whether it's actually applied) and it means the in-app toggle can
-    // switch to Jost instantly without touching FontConfig again. The font-map
+    // switch to the bundled font instantly without touching FontConfig again. The font-map
     // refresh right after guarantees the addition is visible on every distro;
     // doing it here, before any widget builds its Pango context, makes it stick.
     if let Some(path) = extract_font() {
@@ -339,10 +347,10 @@ pub fn setup_css(use_jost: bool) {
     });
 }
 
-pub fn update_font(use_jost: bool) {
-    USE_JOST.with(|c| *c.borrow_mut() = use_jost);
+pub fn update_font(use_bundled_font: bool) {
+    USE_BUNDLED_FONT.with(|c| *c.borrow_mut() = use_bundled_font);
     // The font is registered once (and the font map refreshed) in `setup_css`
-    // at startup, so by now 'Jost' already lives in every widget's font map.
+    // at startup, so by now 'Inter' already lives in every widget's font map.
     // Switching is therefore a pure CSS change — no FontConfig work, and no
     // font-map reset (which wouldn't reach the already-created widgets anyway).
     reload();

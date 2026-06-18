@@ -203,6 +203,10 @@ under `data/icons/remix/`; on Linux the system's symbolic icon theme is used
 instead. See [licenses/REMIX-ICON.txt](licenses/REMIX-ICON.txt) and
 [data/icons/remix/LICENSE](data/icons/remix/LICENSE) (Remix Icon License v1.0).
 
+The default UI typeface is [Inter](https://github.com/rsms/inter) by Rasmus
+Andersson, bundled under `data/fonts/InterVariable.ttf` and licensed under the
+SIL Open Font License 1.1. See [licenses/INTER.txt](licenses/INTER.txt).
+
 ## License
 
 GPL-3.0-or-later — see [LICENSE](LICENSE).
