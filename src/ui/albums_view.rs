@@ -373,6 +373,19 @@ impl AlbumsView {
     pub fn filter(&self, query: &str) {
         *self.current_filter.borrow_mut() = query.to_string();
         self.apply_filter(query);
+        // If an album-detail song list is the page on top, filter its tracks
+        // too — otherwise searching while inside a detail page does nothing,
+        // since `apply_filter` only touches the grid hidden behind it.
+        let on_detail = self
+            .root
+            .visible_page()
+            .and_then(|p| p.tag())
+            .is_some_and(|t| t.as_str() != "albums-root");
+        if on_detail {
+            if let Some((_, list)) = self.open_detail.borrow().as_ref() {
+                list.filter(query);
+            }
+        }
     }
 
     /// Recompute `displayed` from `albums_data`/`search_keys` and splice the
