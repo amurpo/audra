@@ -572,14 +572,21 @@ fn albums_for_artist(name: &str, all_albums: &[Album], db: &Arc<Mutex<Database>>
         })
         .collect();
 
-    let db_g = db.lock().unwrap();
+    // Fill missing covers. The DB lock is taken per operation and NOT held
+    // across the loop: `read_cover_art` parses user files off disk (potentially
+    // many), and holding the global DB mutex around that I/O would stall every
+    // worker that needs the DB (scan / scrobble / cover-fetch) and the UI with
+    // it. Same shape as `albums_view`'s cover fetch, which already keeps the
+    // parse outside the lock. Re-acquiring per album is cheap (a detail page
+    // lists at most one artist's albums) and the brief get→set gap is harmless:
+    // `set_cover` is an idempotent INSERT OR REPLACE.
     for album in &mut artist_albums {
         if album.cover.is_some() {
             continue;
         }
         // Stored cover wins, including the empty "user removed it on purpose"
         // marker (kept as Some so the embedded fallback below doesn't undo it).
-        if let Some(bytes) = db_g.get_cover(&album.artist, &album.name) {
+        if let Some(bytes) = db.lock().unwrap().get_cover(&album.artist, &album.name) {
             album.cover = Some(bytes);
             continue;
         }
@@ -589,7 +596,7 @@ fn albums_for_artist(name: &str, all_albums: &[Album], db: &Arc<Mutex<Database>>
         // album shows its cover immediately instead of only after revisiting.
         for track in &album.tracks {
             if let Some(bytes) = crate::library::art::read_cover_art(&track.path) {
-                let _ = db_g.set_cover(&album.artist, &album.name, &bytes);
+                let _ = db.lock().unwrap().set_cover(&album.artist, &album.name, &bytes);
                 album.cover = Some(bytes);
                 break;
             }
