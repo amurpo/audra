@@ -7,9 +7,13 @@ use std::collections::HashMap;
 use std::path::Path;
 use walkdir::WalkDir;
 
-// Must match the features enabled on `rodio` in Cargo.toml. Listing an
-// extension here without the matching decoder makes the file appear in the
-// library and then fail at play time.
+// Must stay within what `symphonia` can decode: playback goes through
+// `TolerantSource` (player/decoder.rs), which drives symphonia directly —
+// rodio only provides the output sink, its built-in decoder is never used.
+// So the real gate is the symphonia features in Cargo.toml: each extension
+// here maps to a container + codec that is enabled there (ogg = ogg+vorbis,
+// wav = wav+pcm, mp3, flac). Listing an extension without the matching
+// decoder makes the file appear in the library and then fail at play time.
 const AUDIO_EXTS: &[&str] = &["mp3", "flac", "ogg", "wav"];
 
 /// Outcome of one folder scan.
