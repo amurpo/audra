@@ -18,34 +18,40 @@ pub struct CoverCandidate {
     pub data: Vec<u8>,
 }
 
-/// Collect several album-cover candidates from every online source for the
-/// picker UI. Network-bound: must run off the UI thread. The embedded-art
-/// candidate is added by the caller, which owns the track path.
-pub fn fetch_album_cover_candidates(artist: &str, album: &str) -> Vec<CoverCandidate> {
-    let mut out = Vec::new();
+/// Stream album-cover candidates from every online source to `sink`, one at a
+/// time, in the order they finish downloading (MusicBrainz/CAA, then
+/// TheAudioDB, then iTunes). Network-bound: must run off the UI thread. Emitting
+/// per candidate instead of returning a `Vec` lets the picker show each
+/// thumbnail the moment it lands rather than blocking until every source — the
+/// slow iTunes search included — has finished. The embedded-art candidate is
+/// emitted by the caller, which owns the track path.
+pub fn fetch_album_cover_candidates(
+    artist: &str,
+    album: &str,
+    sink: &mut dyn FnMut(CoverCandidate),
+) {
     let Some(client) = shared_client() else {
-        return out;
+        return;
     };
 
-    for data in musicbrainz_album_covers(client, artist, album) {
-        out.push(CoverCandidate {
+    musicbrainz_album_covers(client, artist, album, &mut |data| {
+        sink(CoverCandidate {
             source: "MusicBrainz".to_string(),
             data,
-        });
-    }
+        })
+    });
     if let Some(data) = audiodb_album_cover(client, artist, album) {
-        out.push(CoverCandidate {
+        sink(CoverCandidate {
             source: "TheAudioDB".to_string(),
             data,
         });
     }
-    for data in itunes_album_covers(client, artist, album) {
-        out.push(CoverCandidate {
+    itunes_album_covers(client, artist, album, &mut |data| {
+        sink(CoverCandidate {
             source: "iTunes".to_string(),
             data,
-        });
-    }
-    out
+        })
+    });
 }
 
 /// Serialise calls to the MusicBrainz web service to at most one per ~1.1 s,
@@ -111,22 +117,22 @@ fn caa_front_500(client: &reqwest::blocking::Client, mbid: &str) -> Option<Vec<u
     }
 }
 
-/// Like `musicbrainz_album_cover` but returns the front art of the top few
-/// matching releases instead of stopping at the first hit.
+/// Like `musicbrainz_album_cover` but emits the front art of the top few
+/// matching releases instead of stopping at the first hit, one image at a time
+/// so the picker can show each as it arrives.
 fn musicbrainz_album_covers(
     client: &reqwest::blocking::Client,
     artist: &str,
     album: &str,
-) -> Vec<Vec<u8>> {
-    let mut out = Vec::new();
+    sink: &mut dyn FnMut(Vec<u8>),
+) {
     for mbid in musicbrainz_mbids(client, artist, album) {
         // CAA is a separate, unthrottled host; the MB query above is already
         // gated, so the per-MBID art downloads run back to back.
         if let Some(bytes) = caa_front_500(client, &mbid) {
-            out.push(bytes);
+            sink(bytes);
         }
     }
-    out
 }
 
 /// iTunes album-art candidates for an explicit album title (the auto path
@@ -135,7 +141,8 @@ fn itunes_album_covers(
     client: &reqwest::blocking::Client,
     artist: &str,
     album: &str,
-) -> Vec<Vec<u8>> {
+    sink: &mut dyn FnMut(Vec<u8>),
+) {
     let term = format!("{} {}", artist, album);
     let resp: Option<serde_json::Value> = client
         .get("https://itunes.apple.com/search")
@@ -149,17 +156,15 @@ fn itunes_album_covers(
         .ok()
         .and_then(|r| r.json().ok());
 
-    let mut out = Vec::new();
     if let Some(results) = resp.as_ref().and_then(|r| r["results"].as_array()) {
         for item in results {
             if let Some(url) = item["artworkUrl100"].as_str() {
                 if let Some(data) = download(client, &url.replace("100x100bb", "600x600bb")) {
-                    out.push(data);
+                    sink(data);
                 }
             }
         }
     }
-    out
 }
 
 fn album_cache_path(artist: &str, album: &str) -> PathBuf {
@@ -292,17 +297,18 @@ pub fn set_artist_photo(artist: &str, data: &[u8]) {
     write_cache(&artist_cache_path(artist), data);
 }
 
-/// Collect several artist-photo candidates from every online source for the
-/// picker UI. Network-bound: must run off the UI thread.
-pub fn fetch_artist_photo_candidates(artist: &str) -> Vec<CoverCandidate> {
-    let mut out = Vec::new();
+/// Stream artist-photo candidates from every online source to `sink`, one at a
+/// time as each downloads (Deezer first, then TheAudioDB). Network-bound: must
+/// run off the UI thread. Emitting per candidate lets the picker show each as
+/// it lands instead of blocking until every source has finished.
+pub fn fetch_artist_photo_candidates(artist: &str, sink: &mut dyn FnMut(CoverCandidate)) {
     let Some(client) = shared_client() else {
-        return out;
+        return;
     };
 
     for url in deezer_artist_photos(client, artist) {
         if let Some(data) = download(client, &url) {
-            out.push(CoverCandidate {
+            sink(CoverCandidate {
                 source: "Deezer".to_string(),
                 data,
             });
@@ -310,13 +316,12 @@ pub fn fetch_artist_photo_candidates(artist: &str) -> Vec<CoverCandidate> {
     }
     if let Some(url) = audiodb_artist_photo(client, artist) {
         if let Some(data) = download(client, &url) {
-            out.push(CoverCandidate {
+            sink(CoverCandidate {
                 source: "TheAudioDB".to_string(),
                 data,
             });
         }
     }
-    out
 }
 
 /// Read a usable photo URL from one Deezer `data[]` item, or None if the

@@ -31,9 +31,11 @@ const THUMB: i32 = 168;
 type ApplyFn = Rc<dyn Fn(Option<&[u8]>)>;
 /// Store the chosen bytes durably. Runs on the UI thread; quick.
 type PersistFn = Arc<dyn Fn(&[u8]) + Send + Sync>;
-/// Gather candidates off the UI thread for a given search term (the user can
-/// refine it in the dialog, Plex-style, when the real name finds nothing).
-type CandidatesFn = Arc<dyn Fn(&str) -> Vec<CoverCandidate> + Send + Sync>;
+/// Stream candidates off the UI thread for a given search term (the user can
+/// refine it in the dialog, Plex-style, when the real name finds nothing). Each
+/// candidate is pushed to the sink as it downloads, so the picker shows them one
+/// by one instead of waiting for every source to finish.
+type CandidatesFn = Arc<dyn Fn(&str, &mut dyn FnMut(CoverCandidate)) + Send + Sync>;
 
 /// One thumbnail ready for the grid: scaled pixels for display plus the
 /// original bytes to store verbatim if the user picks it.
@@ -83,16 +85,16 @@ fn album_picker_ctx(
     // candidate comes from the file and is independent of the query.
     let candidates: CandidatesFn = {
         let (a, tp) = (artist.clone(), track_path.clone());
-        Arc::new(move |query: &str| {
-            let mut v = Vec::new();
+        Arc::new(move |query: &str, sink: &mut dyn FnMut(CoverCandidate)| {
+            // Local embedded art is instant, so emit it first — it shows before
+            // a single network request goes out.
             if let Some(d) = crate::library::art::read_cover_art(&tp) {
-                v.push(CoverCandidate {
+                sink(CoverCandidate {
                     source: gettext("Embedded in file"),
                     data: d,
                 });
             }
-            v.extend(metadata::fetch_album_cover_candidates(&a, query));
-            v
+            metadata::fetch_album_cover_candidates(&a, query, sink);
         })
     };
 
@@ -156,8 +158,11 @@ fn artist_photo_ctx(artist: String, avatar: adw::Avatar) -> PickerCtx {
     };
 
     // The search term is the artist name to query; the user can refine it.
-    let candidates: CandidatesFn =
-        Arc::new(move |query: &str| metadata::fetch_artist_photo_candidates(query));
+    let candidates: CandidatesFn = Arc::new(
+        move |query: &str, sink: &mut dyn FnMut(CoverCandidate)| {
+            metadata::fetch_artist_photo_candidates(query, sink)
+        },
+    );
 
     PickerCtx {
         title: gettext("Choose photo"),
@@ -398,14 +403,14 @@ fn open_picker(parent: &gtk4::Widget, ctx: &PickerCtx) {
                 let finished = Arc::clone(&finished);
                 let candidates = Arc::clone(&candidates);
                 std::thread::spawn(move || {
-                    for c in candidates(&query) {
+                    candidates(&query, &mut |c: CoverCandidate| {
                         if let Some((px, rs, alpha)) = scale_to_pixels(&c.data, THUMB) {
                             queue
                                 .lock()
                                 .unwrap()
                                 .push((c.source, px, rs, alpha, c.data));
                         }
-                    }
+                    });
                     finished.store(true, Ordering::Relaxed);
                 });
             }
