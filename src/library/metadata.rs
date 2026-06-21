@@ -23,23 +23,23 @@ pub struct CoverCandidate {
 /// candidate is added by the caller, which owns the track path.
 pub fn fetch_album_cover_candidates(artist: &str, album: &str) -> Vec<CoverCandidate> {
     let mut out = Vec::new();
-    let Some(client) = http_client(15) else {
+    let Some(client) = shared_client() else {
         return out;
     };
 
-    for data in musicbrainz_album_covers(&client, artist, album) {
+    for data in musicbrainz_album_covers(client, artist, album) {
         out.push(CoverCandidate {
             source: "MusicBrainz".to_string(),
             data,
         });
     }
-    if let Some(data) = audiodb_album_cover(&client, artist, album) {
+    if let Some(data) = audiodb_album_cover(client, artist, album) {
         out.push(CoverCandidate {
             source: "TheAudioDB".to_string(),
             data,
         });
     }
-    for data in itunes_album_covers(&client, artist, album) {
+    for data in itunes_album_covers(client, artist, album) {
         out.push(CoverCandidate {
             source: "iTunes".to_string(),
             data,
@@ -156,14 +156,30 @@ fn write_cache(path: &PathBuf, data: &[u8]) {
     let _ = std::fs::write(path, data);
 }
 
-/// Single place that builds the HTTP client: same User-Agent (MusicBrainz
-/// requires an identifying one) and a per-call timeout.
-fn http_client(timeout_secs: u64) -> Option<reqwest::blocking::Client> {
-    reqwest::blocking::Client::builder()
-        .user_agent("audra/0.1 (https://github.com/amurpo/audra)")
-        .timeout(std::time::Duration::from_secs(timeout_secs))
-        .build()
-        .ok()
+/// Process-wide HTTP client, built once and shared across every metadata call.
+///
+/// Reusing one client keeps the connection pool alive between fetches, so the
+/// TCP+TLS handshake to each host (MusicBrainz, Cover Art Archive, iTunes,
+/// Deezer, TheAudioDB) is paid once and later requests ride keep-alive — plus
+/// HTTP/2 where the host negotiates it over ALPN. Building a fresh client per
+/// call, as before, threw that pool away on every album. The identifying
+/// User-Agent MusicBrainz requires is set here; the 15 s timeout is the single
+/// previous album value (artist photos used 10 s — the longer cap only means a
+/// stalled photo waits a bit more before giving up). Returns `None` only if the
+/// TLS backend fails to initialise, in which case there is no network path
+/// anyway and callers already degrade to no artwork.
+fn shared_client() -> Option<&'static reqwest::blocking::Client> {
+    static CLIENT: std::sync::OnceLock<Option<reqwest::blocking::Client>> =
+        std::sync::OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .user_agent("audra/0.1 (https://github.com/amurpo/audra)")
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .ok()
+        })
+        .as_ref()
 }
 
 fn download(client: &reqwest::blocking::Client, url: &str) -> Option<Vec<u8>> {
@@ -182,10 +198,10 @@ pub fn fetch_album_cover(artist: &str, album: &str) -> Option<Vec<u8>> {
         return std::fs::read(&path).ok();
     }
 
-    let client = http_client(15)?;
+    let client = shared_client()?;
 
-    let data = musicbrainz_album_cover(&client, artist, album)
-        .or_else(|| audiodb_album_cover(&client, artist, album))?;
+    let data = musicbrainz_album_cover(client, artist, album)
+        .or_else(|| audiodb_album_cover(client, artist, album))?;
 
     write_cache(&path, &data);
     Some(data)
@@ -257,20 +273,20 @@ pub fn set_artist_photo(artist: &str, data: &[u8]) {
 /// picker UI. Network-bound: must run off the UI thread.
 pub fn fetch_artist_photo_candidates(artist: &str) -> Vec<CoverCandidate> {
     let mut out = Vec::new();
-    let Some(client) = http_client(15) else {
+    let Some(client) = shared_client() else {
         return out;
     };
 
-    for url in deezer_artist_photos(&client, artist) {
-        if let Some(data) = download(&client, &url) {
+    for url in deezer_artist_photos(client, artist) {
+        if let Some(data) = download(client, &url) {
             out.push(CoverCandidate {
                 source: "Deezer".to_string(),
                 data,
             });
         }
     }
-    if let Some(url) = audiodb_artist_photo(&client, artist) {
-        if let Some(data) = download(&client, &url) {
+    if let Some(url) = audiodb_artist_photo(client, artist) {
+        if let Some(data) = download(client, &url) {
             out.push(CoverCandidate {
                 source: "TheAudioDB".to_string(),
                 data,
@@ -318,12 +334,12 @@ pub fn fetch_artist_photo(artist: &str) -> Option<Vec<u8>> {
         return std::fs::read(&path).ok();
     }
 
-    let client = http_client(10)?;
+    let client = shared_client()?;
 
     let img_url =
-        deezer_artist_photo(&client, artist).or_else(|| audiodb_artist_photo(&client, artist))?;
+        deezer_artist_photo(client, artist).or_else(|| audiodb_artist_photo(client, artist))?;
 
-    let data = download(&client, &img_url)?;
+    let data = download(client, &img_url)?;
     write_cache(&path, &data);
     log::debug!("metadata: foto descargada para artista '{}'", artist);
     Some(data)
