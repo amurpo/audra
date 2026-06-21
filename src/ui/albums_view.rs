@@ -428,7 +428,11 @@ impl AlbumsView {
             albums,
             ImagePipelineConfig {
                 target_size: CARD_SIZE,
-                slow_delay_ms: 1100,
+                // No blanket delay: the only rate-limited host (MusicBrainz) is
+                // now gated per-host inside metadata, so albums served by other
+                // sources — or by an unthrottled CAA download — no longer pay a
+                // global 1.1 s tax between items.
+                slow_delay_ms: 0,
             },
             move |item: &(String, String, Vec<String>)| {
                 let (artist, album_name, track_paths) = item;

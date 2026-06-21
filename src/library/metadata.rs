@@ -48,11 +48,35 @@ pub fn fetch_album_cover_candidates(artist: &str, album: &str) -> Vec<CoverCandi
     out
 }
 
+/// Serialise calls to the MusicBrainz web service to at most one per ~1.1 s,
+/// the rate the public server enforces (it answers 503 and can throttle the IP
+/// if exceeded). Only `musicbrainz.org/ws/2` needs this: Cover Art Archive,
+/// iTunes, Deezer and TheAudioDB are not gated, so every image download and
+/// every non-MB lookup runs at full speed. The wait is measured against a
+/// process-global last-call instant, so concurrent callers (the album slow lane
+/// and the cover picker can both hit MB) stay serialised. The lock is
+/// deliberately held across the sleep — that *is* the serialisation.
+fn throttle_musicbrainz() {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
+    const MIN_INTERVAL: Duration = Duration::from_millis(1100);
+    let mut last = LAST.lock().unwrap();
+    if let Some(prev) = *last {
+        let elapsed = prev.elapsed();
+        if elapsed < MIN_INTERVAL {
+            std::thread::sleep(MIN_INTERVAL - elapsed);
+        }
+    }
+    *last = Some(Instant::now());
+}
+
 /// Query MusicBrainz for the MBIDs of the top matching releases for the given
 /// artist and album. Returns up to 3 release IDs, or an empty vec on failure.
 fn musicbrainz_mbids(client: &reqwest::blocking::Client, artist: &str, album: &str) -> Vec<String> {
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
     let query = format!("release:\"{}\" AND artist:\"{}\"", esc(album), esc(artist));
+    throttle_musicbrainz();
     let resp: Option<serde_json::Value> = client
         .get("https://musicbrainz.org/ws/2/release")
         .query(&[("query", query.as_str()), ("fmt", "json"), ("limit", "5")])
@@ -96,11 +120,11 @@ fn musicbrainz_album_covers(
 ) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for mbid in musicbrainz_mbids(client, artist, album) {
+        // CAA is a separate, unthrottled host; the MB query above is already
+        // gated, so the per-MBID art downloads run back to back.
         if let Some(bytes) = caa_front_500(client, &mbid) {
             out.push(bytes);
         }
-        // Respect the MusicBrainz / CAA rate limit (1 req/s).
-        std::thread::sleep(std::time::Duration::from_millis(1100));
     }
     out
 }
@@ -213,12 +237,11 @@ fn musicbrainz_album_cover(
     album: &str,
 ) -> Option<Vec<u8>> {
     for mbid in musicbrainz_mbids(client, artist, album) {
+        // CAA is unthrottled; the gating happens once, on the MB query above.
         if let Some(bytes) = caa_front_500(client, &mbid) {
             log::debug!("metadata: carátula MusicBrainz '{}' - '{}'", artist, album);
             return Some(bytes);
         }
-        // Respect the MusicBrainz / CAA rate limit (1 req/s).
-        std::thread::sleep(std::time::Duration::from_millis(1100));
     }
     None
 }
