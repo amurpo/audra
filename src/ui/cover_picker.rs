@@ -34,8 +34,10 @@ type PersistFn = Arc<dyn Fn(&[u8]) + Send + Sync>;
 /// Stream candidates off the UI thread for a given search term (the user can
 /// refine it in the dialog, Plex-style, when the real name finds nothing). Each
 /// candidate is pushed to the sink as it downloads, so the picker shows them one
-/// by one instead of waiting for every source to finish.
-type CandidatesFn = Arc<dyn Fn(&str, &mut dyn FnMut(CoverCandidate)) + Send + Sync>;
+/// by one instead of waiting for every source to finish. The sink is `Sync`
+/// because the fetchers fan out across threads (one per source) and call it
+/// concurrently.
+type CandidatesFn = Arc<dyn Fn(&str, &(dyn Fn(CoverCandidate) + Sync)) + Send + Sync>;
 
 /// One thumbnail ready for the grid: scaled pixels for display plus the
 /// original bytes to store verbatim if the user picks it.
@@ -85,7 +87,7 @@ fn album_picker_ctx(
     // candidate comes from the file and is independent of the query.
     let candidates: CandidatesFn = {
         let (a, tp) = (artist.clone(), track_path.clone());
-        Arc::new(move |query: &str, sink: &mut dyn FnMut(CoverCandidate)| {
+        Arc::new(move |query: &str, sink: &(dyn Fn(CoverCandidate) + Sync)| {
             // Local embedded art is instant, so emit it first — it shows before
             // a single network request goes out.
             if let Some(d) = crate::library::art::read_cover_art(&tp) {
@@ -159,7 +161,7 @@ fn artist_photo_ctx(artist: String, avatar: adw::Avatar) -> PickerCtx {
 
     // The search term is the artist name to query; the user can refine it.
     let candidates: CandidatesFn = Arc::new(
-        move |query: &str, sink: &mut dyn FnMut(CoverCandidate)| {
+        move |query: &str, sink: &(dyn Fn(CoverCandidate) + Sync)| {
             metadata::fetch_artist_photo_candidates(query, sink)
         },
     );
@@ -403,14 +405,17 @@ fn open_picker(parent: &gtk4::Widget, ctx: &PickerCtx) {
                 let finished = Arc::clone(&finished);
                 let candidates = Arc::clone(&candidates);
                 std::thread::spawn(move || {
-                    candidates(&query, &mut |c: CoverCandidate| {
+                    // Shared sink: the source threads inside `candidates` call it
+                    // concurrently. It only locks the queue, so it is `Fn + Sync`.
+                    let sink = |c: CoverCandidate| {
                         if let Some((px, rs, alpha)) = scale_to_pixels(&c.data, THUMB) {
                             queue
                                 .lock()
                                 .unwrap()
                                 .push((c.source, px, rs, alpha, c.data));
                         }
-                    });
+                    };
+                    candidates(&query, &sink);
                     finished.store(true, Ordering::Relaxed);
                 });
             }

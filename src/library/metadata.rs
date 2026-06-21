@@ -18,39 +18,50 @@ pub struct CoverCandidate {
     pub data: Vec<u8>,
 }
 
-/// Stream album-cover candidates from every online source to `sink`, one at a
-/// time, in the order they finish downloading (MusicBrainz/CAA, then
-/// TheAudioDB, then iTunes). Network-bound: must run off the UI thread. Emitting
-/// per candidate instead of returning a `Vec` lets the picker show each
-/// thumbnail the moment it lands rather than blocking until every source — the
-/// slow iTunes search included — has finished. The embedded-art candidate is
-/// emitted by the caller, which owns the track path.
+/// Stream album-cover candidates from every online source to `sink`, each the
+/// moment it finishes downloading. The three sources (MusicBrainz/CAA,
+/// TheAudioDB, iTunes) run in parallel, one thread each, so the picker no longer
+/// waits for the slow iTunes search before showing MusicBrainz art — total
+/// latency drops from their sum to their max. Only MusicBrainz is rate-limited,
+/// and its global gate serialises that host across threads; the other hosts
+/// tolerate the concurrent request. Candidates therefore arrive in completion
+/// order, not source order. `sink` is shared across the worker threads, so it
+/// must be `Sync`; the embedded-art candidate is emitted by the caller, which
+/// owns the track path. Network-bound: must run off the UI thread.
 pub fn fetch_album_cover_candidates(
     artist: &str,
     album: &str,
-    sink: &mut dyn FnMut(CoverCandidate),
+    sink: &(dyn Fn(CoverCandidate) + Sync),
 ) {
     let Some(client) = shared_client() else {
         return;
     };
 
-    musicbrainz_album_covers(client, artist, album, &mut |data| {
-        sink(CoverCandidate {
-            source: "MusicBrainz".to_string(),
-            data,
-        })
-    });
-    if let Some(data) = audiodb_album_cover(client, artist, album) {
-        sink(CoverCandidate {
-            source: "TheAudioDB".to_string(),
-            data,
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            musicbrainz_album_covers(client, artist, album, &|data| {
+                sink(CoverCandidate {
+                    source: "MusicBrainz".to_string(),
+                    data,
+                })
+            });
         });
-    }
-    itunes_album_covers(client, artist, album, &mut |data| {
-        sink(CoverCandidate {
-            source: "iTunes".to_string(),
-            data,
-        })
+        s.spawn(|| {
+            if let Some(data) = audiodb_album_cover(client, artist, album) {
+                sink(CoverCandidate {
+                    source: "TheAudioDB".to_string(),
+                    data,
+                });
+            }
+        });
+        s.spawn(|| {
+            itunes_album_covers(client, artist, album, &|data| {
+                sink(CoverCandidate {
+                    source: "iTunes".to_string(),
+                    data,
+                })
+            });
+        });
     });
 }
 
@@ -124,7 +135,7 @@ fn musicbrainz_album_covers(
     client: &reqwest::blocking::Client,
     artist: &str,
     album: &str,
-    sink: &mut dyn FnMut(Vec<u8>),
+    sink: &dyn Fn(Vec<u8>),
 ) {
     for mbid in musicbrainz_mbids(client, artist, album) {
         // CAA is a separate, unthrottled host; the MB query above is already
@@ -141,7 +152,7 @@ fn itunes_album_covers(
     client: &reqwest::blocking::Client,
     artist: &str,
     album: &str,
-    sink: &mut dyn FnMut(Vec<u8>),
+    sink: &dyn Fn(Vec<u8>),
 ) {
     let term = format!("{} {}", artist, album);
     let resp: Option<serde_json::Value> = client
@@ -300,31 +311,38 @@ pub fn set_artist_photo(artist: &str, data: &[u8]) {
     write_cache(&artist_cache_path(artist), data);
 }
 
-/// Stream artist-photo candidates from every online source to `sink`, one at a
-/// time as each downloads (Deezer first, then TheAudioDB). Network-bound: must
-/// run off the UI thread. Emitting per candidate lets the picker show each as
-/// it lands instead of blocking until every source has finished.
-pub fn fetch_artist_photo_candidates(artist: &str, sink: &mut dyn FnMut(CoverCandidate)) {
+/// Stream artist-photo candidates to `sink`, each as it downloads. Deezer and
+/// TheAudioDB run in parallel (one thread each), neither is rate-limited, so the
+/// picker shows whichever lands first instead of waiting for both in series.
+/// `sink` is shared across the threads, so it must be `Sync`. Network-bound:
+/// must run off the UI thread.
+pub fn fetch_artist_photo_candidates(artist: &str, sink: &(dyn Fn(CoverCandidate) + Sync)) {
     let Some(client) = shared_client() else {
         return;
     };
 
-    for url in deezer_artist_photos(client, artist) {
-        if let Some(data) = download(client, &url) {
-            sink(CoverCandidate {
-                source: "Deezer".to_string(),
-                data,
-            });
-        }
-    }
-    if let Some(url) = audiodb_artist_photo(client, artist) {
-        if let Some(data) = download(client, &url) {
-            sink(CoverCandidate {
-                source: "TheAudioDB".to_string(),
-                data,
-            });
-        }
-    }
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            for url in deezer_artist_photos(client, artist) {
+                if let Some(data) = download(client, &url) {
+                    sink(CoverCandidate {
+                        source: "Deezer".to_string(),
+                        data,
+                    });
+                }
+            }
+        });
+        s.spawn(|| {
+            if let Some(url) = audiodb_artist_photo(client, artist) {
+                if let Some(data) = download(client, &url) {
+                    sink(CoverCandidate {
+                        source: "TheAudioDB".to_string(),
+                        data,
+                    });
+                }
+            }
+        });
+    });
 }
 
 /// Read a usable photo URL from one Deezer `data[]` item, or None if the
