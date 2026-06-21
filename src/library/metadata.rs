@@ -149,7 +149,10 @@ fn itunes_album_covers(
         .query(&[
             ("term", term.as_str()),
             ("media", "music"),
-            ("entity", "musicAlbum"),
+            // For media=music the album entity is "album"; "musicAlbum" is
+            // rejected with HTTP 400 ("Invalid value(s) for key(s):
+            // [resultEntity]"), which is why iTunes never returned any art.
+            ("entity", "album"),
             ("limit", "5"),
         ])
         .send()
