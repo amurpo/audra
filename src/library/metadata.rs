@@ -120,12 +120,7 @@ fn caa_front_500(client: &reqwest::blocking::Client, mbid: &str) -> Option<Vec<u
     if !resp.status().is_success() {
         return None;
     }
-    let bytes = resp.bytes().ok()?;
-    if bytes.is_empty() {
-        None
-    } else {
-        Some(bytes.to_vec())
-    }
+    read_capped(resp)
 }
 
 /// Like `musicbrainz_album_cover` but emits the front art of the top few
@@ -225,13 +220,30 @@ fn shared_client() -> Option<&'static reqwest::blocking::Client> {
         .as_ref()
 }
 
-fn download(client: &reqwest::blocking::Client, url: &str) -> Option<Vec<u8>> {
-    let bytes = client.get(url).send().ok()?.bytes().ok()?;
-    if bytes.is_empty() {
+/// Cap on a single artwork download. Real album/artist art is a few hundred KB
+/// at most; 15 MiB sits far above any genuine cover yet bounds a hostile or
+/// zip-bombed response. Enforced on the *decompressed* stream, so it also caps
+/// a small gzip that inflates past the limit — reqwest drops the Content-Length
+/// header after inflating, so that header can't be trusted for this.
+const MAX_DOWNLOAD_BYTES: u64 = 15 * 1024 * 1024;
+
+/// Read a response body into memory, refusing anything over `MAX_DOWNLOAD_BYTES`.
+/// Reads one byte past the cap so "exactly at cap" is told apart from "over cap".
+fn read_capped(resp: reqwest::blocking::Response) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    resp.take(MAX_DOWNLOAD_BYTES + 1)
+        .read_to_end(&mut buf)
+        .ok()?;
+    if buf.is_empty() || buf.len() as u64 > MAX_DOWNLOAD_BYTES {
         None
     } else {
-        Some(bytes.to_vec())
+        Some(buf)
     }
+}
+
+fn download(client: &reqwest::blocking::Client, url: &str) -> Option<Vec<u8>> {
+    read_capped(client.get(url).send().ok()?)
 }
 
 /// Fetch an album cover: MusicBrainz → TheAudioDB.
