@@ -7,7 +7,7 @@ static BUNDLED_FONT: &[u8] = include_bytes!("../../data/fonts/InterVariable.ttf"
 const BUNDLED_FONT_FILE: &str = "InterVariable.ttf";
 
 /// All visual styling lives in this CSS file. Keep tweaks there, not inline.
-const APP_CSS_BASE: &str = include_str!("../../data/style.css");
+const APP_CSS_BASE: &str = include_str!("style.css");
 
 // The variable TTF registers its family as "Inter Variable"; fall back to a
 // system "Inter" and then the generic sans if neither is present.
