@@ -79,6 +79,14 @@ impl Database {
         ] {
             let _ = self.conn.execute(stmt, []);
         }
+        // Fold a meaningless disc ordinal of 0 to NULL, matching what the
+        // scanner now stores. Rows ingested before that fix keep their `0`
+        // (the mtime-gated rescan won't re-read an unchanged file), which would
+        // otherwise leave a phantom "Disc 0" beside untagged siblings. NULLs
+        // are unaffected (`NULL <= 0` is NULL), so this is cheap and idempotent.
+        let _ = self
+            .conn
+            .execute("UPDATE tracks SET disc_num = NULL WHERE disc_num <= 0", []);
         Ok(())
     }
 
