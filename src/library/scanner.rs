@@ -82,21 +82,29 @@ fn file_mtime(entry: &walkdir::DirEntry) -> Option<i64> {
         .map(|d| d.as_secs() as i64)
 }
 
+/// Trim surrounding whitespace from a tag value, treating an all-whitespace
+/// (or empty) result as no tag at all. Stray leading/trailing spaces otherwise
+/// split one artist into two — e.g. " Yumiko Kosaka " vs "Yumiko Kosaka" — since
+/// the Artists grouper keys off the raw string (only lowercased, not trimmed).
+fn clean(value: Option<String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 fn read_track(path: &Path) -> Result<Track> {
     let tagged = Probe::open(path)?.guess_file_type()?.read()?;
 
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
 
-    let title = tag
-        .and_then(|t| t.title().map(|s| s.to_string()))
-        .or_else(|| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_string())
-        });
+    let title = clean(tag.and_then(|t| t.title().map(|s| s.to_string()))).or_else(|| {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+    });
 
-    let artist = tag.and_then(|t| t.artist().map(|s| s.to_string()));
-    let album = tag.and_then(|t| t.album().map(|s| s.to_string()));
+    let artist = clean(tag.and_then(|t| t.artist().map(|s| s.to_string())));
+    let album = clean(tag.and_then(|t| t.album().map(|s| s.to_string())));
     let track_num = tag.and_then(|t| t.track()).map(|n| n as i64);
     // A disc ordinal of 0 is meaningless: some rips write a literal `TPOS "0"`
     // on every track. Treat it as "no disc" (None) so it never splits an album
@@ -106,7 +114,8 @@ fn read_track(path: &Path) -> Result<Track> {
         .and_then(|t| t.disk())
         .map(|n| n as i64)
         .filter(|&n| n > 0);
-    let album_artist = tag.and_then(|t| t.get_string(&ItemKey::AlbumArtist).map(|s| s.to_string()));
+    let album_artist =
+        clean(tag.and_then(|t| t.get_string(&ItemKey::AlbumArtist).map(|s| s.to_string())));
 
     let duration_secs = tagged.properties().duration().as_secs() as i64;
 
