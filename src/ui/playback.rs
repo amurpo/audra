@@ -345,6 +345,9 @@ pub fn wire_transport_controls(ctx: &PlaybackCtx) {
         let c = ctx.clone();
         ctx.bar.btn_next.connect_clicked(move |_| {
             let mut p = c.player.borrow_mut();
+            // No next track: do nothing so the current song keeps playing.
+            // A manual skip past the end must not stop playback or clear the
+            // bar — only the auto-advance timer stops at the end of the disc.
             if let Ok(Some(track)) = p.next() {
                 on_track_started(&c, track);
             }
@@ -376,8 +379,8 @@ pub fn wire_transport_controls(ctx: &PlaybackCtx) {
         let player = Rc::clone(&ctx.player);
         ctx.bar.btn_loop.connect_clicked(move |btn| {
             let mut p = player.borrow_mut();
-            p.repeat_one = !p.repeat_one;
-            if p.repeat_one {
+            p.repeat_all = !p.repeat_all;
+            if p.repeat_all {
                 btn.add_css_class("accent");
             } else {
                 btn.remove_css_class("accent");
@@ -462,15 +465,20 @@ pub fn start_player_timer(
         }
 
         if p.is_finished() {
-            let result = if p.repeat_one {
-                p.play_current()
-            } else {
-                p.next()
-            };
-            if let Ok(Some(track)) = result {
-                on_track_started(&ctx, track);
-            } else {
-                on_playback_stopped(&ctx);
+            // The current track ran out on its own. Advance — `next` wraps back
+            // to the start by itself under repeat-all, so there's nothing
+            // special to do here. Clone the track out so the player borrow is
+            // released before the `stop()` below. When there's nothing more
+            // (end of queue, no repeat) stop for real so the engine is silenced
+            // and the timer goes idle next tick, instead of re-firing this
+            // branch every 500 ms.
+            let next_track = p.next().ok().flatten().cloned();
+            match next_track {
+                Some(track) => on_track_started(&ctx, &track),
+                None => {
+                    p.stop();
+                    on_playback_stopped(&ctx);
+                }
             }
         } else {
             let pos = p.position().as_secs_f64();

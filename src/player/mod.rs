@@ -23,7 +23,10 @@ pub struct Player {
     pub queue: Vec<Track>,
     pub index: Option<usize>,
     pub shuffle: bool,
-    pub repeat_one: bool,
+    /// When set, reaching the end of the queue wraps back to the start instead
+    /// of stopping ("repeat all"). There is no per-track repeat: it only made
+    /// sense for a one-track album/artist/library, so it was dropped.
+    pub repeat_all: bool,
     pub replaygain_mode: Option<ReplayGainMode>,
     pub state: PlayerState,
     pub volume: f32,
@@ -38,7 +41,7 @@ impl Player {
             queue: Vec::new(),
             index: None,
             shuffle: false,
-            repeat_one: false,
+            repeat_all: false,
             replaygain_mode: None,
             state: PlayerState::Stopped,
             volume: 0.5,
@@ -54,14 +57,25 @@ impl Player {
         self.shuffle_cursor = 0;
     }
 
-    // Builds a random playback order with the current track pinned at position 0.
+    // Builds a random playback order with the current track pinned at position
+    // 0, so toggling shuffle mid-track keeps that track playing.
     pub fn reshuffle(&mut self) {
+        self.build_shuffle_order(true);
+    }
+
+    /// Builds a fresh random order and resets the cursor. With `pin_current`
+    /// the playing track is moved to position 0 (used when shuffle is switched
+    /// on mid-playback); without it the pass is a plain shuffle, used to start a
+    /// new lap under repeat-all so it doesn't replay the track that just ended.
+    fn build_shuffle_order(&mut self, pin_current: bool) {
         let len = self.queue.len();
         let mut order: Vec<usize> = (0..len).collect();
         order.shuffle(&mut rand::thread_rng());
-        if let Some(current) = self.index {
-            if let Some(pos) = order.iter().position(|&i| i == current) {
-                order.swap(0, pos);
+        if pin_current {
+            if let Some(current) = self.index {
+                if let Some(pos) = order.iter().position(|&i| i == current) {
+                    order.swap(0, pos);
+                }
             }
         }
         self.shuffled_order = order;
@@ -125,19 +139,36 @@ impl Player {
             if self.shuffled_order.is_empty() {
                 self.reshuffle();
             }
-            self.shuffle_cursor += 1;
-            if self.shuffle_cursor >= self.shuffled_order.len() {
-                self.state = PlayerState::Stopped;
-                return Ok(None);
+            if self.shuffle_cursor + 1 >= self.shuffled_order.len() {
+                // End of the shuffled pass. Under repeat-all, start a fresh
+                // random lap; otherwise report "no next track" with `None`
+                // WITHOUT advancing the cursor past the last track (that
+                // overflow is what made `previous()` index out of bounds and
+                // abort the app). `next` is a pure query: the caller decides
+                // what "no next track" means — a manual skip keeps the current
+                // track playing, the auto-advance timer stops.
+                if self.repeat_all {
+                    self.build_shuffle_order(false);
+                } else {
+                    return Ok(None);
+                }
+            } else {
+                self.shuffle_cursor += 1;
             }
             self.shuffled_order[self.shuffle_cursor]
         } else {
             let current = self.index.unwrap_or(0);
             if current + 1 >= len {
-                self.state = PlayerState::Stopped;
-                return Ok(None);
+                // Wrap to the start under repeat-all, else report "no next
+                // track" (same pure-query contract as the shuffle branch).
+                if self.repeat_all {
+                    0
+                } else {
+                    return Ok(None);
+                }
+            } else {
+                current + 1
             }
-            current + 1
         };
 
         self.index = Some(next_idx);
@@ -155,8 +186,12 @@ impl Player {
                 self.reshuffle();
             }
             // Step the shuffle cursor back so it stays in sync with `index`;
-            // at the start, stay on the first shuffled track.
-            self.shuffle_cursor = self.shuffle_cursor.saturating_sub(1);
+            // at the start, stay on the first shuffled track. Clamp to a valid
+            // slot *before* stepping back: a cursor left at the end (playback
+            // just stopped on the last track) must never index past the order,
+            // which previously aborted the whole app from the GTK click handler.
+            let last = self.shuffled_order.len().saturating_sub(1);
+            self.shuffle_cursor = self.shuffle_cursor.min(last).saturating_sub(1);
             self.shuffled_order[self.shuffle_cursor]
         } else {
             self.index.map(|i| i.saturating_sub(1)).unwrap_or(0)
@@ -222,7 +257,7 @@ mod tests {
             queue: Vec::new(),
             index: None,
             shuffle: false,
-            repeat_one: false,
+            repeat_all: false,
             replaygain_mode: None,
             state: PlayerState::Stopped,
             volume: 0.5,
@@ -236,7 +271,7 @@ mod tests {
         let p = headless_player();
         assert_eq!(p.state, PlayerState::Stopped);
         assert!(!p.shuffle);
-        assert!(!p.repeat_one);
+        assert!(!p.repeat_all);
         assert_eq!(p.index, None);
         assert!(p.queue.is_empty());
         assert!(p.current_track().is_none());
@@ -294,14 +329,23 @@ mod tests {
     }
 
     #[test]
-    fn next_at_end_of_queue_stops_and_returns_none() {
+    fn next_at_end_of_queue_is_a_noop_and_keeps_playing() {
         let mut p = headless_player();
         p.load_queue((0..3).map(mk_track).collect(), 2);
-        // next() from the last track must stop playback, not advance.
+        let _ = p.play_current(); // pretend the last track is playing
+        assert_eq!(p.state, PlayerState::Playing);
+        // A manual skip past the end must not advance and must not stop
+        // playback: the current track keeps sounding. `next` only reports "no
+        // next track" via None — stopping at the end of the disc is the
+        // auto-advance timer's job, not next()'s.
         let result = p.next().unwrap();
         assert!(result.is_none());
-        assert_eq!(p.state, PlayerState::Stopped);
         assert_eq!(p.index, Some(2), "index must remain unchanged at boundary");
+        assert_eq!(
+            p.state,
+            PlayerState::Playing,
+            "next at the end must not kill playback"
+        );
     }
 
     #[test]
@@ -317,5 +361,70 @@ mod tests {
     fn next_on_empty_queue_returns_none() {
         let mut p = headless_player();
         assert!(p.next().unwrap().is_none());
+    }
+
+    #[test]
+    fn shuffle_next_past_end_keeps_cursor_in_range_so_previous_is_safe() {
+        // Repro for the abort: in shuffle mode, hammering "next" past the end
+        // used to push shuffle_cursor beyond the order's length, after which
+        // `previous()` indexed out of bounds and aborted the whole app via a
+        // non-unwinding panic in the GTK click trampoline.
+        let mut p = headless_player();
+        p.shuffle = true;
+        p.load_queue((0..3).map(mk_track).collect(), 0);
+        p.reshuffle();
+
+        // Advance well past the end (more clicks than the queue is long).
+        for _ in 0..10 {
+            let _ = p.next();
+        }
+        // The cursor must never run past the last valid index — that overflow
+        // is what made `previous()` index out of bounds and abort the app.
+        assert!(
+            p.shuffle_cursor < p.shuffled_order.len(),
+            "cursor {} escaped order len {}",
+            p.shuffle_cursor,
+            p.shuffled_order.len()
+        );
+
+        // The crash itself: this must not panic, and must land on a real track.
+        let _ = p.previous();
+        assert!(p.shuffle_cursor < p.shuffled_order.len());
+        assert!(p.index.is_some_and(|i| i < p.queue.len()));
+    }
+
+    #[test]
+    fn next_at_end_with_repeat_all_wraps_to_start() {
+        let mut p = headless_player();
+        p.repeat_all = true;
+        p.load_queue((0..3).map(mk_track).collect(), 2);
+        // From the last track, next wraps back to the first instead of stopping.
+        let result = p.next().unwrap();
+        assert!(result.is_some());
+        assert_eq!(p.index, Some(0));
+    }
+
+    #[test]
+    fn shuffle_next_at_end_with_repeat_all_starts_a_fresh_pass() {
+        let mut p = headless_player();
+        p.shuffle = true;
+        p.repeat_all = true;
+        p.load_queue((0..4).map(mk_track).collect(), 0);
+        p.reshuffle();
+
+        // Exhaust the shuffled pass (queue is 4 long, current sits at cursor 0).
+        for _ in 0..3 {
+            let _ = p.next();
+        }
+        assert_eq!(p.shuffle_cursor, p.shuffled_order.len() - 1);
+
+        // One more next starts a new lap: the cursor resets and the order is a
+        // full, fresh permutation of every index.
+        let _ = p.next();
+        assert_eq!(p.shuffle_cursor, 0, "wrapped to a fresh pass");
+        let mut sorted = p.shuffled_order.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..4).collect::<Vec<_>>());
+        assert!(p.index.is_some_and(|i| i < p.queue.len()));
     }
 }
