@@ -80,7 +80,17 @@ pub fn group_into_artists(albums: &[Album]) -> Vec<Artist> {
             }
         })
         .collect();
-    artists.sort_by(|a, b| a.name.cmp(&b.name));
+    // Case-insensitive by name so lowercase-styled artists (deadmau5, tricot)
+    // interleave with the rest instead of sinking below Z. Non-Latin scripts
+    // (Japanese, etc.) still fall after Latin because folding case does not
+    // lower their code points — matching how Spotify/Apple order them. Raw name
+    // as tiebreak keeps case-only variants deterministic across runs.
+    artists.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.name.cmp(&b.name))
+    });
     artists
 }
 
@@ -238,6 +248,22 @@ mod tests {
         assert_eq!(artists[1].name, "B");
         assert_eq!(artists[1].album_count, 1);
         assert_eq!(artists[1].track_count, 1);
+    }
+
+    #[test]
+    fn group_into_artists_sorts_case_insensitively_with_non_latin_last() {
+        // Lowercase-styled names interleave (deadmau5 lands between C and M,
+        // not dumped after Z like a byte-order sort would), while non-Latin
+        // scripts still trail Latin — matching Spotify/Apple ordering.
+        let tracks = vec![
+            track(Some("Muse"), Some("Absolution"), Some(1)),
+            track(Some("アジカン"), Some("Sol-fa"), Some(1)),
+            track(Some("deadmau5"), Some("4x4=12"), Some(1)),
+            track(Some("Chvrches"), Some("Bones"), Some(1)),
+        ];
+        let artists = group_into_artists(&group_into_albums(&tracks, None));
+        let names: Vec<&str> = artists.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["Chvrches", "deadmau5", "Muse", "アジカン"]);
     }
 
     #[test]
