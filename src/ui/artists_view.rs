@@ -560,14 +560,25 @@ fn repaint_photos(
 /// Both comparisons are case-insensitive so tags like "Comes With The Fall" vs
 /// "Comes With the Fall" resolve to the same artist. Missing covers are filled
 /// from the DB. Shared by the initial open and the in-place rescan refresh.
-fn albums_for_artist(name: &str, all_albums: &[Album], db: &Arc<Mutex<Database>>) -> Vec<Album> {
+/// Albums (or guest-track slices of them) actually performed by `name`.
+///
+/// Membership is decided **per track** via [`Track::display_artist`], the same
+/// way the artist *card* counts are tallied in `group_into_artists`. The album's
+/// canonical `artist` label can't be trusted for this: dedup stamps every album
+/// in an artist folder with the folder's *dominant* performer, so a folder that
+/// mixes two spellings of one name (e.g. "Mami Ayukawa" + "鮎川麻弥") gets the
+/// majority spelling stamped onto all its albums. Matching on that label pulled
+/// the minority spelling's albums into the majority's detail page — 3 albums on
+/// a page whose card said 1.
+///
+/// An album is kept whole when every track is theirs, or when they are its main
+/// artist (so guest-featured tracks still show on the headliner's album); a pure
+/// guest appearance contributes only that artist's own tracks.
+fn match_artist_albums(name: &str, all_albums: &[Album]) -> Vec<Album> {
     let name_lower = name.to_lowercase();
-    let mut artist_albums: Vec<Album> = all_albums
+    all_albums
         .iter()
         .filter_map(|a| {
-            if a.artist.to_lowercase() == name_lower {
-                return Some(a.clone());
-            }
             let tracks: Vec<Track> = a
                 .tracks
                 .iter()
@@ -575,7 +586,10 @@ fn albums_for_artist(name: &str, all_albums: &[Album], db: &Arc<Mutex<Database>>
                 .cloned()
                 .collect();
             if tracks.is_empty() {
-                None
+                return None;
+            }
+            if tracks.len() == a.tracks.len() || a.artist.to_lowercase() == name_lower {
+                Some(a.clone())
             } else {
                 Some(Album {
                     name: a.name.clone(),
@@ -585,7 +599,11 @@ fn albums_for_artist(name: &str, all_albums: &[Album], db: &Arc<Mutex<Database>>
                 })
             }
         })
-        .collect();
+        .collect()
+}
+
+fn albums_for_artist(name: &str, all_albums: &[Album], db: &Arc<Mutex<Database>>) -> Vec<Album> {
+    let mut artist_albums = match_artist_albums(name, all_albums);
 
     // Fill missing covers. The DB lock is taken per operation and NOT held
     // across the loop: `read_cover_art` parses user files off disk (potentially
@@ -825,4 +843,82 @@ fn make_artist_album_card(album: &Album, db: Arc<Mutex<Database>>) -> FlowBoxChi
     );
 
     child
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn trk(performer: &str) -> Track {
+        Track {
+            id: None,
+            path: format!("/m/{performer}/{}", rand_suffix()),
+            title: Some("t".to_string()),
+            artist: Some(performer.to_string()),
+            album: None,
+            track_num: None,
+            duration_secs: None,
+            disc_num: None,
+            album_artist: None,
+            mtime: None,
+        }
+    }
+
+    // Unique-enough path component so distinct tracks don't collide.
+    fn rand_suffix() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        N.fetch_add(1, Ordering::Relaxed)
+    }
+
+    // `label` is the dedup-stamped Album.artist (the folder's dominant
+    // performer); `performers` are the per-track artist tags.
+    fn alb(name: &str, label: &str, performers: &[&str]) -> Album {
+        Album {
+            name: name.to_string(),
+            artist: label.to_string(),
+            tracks: performers.iter().map(|p| trk(p)).collect(),
+            cover: None,
+        }
+    }
+
+    fn names(albums: &[Album]) -> Vec<String> {
+        albums.iter().map(|a| a.name.clone()).collect()
+    }
+
+    /// One artist folder, two name spellings of the same person. Reply (32
+    /// tracks, kanji) dominates, so dedup stamps Album.artist = "鮎川麻弥" onto
+    /// all three albums — including Z Gundam / Dragonar, whose own tracks read
+    /// "Mami Ayukawa". The detail page must still split them the way the cards
+    /// do: kanji gets only its own album, romaji gets the other two.
+    #[test]
+    fn mixed_spelling_folder_does_not_leak_albums_across_spellings() {
+        let albums = vec![
+            alb("Z Gundam", "鮎川麻弥", &["Mami Ayukawa"]),
+            alb("Dragonar", "鮎川麻弥", &["Mami Ayukawa"]),
+            alb("Reply", "鮎川麻弥", &["鮎川麻弥", "鮎川麻弥", "鮎川麻弥"]),
+        ];
+
+        let kanji = match_artist_albums("鮎川麻弥", &albums);
+        assert_eq!(names(&kanji), vec!["Reply"], "kanji card says 1 album");
+
+        let mut romaji = names(&match_artist_albums("Mami Ayukawa", &albums));
+        romaji.sort();
+        assert_eq!(romaji, vec!["Dragonar", "Z Gundam"], "romaji card says 2");
+    }
+
+    /// The album's main artist keeps a guest-featured track; the guest sees only
+    /// their own track sliced out of that album.
+    #[test]
+    fn guest_appearance_shows_only_the_guest_track_but_keeps_the_headliner_whole() {
+        let albums = vec![alb("LP", "Drake", &["Drake", "Drake feat. X", "Drake"])];
+
+        let headliner = match_artist_albums("Drake", &albums);
+        assert_eq!(headliner.len(), 1);
+        assert_eq!(headliner[0].tracks.len(), 3, "main artist keeps the album whole");
+
+        let guest = match_artist_albums("Drake feat. X", &albums);
+        assert_eq!(guest.len(), 1);
+        assert_eq!(guest[0].tracks.len(), 1, "guest gets only their track");
+    }
 }

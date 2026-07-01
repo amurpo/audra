@@ -51,6 +51,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.2.7" date="2026-07-01">
+      <description>
+        <p>Artist and album lists now sort case-insensitively, so lowercase-styled names interleave instead of sinking to the bottom while non-Latin scripts still trail. Fixes an end-of-queue crash and reworks skip/repeat, switches the bundled UI font to Inter, synthesises color variation for flat cover art, and speeds up the cover-art picker alongside several scanning, metadata, and search fixes.</p>
+      </description>
+    </release>
     <release version="0.2.6" date="2026-06-18">
       <description>
         <p>Both main grids are now virtualized for smoother scrolling and lower memory use on large libraries. Library rescans run on startup and refresh the open album or artist view in place, with a guard against wiping an unavailable folder. Adds granular reset options (library-only, cover-only or full) with confirmation, a perceptual volume taper, and several UI and theming fixes.</p>

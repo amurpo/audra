@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Audra
-Comment=Reproductor de música
+Comment=Native music player with Last.fm scrobbling
 Exec=audra
 Icon=io.github.amurpo.audra
 Terminal=false

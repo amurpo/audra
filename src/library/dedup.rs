@@ -513,7 +513,17 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
         }
     }
 
-    albums.sort_by(|a, b| a.name.cmp(&b.name).then(a.artist.cmp(&b.artist)));
+    // Case-insensitive on name then artist (see artists() in library/mod.rs):
+    // lowercase-styled titles interleave, non-Latin scripts still trail Latin.
+    // Raw fields break exact ties so case-only variants stay deterministic.
+    albums.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.artist.to_lowercase().cmp(&b.artist.to_lowercase()))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.artist.cmp(&b.artist))
+    });
     albums
 }
 

@@ -7,7 +7,7 @@ static BUNDLED_FONT: &[u8] = include_bytes!("../../data/fonts/InterVariable.ttf"
 const BUNDLED_FONT_FILE: &str = "InterVariable.ttf";
 
 /// All visual styling lives in this CSS file. Keep tweaks there, not inline.
-const APP_CSS_BASE: &str = include_str!("../../data/style.css");
+const APP_CSS_BASE: &str = include_str!("style.css");
 
 // The variable TTF registers its family as "Inter Variable"; fall back to a
 // system "Inter" and then the generic sans if neither is present.
@@ -91,12 +91,9 @@ fn lighten_to(rgb: (u8, u8, u8), min_y: f32) -> (u8, u8, u8) {
     (mix(r), mix(g), mix(b))
 }
 
-/// Multiply the HSL saturation of `rgb` by `factor` (clamped to [0,1]),
-/// preserving hue and lightness. The dominant-color extractor averages a
-/// quantised histogram bucket, which tends to mute the result toward grey;
-/// boosting chroma here makes the tint read as the cover's real color
-/// instead of a washed-out tone — without ever touching opacity.
-fn boost_saturation(rgb: (u8, u8, u8), factor: f32) -> (u8, u8, u8) {
+/// Convert RGB (0-255) to HSL, with hue in [0,1) turns and s,l in [0,1].
+/// Achromatic colors return hue 0 and saturation 0.
+fn rgb_to_hsl(rgb: (u8, u8, u8)) -> (f32, f32, f32) {
     let r = rgb.0 as f32 / 255.0;
     let g = rgb.1 as f32 / 255.0;
     let b = rgb.2 as f32 / 255.0;
@@ -105,14 +102,13 @@ fn boost_saturation(rgb: (u8, u8, u8), factor: f32) -> (u8, u8, u8) {
     let l = (max + min) / 2.0;
     let d = max - min;
     if d == 0.0 {
-        return rgb; // achromatic: nothing to saturate
+        return (0.0, 0.0, l); // achromatic
     }
     let s = if l > 0.5 {
         d / (2.0 - max - min)
     } else {
         d / (max + min)
     };
-    let s = (s * factor).clamp(0.0, 1.0);
     let h = (if max == r {
         ((g - b) / d).rem_euclid(6.0)
     } else if max == g {
@@ -120,6 +116,14 @@ fn boost_saturation(rgb: (u8, u8, u8), factor: f32) -> (u8, u8, u8) {
     } else {
         (r - g) / d + 4.0
     }) / 6.0;
+    (h, s, l)
+}
+
+/// Convert HSL (hue in turns, wrapped to [0,1); s,l in [0,1]) back to RGB.
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
+    let h = h.rem_euclid(1.0);
+    let s = s.clamp(0.0, 1.0);
+    let l = l.clamp(0.0, 1.0);
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let x = c * (1.0 - ((h * 6.0).rem_euclid(2.0) - 1.0).abs());
     let m = l - c / 2.0;
@@ -133,6 +137,87 @@ fn boost_saturation(rgb: (u8, u8, u8), factor: f32) -> (u8, u8, u8) {
     };
     let to_u8 = |v: f32| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
     (to_u8(r1), to_u8(g1), to_u8(b1))
+}
+
+/// Multiply the HSL saturation of `rgb` by `factor` (clamped to [0,1]),
+/// preserving hue and lightness. The dominant-color extractor averages a
+/// quantised histogram bucket, which tends to mute the result toward grey;
+/// boosting chroma here makes the tint read as the cover's real color
+/// instead of a washed-out tone — without ever touching opacity.
+fn boost_saturation(rgb: (u8, u8, u8), factor: f32) -> (u8, u8, u8) {
+    let (h, s, l) = rgb_to_hsl(rgb);
+    if s == 0.0 {
+        return rgb; // achromatic: nothing to saturate
+    }
+    hsl_to_rgb(h, (s * factor).clamp(0.0, 1.0), l)
+}
+
+/// Below this HSL saturation a color's hue is too unreliable to use (it reads
+/// as grey), so hue-based variation is pointless and we fall back to lightness.
+const CHROMA_MIN_S: f32 = 0.12;
+/// Hue spread (in turns, ~25°) at or above which a palette already has enough
+/// color variety that the aurora gradients differ on their own.
+const HUE_VARIED: f32 = 25.0 / 360.0;
+
+/// Largest circular distance (in turns, 0..=0.5) between any pair of hues.
+fn hue_spread(hues: &[f32]) -> f32 {
+    let mut max = 0.0_f32;
+    for (i, &a) in hues.iter().enumerate() {
+        for &b in &hues[i + 1..] {
+            let d = (a - b).rem_euclid(1.0);
+            max = max.max(d.min(1.0 - d));
+        }
+    }
+    max
+}
+
+/// When a cover's palette collapses to near-identical colors (a minimalist or
+/// monochrome sleeve), the three aurora gradients stack the same tone and the
+/// background reads flat. Detect that and synthesise variation from the
+/// dominant color: analogous hue rotations (±24°) when the cover has real
+/// chroma, a lightness ramp when it is essentially grey. A palette that already
+/// spans distinct hues passes through untouched. Always returns three colors,
+/// most dominant first.
+fn diversify_palette(palette: &[(u8, u8, u8)]) -> Vec<(u8, u8, u8)> {
+    let base = palette[0];
+    let hues: Vec<f32> = palette
+        .iter()
+        .filter_map(|&c| {
+            let (h, s, _) = rgb_to_hsl(c);
+            (s >= CHROMA_MIN_S).then_some(h)
+        })
+        .collect();
+    if hue_spread(&hues) >= HUE_VARIED {
+        let mut out: Vec<_> = palette.iter().take(3).copied().collect();
+        while out.len() < 3 {
+            out.push(base);
+        }
+        return out;
+    }
+    let (h, s, l) = rgb_to_hsl(base);
+    // Open a light-to-dark gap between the layers, widened as the base darkens:
+    // on dark, narrow-gamut covers (an etching-style sleeve) hue rotation alone
+    // is barely visible because low-luminance tones all read as near-black, so
+    // the lightness spread is what actually gives the gradients depth.
+    let lift = 0.12 + (0.45 - l).max(0.0) * 0.6;
+    let l_light = (l + lift).min(0.62);
+    let l_dark = (l * 0.72).max(0.04);
+    if s >= CHROMA_MIN_S {
+        // Saturated: pair the lightness gap with analogous hue rotation (±24°).
+        vec![
+            hsl_to_rgb(h - 24.0 / 360.0, s, l_light),
+            base,
+            hsl_to_rgb(h + 24.0 / 360.0, s, l_dark),
+        ]
+    } else {
+        // Near-grey: hue rotation buys nothing, so the lightness ramp alone
+        // carries the depth — still far better than three identical fields.
+        vec![
+            hsl_to_rgb(h, s, l_light),
+            base,
+            hsl_to_rgb(h, s, l_dark),
+        ]
+    }
 }
 
 /// Player-bar control overrides that only make sense when a dynamic tint
@@ -170,12 +255,13 @@ fn dynamic_tint_css(palette: &[(u8, u8, u8)], mode: TintMode) -> String {
     if mode == TintMode::Off || palette.is_empty() {
         return String::new();
     }
-    // Boost chroma so the layers read as the cover's real colors, and cap
-    // luminance at Y=150 so white text stays legible even where layers stack.
-    let colors: Vec<(u8, u8, u8)> = palette
-        .iter()
-        .take(3)
-        .map(|&c| cap_luminance(boost_saturation(c, 1.3), 150.0))
+    // Synthesise color variety for flat covers so the three gradients differ
+    // (see `diversify_palette`), then boost chroma so the layers read as the
+    // cover's real colors and cap luminance at Y=150 so white text stays
+    // legible even where layers stack.
+    let colors: Vec<(u8, u8, u8)> = diversify_palette(palette)
+        .into_iter()
+        .map(|c| cap_luminance(boost_saturation(c, 1.3), 150.0))
         .collect();
     // Opaque, dark-tinted base from the dominant color (Y=45). Everything else
     // is layered on top of this, so there is never real transparency.
@@ -369,4 +455,86 @@ pub fn update_dynamic_tint(palette: Option<Vec<(u8, u8, u8)>>) {
 pub fn set_tint_mode(mode: TintMode) {
     TINT_MODE.with(|c| *c.borrow_mut() = mode);
     reload();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// HSL round-trips back to (near) the original RGB for representative hues.
+    #[test]
+    fn hsl_round_trip() {
+        for &rgb in &[
+            (200, 40, 40),
+            (40, 200, 90),
+            (40, 90, 200),
+            (128, 128, 128),
+            (10, 10, 10),
+            (245, 245, 245),
+        ] {
+            let (h, s, l) = rgb_to_hsl(rgb);
+            let back = hsl_to_rgb(h, s, l);
+            let close = |a: u8, b: u8| (a as i16 - b as i16).abs() <= 1;
+            assert!(
+                close(rgb.0, back.0) && close(rgb.1, back.1) && close(rgb.2, back.2),
+                "{rgb:?} -> {back:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hue_spread_is_circular() {
+        // Red sits at hue 0; a hue just below 1.0 is only a sliver away.
+        assert!(hue_spread(&[0.01, 0.99]) < 0.05);
+        // Opposite hues are half a turn apart, the maximum.
+        assert!((hue_spread(&[0.0, 0.5]) - 0.5).abs() < 1e-6);
+        assert_eq!(hue_spread(&[0.3]), 0.0);
+    }
+
+    /// A palette that already spans distinct hues is returned unchanged.
+    #[test]
+    fn varied_palette_passes_through() {
+        let p = vec![(200, 40, 40), (40, 200, 90), (40, 90, 200)];
+        assert_eq!(diversify_palette(&p), p);
+    }
+
+    /// A flat but saturated palette yields three *different* colors.
+    #[test]
+    fn flat_saturated_palette_is_diversified() {
+        let p = vec![(30, 90, 200), (32, 92, 198), (28, 88, 202)];
+        let out = diversify_palette(&p);
+        assert_eq!(out.len(), 3);
+        assert!(out[0] != out[1] || out[1] != out[2]);
+        assert_ne!(out[0], out[2]);
+        // The dominant color stays the middle layer.
+        assert_eq!(out[1], p[0]);
+    }
+
+    /// A near-grey palette still gains depth via a lightness ramp.
+    #[test]
+    fn flat_grey_palette_gets_lightness_ramp() {
+        let p = vec![(120, 120, 122), (118, 118, 120)];
+        let out = diversify_palette(&p);
+        assert_eq!(out.len(), 3);
+        let lum = |c: (u8, u8, u8)| c.0 as u16 + c.1 as u16 + c.2 as u16;
+        assert!(lum(out[0]) > lum(out[1]) && lum(out[1]) > lum(out[2]));
+    }
+
+    /// A single-color palette is padded to three usable colors.
+    #[test]
+    fn single_color_palette_is_padded() {
+        let out = diversify_palette(&[(180, 60, 60)]);
+        assert_eq!(out.len(), 3);
+    }
+
+    /// A dark, narrow-gamut cover (etching-style sleeve) gets a visibly lighter
+    /// layer so the aurora has depth instead of reading as a flat dark field.
+    #[test]
+    fn dark_palette_gains_light_layer() {
+        let base = (60, 40, 25); // dark sepia/brown
+        let out = diversify_palette(&[base]);
+        let lum = |c: (u8, u8, u8)| 0.2126 * c.0 as f32 + 0.7152 * c.1 as f32 + 0.0722 * c.2 as f32;
+        assert!(lum(out[0]) > lum(base) + 30.0, "lightest layer too dark: {out:?}");
+        assert!(lum(out[0]) > lum(out[2]), "no light-to-dark ramp: {out:?}");
+    }
 }

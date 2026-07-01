@@ -1,6 +1,6 @@
 [package]
 name = "audra"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 license = "GPL-3.0-or-later"
 
@@ -16,11 +16,17 @@ gdk-pixbuf = "0.20"
 color-thief = "0.2"
 
 # Audio
+# rodio provides only the output stream + sink; its built-in decoder is never
+# used (we decode with symphonia via TolerantSource), so these codec features
+# just keep rodio's own copy of symphonia unified with ours.
 rodio = { version = "0.20", features = ["mp3", "flac", "vorbis", "wav"] }
-# Used directly for a fault-tolerant decoder (rodio's built-in one gives up
-# after 3 decode errors, which kills real-world MP3 rips). This is the SAME
-# crate rodio already pulls in, so Cargo unifies it to one shared version and
-# there's no extra build cost beyond the chosen codecs.
+# This is the real decoder. Used directly for a fault-tolerant source
+# (rodio's built-in one gives up after 3 decode errors, which kills real-world
+# MP3 rips). The feature list below is the single source of truth for which
+# formats play (scanner.rs AUDIO_EXTS must stay a subset of it): ogg needs both
+# the `ogg` container and `vorbis` codec; wav needs `wav` (riff) and `pcm`.
+# This is the SAME crate rodio already pulls in, so Cargo unifies it to one
+# shared version and there's no extra build cost beyond the chosen codecs.
 # KEEP IN SYNC WITH RODIO: when bumping rodio, check which symphonia it uses
 # (`cargo tree -i symphonia`) and match this version, otherwise Cargo will
 # build two symphonias. `cargo tree -d` must show no duplicate symphonia.
@@ -33,7 +39,10 @@ lofty = "0.22"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # HTTP / Last.fm
-reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
+# "gzip": iTunes always returns gzip-encoded JSON, even when the client does not
+# negotiate it; without this feature reqwest hands back the compressed bytes and
+# `.json()` fails, so iTunes art never loaded.
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls", "gzip"], default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

@@ -7,9 +7,13 @@ use std::collections::HashMap;
 use std::path::Path;
 use walkdir::WalkDir;
 
-// Must match the features enabled on `rodio` in Cargo.toml. Listing an
-// extension here without the matching decoder makes the file appear in the
-// library and then fail at play time.
+// Must stay within what `symphonia` can decode: playback goes through
+// `TolerantSource` (player/decoder.rs), which drives symphonia directly —
+// rodio only provides the output sink, its built-in decoder is never used.
+// So the real gate is the symphonia features in Cargo.toml: each extension
+// here maps to a container + codec that is enabled there (ogg = ogg+vorbis,
+// wav = wav+pcm, mp3, flac). Listing an extension without the matching
+// decoder makes the file appear in the library and then fail at play time.
 const AUDIO_EXTS: &[&str] = &["mp3", "flac", "ogg", "wav"];
 
 /// Outcome of one folder scan.
@@ -78,24 +82,40 @@ fn file_mtime(entry: &walkdir::DirEntry) -> Option<i64> {
         .map(|d| d.as_secs() as i64)
 }
 
+/// Trim surrounding whitespace from a tag value, treating an all-whitespace
+/// (or empty) result as no tag at all. Stray leading/trailing spaces otherwise
+/// split one artist into two — e.g. " Yumiko Kosaka " vs "Yumiko Kosaka" — since
+/// the Artists grouper keys off the raw string (only lowercased, not trimmed).
+fn clean(value: Option<String>) -> Option<String> {
+    value
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 fn read_track(path: &Path) -> Result<Track> {
     let tagged = Probe::open(path)?.guess_file_type()?.read()?;
 
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
 
-    let title = tag
-        .and_then(|t| t.title().map(|s| s.to_string()))
-        .or_else(|| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_string())
-        });
+    let title = clean(tag.and_then(|t| t.title().map(|s| s.to_string()))).or_else(|| {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+    });
 
-    let artist = tag.and_then(|t| t.artist().map(|s| s.to_string()));
-    let album = tag.and_then(|t| t.album().map(|s| s.to_string()));
+    let artist = clean(tag.and_then(|t| t.artist().map(|s| s.to_string())));
+    let album = clean(tag.and_then(|t| t.album().map(|s| s.to_string())));
     let track_num = tag.and_then(|t| t.track()).map(|n| n as i64);
-    let disc_num = tag.and_then(|t| t.disk()).map(|n| n as i64);
-    let album_artist = tag.and_then(|t| t.get_string(&ItemKey::AlbumArtist).map(|s| s.to_string()));
+    // A disc ordinal of 0 is meaningless: some rips write a literal `TPOS "0"`
+    // on every track. Treat it as "no disc" (None) so it never splits an album
+    // off into a phantom "Disc 0" next to siblings that simply omit the tag —
+    // the dedup grouper and the per-disc headers both key off disc_num.
+    let disc_num = tag
+        .and_then(|t| t.disk())
+        .map(|n| n as i64)
+        .filter(|&n| n > 0);
+    let album_artist =
+        clean(tag.and_then(|t| t.get_string(&ItemKey::AlbumArtist).map(|s| s.to_string())));
 
     let duration_secs = tagged.properties().duration().as_secs() as i64;
 
@@ -246,5 +266,46 @@ mod tests {
         let third = scan_folder(dir.path().to_str().unwrap(), &stale);
         assert_eq!(third.tracks.len(), 1);
         assert_eq!(third.tracks[0].path, first.tracks[0].path);
+    }
+
+    #[test]
+    fn disc_number_zero_is_read_as_no_disc() {
+        use lofty::config::WriteOptions;
+        use lofty::tag::{Tag, TagType};
+
+        let dir = TmpDir::new();
+        let zero = dir.path().join("zero.wav");
+        let two = dir.path().join("two.wav");
+        write_wav(&zero);
+        write_wav(&two);
+
+        let mut t0 = Tag::new(TagType::Id3v2);
+        t0.set_disk(0);
+        t0.save_to_path(&zero, WriteOptions::default()).unwrap();
+
+        let mut t2 = Tag::new(TagType::Id3v2);
+        t2.set_disk(2);
+        t2.save_to_path(&two, WriteOptions::default()).unwrap();
+
+        // Precondition: the literal `0` really is on disk — some rips (e.g. the
+        // In Utero MP3s) write a `TPOS "0"` on every track, which lofty reads
+        // back as Some(0).
+        let raw = Probe::open(&zero)
+            .unwrap()
+            .guess_file_type()
+            .unwrap()
+            .read()
+            .unwrap();
+        let raw_tag = raw.primary_tag().or_else(|| raw.first_tag());
+        assert_eq!(
+            raw_tag.and_then(|t| t.disk()),
+            Some(0),
+            "test setup: a literal disc 0 must be on disk"
+        );
+
+        // read_track folds the meaningless 0 to None so it can't spawn a
+        // phantom "Disc 0", but keeps a genuine disc number untouched.
+        assert_eq!(read_track(&zero).unwrap().disc_num, None);
+        assert_eq!(read_track(&two).unwrap().disc_num, Some(2));
     }
 }
