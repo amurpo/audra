@@ -1,0 +1,236 @@
+name: Dependency scan
+
+# Weekly supply-chain check of Cargo.lock:
+#   - cargo audit    -> RUSTSEC advisories (vulnerabilities, unmaintained, unsound)
+#   - cargo outdated -> direct dependencies behind their latest release
+#
+# The report is emailed through the Brevo HTTP API, and it is deliberately quiet:
+# a mail goes out only when there is something NEW to act on, otherwise the run
+# just writes its summary to the Actions tab. Two things would otherwise turn
+# this into weekly noise you learn to ignore:
+#
+#   - ~20 direct deps are always behind latest (the gtk4/libadwaita stack moves
+#     on its own schedule), so being outdated never triggers a mail on its own;
+#     the table only rides along when a mail is already going out.
+#   - ~7 advisories are permanent tenants (unmaintained/unsound crates pulled in
+#     transitively by GTK), so an advisory only triggers a mail the first time it
+#     shows up. The known ones are carried over from the previous run in the
+#     `audit-baseline` artifact.
+#
+# Vulnerabilities are the exception: they re-trigger on every run until the
+# lockfile is actually fixed. Use the manual `force_email` input to get the full
+# report on demand.
+#
+# This only ever scans `main`, never `dev`: the released lockfile is the one that
+# matters. GitHub already fires `schedule` from the default branch alone, but the
+# checkout below pins `main` explicitly so a manual run launched from another
+# branch still audits what shipped. That also means the file has to reach `main`
+# before the cron (or the "Run workflow" button) exists at all.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   BREVO_API_KEY  Brevo API key ("SMTP & API" -> API keys)
+#   MAIL_FROM      sender address, must be a verified sender in Brevo
+#   MAIL_TO        recipient of the report
+
+on:
+  schedule:
+    - cron: '0 7 * * 1' # Mondays, 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      force_email:
+        description: Send the email even when nothing is new
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read # reading the previous run's baseline artifact
+
+env:
+  # cargo-audit ships prebuilt via install-action; cargo-outdated does not, so it
+  # is pinned here and pulled straight from its release page.
+  CARGO_OUTDATED_VERSION: '0.19.0'
+
+jobs:
+  scan:
+    name: Audit and outdated
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Install cargo-outdated
+        run: |
+          curl -sSfL "https://github.com/kbknapp/cargo-outdated/releases/download/v${CARGO_OUTDATED_VERSION}/cargo-outdated-${CARGO_OUTDATED_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            | tar -xz -C "$HOME/.cargo/bin"
+
+      # Neither tool compiles the crate, so the GTK/ALSA system libs the build
+      # workflows install are not needed here: audit only reads Cargo.lock and
+      # outdated only re-resolves the dependency graph.
+      - name: Run scanners
+        run: |
+          # A non-zero exit from cargo audit means "found something", which is the
+          # point of the run, not a failure of the job.
+          cargo audit --json > audit.json || true
+
+          # --root-deps-only keeps this to our own Cargo.toml deps; the full
+          # transitive graph is hundreds of rows nobody acts on.
+          cargo outdated --root-deps-only --format json > outdated.json \
+            || echo '{"dependencies":[]}' > outdated.json
+
+      - name: Load previous baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Known advisories carried over from the last successful run. An
+          # artifact (90 days) rather than the Actions cache, which is evicted
+          # after 7 days without a hit and would race a weekly cron.
+          : > baseline.txt
+          prev=$(gh run list --workflow dependency-scan.yml --status success \
+                   --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$prev" ] && gh run download "$prev" --name audit-baseline --dir prev 2>/dev/null; then
+            mv prev/current.txt baseline.txt
+            echo "Baseline from run ${prev}: $(wc -l < baseline.txt) known advisories."
+          else
+            echo "::notice::No previous baseline, so every advisory counts as new this run."
+          fi
+
+      - name: Build report
+        id: report
+        run: |
+          vulns=$(jq '.vulnerabilities.count // 0' audit.json)
+          # `warnings` is a map of kind -> [entry], e.g. {"unmaintained": [...]}.
+          warns=$(jq '[(.warnings // {}) | .[] | .[]] | length' audit.json)
+          outdated=$(jq '.dependencies | length' outdated.json)
+
+          # Advisory IDs seen right now, against the ones we already reported.
+          jq -r '[ ((.warnings // {}) | .[] | .[]), (.vulnerabilities.list[]?) ]
+                 | .[] | .advisory.id // empty' audit.json | sort -u > current.txt
+          new_ids=$(comm -13 baseline.txt current.txt)
+          new_count=$(printf '%s' "$new_ids" | grep -c . || true)
+
+          # @html escapes every \(...) interpolation, so an advisory title cannot
+          # break out of the markup.
+          advisory_rows=$(
+            {
+              jq -r '.vulnerabilities.list[]? | @html "
+                <tr><td><strong>vulnerability</strong></td>
+                    <td><a href=\"\(.advisory.url)\">\(.advisory.id)</a></td>
+                    <td>\(.package.name) \(.package.version)</td>
+                    <td>\(.advisory.title)</td></tr>"' audit.json
+              jq -r '(.warnings // {}) | to_entries[] | .key as $kind | .value[] | @html "
+                <tr><td>\($kind)</td>
+                    <td>\(.advisory.id // "-")</td>
+                    <td>\(.package.name) \(.package.version)</td>
+                    <td>\(.advisory.title // "-")</td></tr>"' audit.json
+            } || true
+          )
+          [ -n "$advisory_rows" ] || advisory_rows='<tr><td colspan="4">None.</td></tr>'
+
+          outdated_rows=$(
+            jq -r '.dependencies[]? | @html "
+              <tr><td>\(.name)</td><td>\(.project)</td><td>\(.compat)</td><td>\(.latest)</td></tr>"' outdated.json
+          )
+          [ -n "$outdated_rows" ] || outdated_rows='<tr><td colspan="4">All up to date.</td></tr>'
+
+          if [ "$vulns" -gt 0 ]; then
+            subject="[audra] ${vulns} vulnerable crate(s), ${new_count} new advisory(ies)"
+          elif [ "$new_count" -gt 0 ]; then
+            subject="[audra] ${new_count} new advisory(ies), ${outdated} outdated"
+          else
+            subject="[audra] nothing new, ${outdated} outdated"
+          fi
+
+          new_html='<p style="margin:0 0 16px">Nothing new since the last run.</p>'
+          if [ -n "$new_ids" ]; then
+            new_html="<p style=\"margin:0 0 16px\"><strong>New since the last run:</strong> $(echo "$new_ids" | paste -sd ', ')</p>"
+          fi
+
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          cat > body.html <<HTML
+          <div style="font-family:system-ui,sans-serif;font-size:14px;color:#1c1c1c">
+            <h2 style="margin:0 0 4px">Audra dependency scan</h2>
+            <p style="margin:0 0 16px;color:#666">
+              Commit <code>$(git rev-parse --short HEAD)</code> &middot; $(date -u '+%Y-%m-%d %H:%M UTC')
+              &middot; <a href="${run_url}">workflow run</a>
+            </p>
+            ${new_html}
+
+            <h3 style="margin:0 0 8px">RUSTSEC advisories (${vulns} vulnerable, ${warns} flagged)</h3>
+            <table cellpadding="6" cellspacing="0" border="1" style="border-collapse:collapse;margin-bottom:24px">
+              <tr style="background:#f2f2f2;text-align:left">
+                <th>Kind</th><th>ID</th><th>Crate</th><th>Title</th>
+              </tr>
+              ${advisory_rows}
+            </table>
+
+            <h3 style="margin:0 0 8px">Outdated direct dependencies (${outdated})</h3>
+            <table cellpadding="6" cellspacing="0" border="1" style="border-collapse:collapse">
+              <tr style="background:#f2f2f2;text-align:left">
+                <th>Crate</th><th>In use</th><th>Semver-compatible</th><th>Latest</th>
+              </tr>
+              ${outdated_rows}
+            </table>
+          </div>
+          HTML
+
+          # Written on every run, mail or no mail: this is the fallback channel.
+          cat body.html >> "$GITHUB_STEP_SUMMARY"
+
+          echo "subject=$subject" >> "$GITHUB_OUTPUT"
+          echo "vulns=$vulns" >> "$GITHUB_OUTPUT"
+          echo "new_count=$new_count" >> "$GITHUB_OUTPUT"
+
+      - name: Email the report
+        if: steps.report.outputs.vulns != '0' || steps.report.outputs.new_count != '0' || inputs.force_email
+        env:
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          SUBJECT: ${{ steps.report.outputs.subject }}
+        run: |
+          if [ -z "$BREVO_API_KEY" ] || [ -z "$MAIL_FROM" ] || [ -z "$MAIL_TO" ]; then
+            echo "::error::BREVO_API_KEY, MAIL_FROM and MAIL_TO must be set as repository secrets"
+            exit 1
+          fi
+
+          # jq builds the payload so the HTML body is escaped into valid JSON.
+          jq -n \
+            --arg from "$MAIL_FROM" \
+            --arg to "$MAIL_TO" \
+            --arg subject "$SUBJECT" \
+            --arg html "$(cat body.html)" \
+            '{
+              sender: { name: "Audra CI", email: $from },
+              to: [ { email: $to } ],
+              subject: $subject,
+              htmlContent: $html
+            }' > payload.json
+
+          # -f makes an HTTP 4xx/5xx from Brevo fail the job instead of leaving
+          # the report silently undelivered.
+          curl -sS -f -X POST https://api.brevo.com/v3/smtp/email \
+            -H "api-key: ${BREVO_API_KEY}" \
+            -H "Content-Type: application/json" \
+            --data @payload.json
+
+      # Today's advisories become tomorrow's "already known". Uploaded last and
+      # unconditionally: if the mail step failed, the run is red and the baseline
+      # still moves forward, so a delivery failure cannot silently swallow an
+      # advisory. Check the run when it goes red.
+      - name: Save baseline
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: audit-baseline
+          path: current.txt
+          retention-days: 90
+          # A run that died before the scanners produced anything must not blow up
+          # here too; the next run just starts from an empty baseline.
+          if-no-files-found: ignore
