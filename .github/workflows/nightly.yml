@@ -57,9 +57,17 @@ jobs:
       ver: ${{ needs.meta.outputs.ver }}
     secrets: inherit
 
+  build-flatpak:
+    name: Build Flatpak
+    needs: [meta, test]
+    uses: ./.github/workflows/build-flatpak.yml
+    with:
+      ver: ${{ needs.meta.outputs.ver }}
+    secrets: inherit
+
   publish:
     name: Publish nightly
-    needs: [meta, build-fedora, build-windows, build-deb]
+    needs: [meta, build-fedora, build-windows, build-deb, build-flatpak]
     runs-on: ubuntu-latest
     permissions:
       contents: write
