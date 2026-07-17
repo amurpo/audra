@@ -6,6 +6,12 @@ sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
 command: audra
 
+# Keep translations inside the app ref. The default (true) moves them into a
+# separate .Locale extension ref, which `flatpak build-bundle` never includes —
+# a single-file bundle ships only the app ref, so the es catalog would be a
+# dangling symlink and the UI would silently fall back to English.
+separate-locales: false
+
 finish-args:
   - --share=network
   - --share=ipc
