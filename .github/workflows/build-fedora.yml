@@ -19,8 +19,12 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Deps
+        # --disablerepo=fedora-cisco-openh264: the H.264 codec repo is served
+        # by Cisco's CDN (no real mirror pool) and flakes with "All mirrors
+        # were tried". The gtk4 dependency chain then resolves to the
+        # noopenh264 stub from the main repo, which is all a build needs.
         run: |
-          dnf install -y \
+          dnf install -y --disablerepo=fedora-cisco-openh264 \
             curl gcc \
             gtk4-devel libadwaita-devel \
             sqlite-devel pkg-config \
