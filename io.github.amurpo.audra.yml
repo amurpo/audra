@@ -56,7 +56,8 @@ modules:
       - cp /app/share/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg
           /app/as-stage/app/share/icons/hicolor/scalable/apps/
       - appstreamcli compose --prefix=/app --origin=flatpak
-          --no-net --result-root=/app/share/swcatalog /app/as-stage
+          --no-net --print-report=full
+          --result-root=/app/share/swcatalog /app/as-stage
       - rm -rf /app/as-stage
     sources:
       - type: git
