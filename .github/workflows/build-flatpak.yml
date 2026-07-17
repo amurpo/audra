@@ -39,6 +39,7 @@ jobs:
         run: |
           dnf install -y \
             flatpak flatpak-builder \
+            appstream \
             git python3-pyyaml
 
       - name: Check cargo-sources.json is in sync with Cargo.lock
@@ -109,6 +110,43 @@ jobs:
             --disable-rofiles-fuse \
             --force-clean \
             --install-deps-from=flathub \
+            --build-only \
+            flatpak-build audra-ci.yml
+
+      - name: Compose AppStream catalog
+        # Runs on the runner, not inside the build sandbox: the GNOME SDK's
+        # appstream renders icons through glycin, whose loader sandbox
+        # (flatpak-spawn) cannot work nested inside the flatpak-builder build
+        # environment. Fedora's appstream renders SVGs via librsvg directly.
+        # Composing outside the sandbox mirrors how Flathub does it server-side.
+        run: |
+          STAGE="$RUNNER_TEMP/as-stage"
+          OUT="$RUNNER_TEMP/compose-out"
+          mkdir -p "$STAGE/app/share/metainfo" \
+                   "$STAGE/app/share/applications" \
+                   "$STAGE/app/share/icons/hicolor/scalable/apps"
+          cp flatpak-build/files/share/metainfo/io.github.amurpo.audra.metainfo.xml \
+            "$STAGE/app/share/metainfo/"
+          cp flatpak-build/files/share/applications/io.github.amurpo.audra.desktop \
+            "$STAGE/app/share/applications/"
+          cp flatpak-build/files/share/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg \
+            "$STAGE/app/share/icons/hicolor/scalable/apps/"
+          appstreamcli compose \
+            --prefix=/app \
+            --origin=flatpak \
+            --no-net \
+            --print-report=full \
+            --result-root="$OUT" \
+            "$STAGE"
+          mkdir -p flatpak-build/files/share/swcatalog
+          cp -r "$OUT/app/share/swcatalog/." flatpak-build/files/share/swcatalog/
+
+      - name: Export to repo
+        run: |
+          flatpak-builder \
+            --user \
+            --disable-rofiles-fuse \
+            --finish-only \
             --repo=flatpak-repo \
             flatpak-build audra-ci.yml
 
