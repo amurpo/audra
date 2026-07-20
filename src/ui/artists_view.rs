@@ -552,28 +552,25 @@ fn repaint_photos(
 }
 
 /// Collect the albums to show on an artist's detail page. Two kinds of hits:
-///   * Direct: `album.artist == name` → keep the whole album.
-///   * Compilation: `album.artist != name` but some tracks match (Various
-///     Artists / OSTs) → keep only the artist's tracks under that album, with
-///     the original album name preserved so the cover still resolves.
+///   * The whole album, when every one of its tracks is performed by `name`.
+///   * A slice of it: the album is shared (Various Artists, or an OST with a
+///     guest vocal theme) and only some tracks are `name`'s → keep just those,
+///     with the original album name preserved so the cover still resolves.
 ///
-/// Both comparisons are case-insensitive so tags like "Comes With The Fall" vs
+/// Comparisons are case-insensitive so tags like "Comes With The Fall" vs
 /// "Comes With the Fall" resolve to the same artist. Missing covers are filled
 /// from the DB. Shared by the initial open and the in-place rescan refresh.
-/// Albums (or guest-track slices of them) actually performed by `name`.
 ///
 /// Membership is decided **per track** via [`Track::display_artist`], the same
-/// way the artist *card* counts are tallied in `group_into_artists`. The album's
-/// canonical `artist` label can't be trusted for this: dedup stamps every album
-/// in an artist folder with the folder's *dominant* performer, so a folder that
-/// mixes two spellings of one name (e.g. "Mami Ayukawa" + "鮎川麻弥") gets the
-/// majority spelling stamped onto all its albums. Matching on that label pulled
-/// the minority spelling's albums into the majority's detail page — 3 albums on
-/// a page whose card said 1.
-///
-/// An album is kept whole when every track is theirs, or when they are its main
-/// artist (so guest-featured tracks still show on the headliner's album); a pure
-/// guest appearance contributes only that artist's own tracks.
+/// way the artist *card* counts are tallied in `group_into_artists` — so the
+/// number on the card always matches the tracks on the page. The album's
+/// canonical `artist` label is deliberately NOT consulted: dedup stamps every
+/// album in an artist folder with the folder's *dominant* performer, so trusting
+/// it would (a) pull albums whose own tracks read a minority spelling into the
+/// majority's detail page (e.g. "Mami Ayukawa" + "鮎川麻弥" in one folder — 3
+/// albums on a page whose card said 1), and (b) hand the dominant performer a
+/// track that merely shares the album but is credited to someone else — an OST's
+/// composer absorbing a guest theme sung by a different band.
 fn match_artist_albums(name: &str, all_albums: &[Album]) -> Vec<Album> {
     let name_lower = name.to_lowercase();
     all_albums
@@ -588,7 +585,7 @@ fn match_artist_albums(name: &str, all_albums: &[Album]) -> Vec<Album> {
             if tracks.is_empty() {
                 return None;
             }
-            if tracks.len() == a.tracks.len() || a.artist.to_lowercase() == name_lower {
+            if tracks.len() == a.tracks.len() {
                 Some(a.clone())
             } else {
                 Some(Album {
@@ -907,18 +904,28 @@ mod tests {
         assert_eq!(romaji, vec!["Dragonar", "Z Gundam"], "romaji card says 2");
     }
 
-    /// The album's main artist keeps a guest-featured track; the guest sees only
-    /// their own track sliced out of that album.
+    /// A track credited to a different performer (an OST theme by another band,
+    /// or a "feat." collaboration) is NOT absorbed by the album's dominant
+    /// performer: the detail page shows each artist exactly the tracks their tag
+    /// names, matching the artist-card counts. Mirrors the real case that surfaced
+    /// this — a Gundam OST whose score is one composer and whose single vocal
+    /// theme is credited to a different band.
     #[test]
-    fn guest_appearance_shows_only_the_guest_track_but_keeps_the_headliner_whole() {
-        let albums = vec![alb("LP", "Drake", &["Drake", "Drake feat. X", "Drake"])];
+    fn dominant_performer_does_not_absorb_another_artists_track() {
+        // Album.artist ("Composer") is the dedup-stamped dominant performer, but
+        // the third track is credited to a different band that shares the album.
+        let albums = vec![alb("OST", "Composer", &["Composer", "Composer", "Guest Band"])];
 
-        let headliner = match_artist_albums("Drake", &albums);
-        assert_eq!(headliner.len(), 1);
-        assert_eq!(headliner[0].tracks.len(), 3, "main artist keeps the album whole");
+        let composer = match_artist_albums("Composer", &albums);
+        assert_eq!(composer.len(), 1);
+        assert_eq!(
+            composer[0].tracks.len(),
+            2,
+            "the dominant performer keeps only their own tracks, not the guest theme"
+        );
 
-        let guest = match_artist_albums("Drake feat. X", &albums);
+        let guest = match_artist_albums("Guest Band", &albums);
         assert_eq!(guest.len(), 1);
-        assert_eq!(guest[0].tracks.len(), 1, "guest gets only their track");
+        assert_eq!(guest[0].tracks.len(), 1, "the guest sees only their own track");
     }
 }
