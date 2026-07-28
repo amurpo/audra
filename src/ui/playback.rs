@@ -231,7 +231,7 @@ fn resolve_cover_cached(ctx: &PlaybackCtx, track: &Track) -> Option<Arc<Vec<u8>>
 fn spawn_palette_extraction(ctx: &PlaybackCtx, key: (String, String), bytes: Arc<Vec<u8>>) {
     let cache = Arc::clone(&ctx.cover_cache);
     std::thread::spawn(move || {
-        let palette = dominant_color::palette(&bytes, 5);
+        let palette = dominant_color::palette(&bytes, dominant_color::PALETTE_COLORS);
         {
             let mut guard = cache.lock().unwrap();
             if let Some(entry) = guard.as_mut().filter(|e| e.key == key) {
