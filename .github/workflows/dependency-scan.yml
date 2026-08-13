@@ -12,20 +12,28 @@ name: Dependency scan
 #   - ~20 direct deps are always behind latest (the gtk4/libadwaita stack moves
 #     on its own schedule), so being outdated never triggers a mail on its own;
 #     the table only rides along when a mail is already going out.
-#   - ~7 advisories are permanent tenants (unmaintained/unsound crates pulled in
-#     transitively by GTK), so an advisory only triggers a mail the first time it
-#     shows up. The known ones are carried over from the previous run in the
+#   - ~5 advisories are permanent tenants (unmaintained crates pulled in
+#     transitively by souvlaki/zbus, lofty and resvg, with no patched version to
+#     move to), so an advisory only triggers a mail the first time it shows up.
+#     The known ones are carried over from the previous run in the
 #     `audit-baseline` artifact.
 #
 # Vulnerabilities are the exception: they re-trigger on every run until the
 # lockfile is actually fixed. Use the manual `force_email` input to get the full
 # report on demand.
 #
-# This only ever scans `main`, never `dev`: the released lockfile is the one that
-# matters. GitHub already fires `schedule` from the default branch alone, but the
-# checkout below pins `main` explicitly so a manual run launched from another
-# branch still audits what shipped. That also means the file has to reach `main`
-# before the cron (or the "Run workflow" button) exists at all.
+# The audited tree is `dev` (see SCAN_REF), not `main`: lockfile fixes land in
+# `dev` first, so scanning `main` reports advisories that were already cleared
+# days earlier and hides the fix behind a merge. The trade-off is the mirror
+# image, and worth knowing: a fix that is still only in `dev` turns this report
+# green while the artifacts built from `main` at release time still carry it.
+#
+# Note the split between the two branches. GitHub fires `schedule` from the
+# default branch alone, so the *definition* of this workflow always comes from
+# `main` -- the file has to reach `main` before the cron (or the "Run workflow"
+# button) exists at all. Only the checkout below is pinned to `dev`, which also
+# keeps a manual run auditing the same thing no matter where it was launched
+# from.
 #
 # Required repository secrets (Settings -> Secrets and variables -> Actions):
 #   BREVO_API_KEY  Brevo API key ("SMTP & API" -> API keys)
@@ -47,6 +55,11 @@ permissions:
   actions: read # reading the previous run's baseline artifact
 
 env:
+  # Branch whose Cargo.lock is audited. Single source of truth: the checkout and
+  # the report header both read it, so the mail can never claim a branch other
+  # than the one that was actually scanned.
+  SCAN_REF: dev
+
   # cargo-audit ships prebuilt via install-action; cargo-outdated does not, so it
   # is pinned here and pulled straight from its release page.
   CARGO_OUTDATED_VERSION: '0.19.0'
@@ -58,7 +71,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ env.SCAN_REF }}
+
+      # A `ref:` that resolved to an empty string would not fail the checkout, it
+      # would quietly fall back to the default branch -- and the report would go
+      # on claiming it scanned SCAN_REF. Fail loudly instead of mailing a
+      # confident audit of the wrong lockfile.
+      - name: Verify the scanned ref
+        run: |
+          got=$(git rev-parse --abbrev-ref HEAD)
+          [ "$got" = "$SCAN_REF" ] || {
+            echo "::error::expected to scan '${SCAN_REF}', but HEAD is '${got}'"
+            exit 1
+          }
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@v2
@@ -157,7 +182,8 @@ jobs:
           <div style="font-family:system-ui,sans-serif;font-size:14px;color:#1c1c1c">
             <h2 style="margin:0 0 4px">Audra dependency scan</h2>
             <p style="margin:0 0 16px;color:#666">
-              Commit <code>$(git rev-parse --short HEAD)</code> &middot; $(date -u '+%Y-%m-%d %H:%M UTC')
+              Branch <code>${SCAN_REF}</code> &middot; commit <code>$(git rev-parse --short HEAD)</code>
+              &middot; $(date -u '+%Y-%m-%d %H:%M UTC')
               &middot; <a href="${run_url}">workflow run</a>
             </p>
             ${new_html}
