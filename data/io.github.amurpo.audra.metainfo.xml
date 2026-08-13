@@ -51,6 +51,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.2.8" date="2026-08-13">
+      <description>
+        <p>Colorful sleeves now drive a richer dynamic background: the palette is sampled far more finely and up to five distinct tones are layered instead of three, so varied artwork no longer comes out muddy. Fixes an artist's album page showing tracks credited to another performer, and Last.fm scrobbling now works in every build. The Flatpak bundle ships the Spanish translation again.</p>
+      </description>
+    </release>
     <release version="0.2.7" date="2026-07-01">
       <description>
         <p>Artist and album lists now sort case-insensitively, so lowercase-styled names interleave instead of sinking to the bottom while non-Latin scripts still trail. Fixes an end-of-queue crash and reworks skip/repeat, switches the bundled UI font to Inter, synthesises color variation for flat cover art, and speeds up the cover-art picker alongside several scanning, metadata, and search fixes.</p>
