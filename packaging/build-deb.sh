@@ -7,18 +7,6 @@ VER="${VER:-$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\
 DEB_VER=$(echo "$VER" | tr '-' '~')
 case "$DEB_VER" in [0-9]*) ;; *) DEB_VER="0~${DEB_VER}" ;; esac
 
-# En CI, LASTFM_PROXY_URL viene del entorno del workflow.
-# En local, se carga desde .env solo si aún no está definida.
-if [ -z "$LASTFM_PROXY_URL" ] && [ -f "$ROOT/.env" ]; then
-    set -a
-    # shellcheck source=/dev/null
-    source "$ROOT/.env"
-    set +a
-fi
-if [ -z "$LASTFM_PROXY_URL" ]; then
-    echo "WARNING: LASTFM_PROXY_URL no está configurado — el binario no tendrá scrobbling de Last.fm"
-fi
-
 echo "==> Building audra v$VER..."
 cargo build --release --manifest-path "$ROOT/Cargo.toml"
 

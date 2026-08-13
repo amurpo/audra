@@ -13,7 +13,6 @@ jobs:
     runs-on: windows-latest
     env:
       VER: ${{ inputs.ver }}
-      LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
     steps:
       - uses: actions/checkout@v6
 

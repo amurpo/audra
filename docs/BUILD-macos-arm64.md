@@ -54,9 +54,6 @@ file target/release/audra
 ```bash
 export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:/opt/homebrew/share/pkgconfig"
 
-# Optional: Last.fm scrobbling via your BFF proxy (see README)
-export LASTFM_PROXY_URL=https://your-proxy.example.com/lastfm
-
 cargo build --release
 ```
 
@@ -79,9 +76,9 @@ bash packaging/run-macos.sh
 
 On macOS, media keys and Now Playing use **MPNowPlayingInfoCenter** (via `souvlaki`), not MPRIS/D-Bus.
 
-## Last.fm proxy URL
+## Last.fm
 
-Same as Linux: set `LASTFM_PROXY_URL` before building so the URL is embedded at compile time. For local builds you can put it in a `.env` file at the repo root; `packaging/build-macos.sh` sources it when the variable is unset.
+Same as Linux: nothing to configure, scrobbling works in any build.
 
 ## Verify the build
 

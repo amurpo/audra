@@ -17,7 +17,6 @@ jobs:
     container: debian:trixie
     env:
       VER: ${{ inputs.ver }}
-      LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
     steps:
       - name: Deps
         run: |
@@ -38,18 +37,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Check proxy secret
-        run: |
-          if [ -z "$LASTFM_PROXY_URL" ]; then
-            echo "::error::LASTFM_PROXY_URL is not set; the binary will have no scrobbling."
-            exit 1
-          fi
-
       - name: Build
         run: cargo build --release
         env:
           RUST_BACKTRACE: 1
-          LASTFM_PROXY_URL: ${{ secrets.LASTFM_PROXY_URL }}
 
       - name: Package DEB
         run: bash packaging/build-deb.sh
