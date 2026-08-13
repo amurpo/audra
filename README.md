@@ -1,7 +1,7 @@
 [![Release](https://github.com/amurpo/audra/actions/workflows/release.yml/badge.svg)](https://github.com/amurpo/audra/actions/workflows/release.yml) [![Nightly (dev)](https://github.com/amurpo/audra/actions/workflows/nightly.yml/badge.svg)](https://github.com/amurpo/audra/actions/workflows/nightly.yml)
 # Audra
 
-Native music player for Linux, built with GTK4 and libadwaita.
+Native music player for Linux and Windows, built with GTK4 and libadwaita.
 
 ## Screenshots
 
@@ -21,6 +21,7 @@ Native music player for Linux, built with GTK4 and libadwaita.
 - Automatic scrobbling and now-playing updates to [Last.fm](https://www.last.fm) with OAuth authentication
 - Artist art and album covers downloaded automatically; right-click any album or artist to pick a custom image or search for one
 - Automatic album and artist grouping that handles inconsistent tags — accent normalization is still partial
+- Interface in English and Spanish
 - Native interface following GNOME design guidelines
 
 ## Performance
@@ -95,14 +96,27 @@ should work; these are simply the combinations that have been verified.
 | --- | --- | --- | --- |
 | Debian 13 (Trixie) | GNOME, KDE Plasma, Xfce, LXDE | `.deb` | On LXDE the window has square corners — Openbox runs no compositor, so the client-side rounded corners aren't drawn |
 | Linux Mint 22.3 | Cinnamon | `.deb` | |
-| Ubuntu 26.04 | GNOME | `.deb` | |
+| Ubuntu 26.04 | GNOME | `.deb` / Flatpak | |
 | Fedora 44 Workstation | GNOME | source / `.rpm` | primary development platform |
-| Manjaro 26.0.4| GNOME | source | built without `LASTFM_PROXY_URL`, so the Last.fm features are disabled |
+| Manjaro 26.0.4 | GNOME | source / Flatpak | source build without `LASTFM_PROXY_URL`, so its Last.fm features are disabled — the Flatpak ships them |
 
 Other desktops on these distributions (e.g. KDE Plasma on Fedora) are expected
 to work but haven't all been individually checked.
 
 ## Installation
+
+All packages are published on the [Releases page](https://github.com/amurpo/audra/releases);
+automated builds from the `dev` branch land in the
+[nightly prerelease](https://github.com/amurpo/audra/releases/tag/nightly).
+
+### Flatpak (any distribution)
+
+```bash
+flatpak install ./audra-*-x86_64.flatpak
+```
+
+The GNOME runtime is fetched from Flathub automatically if missing. The
+sandbox reads your home directory read-only to scan the music library.
 
 ### RPM (Fedora / RHEL)
 
@@ -115,6 +129,11 @@ sudo dnf install audra-*.rpm
 ```bash
 sudo apt install ./audra_*_amd64.deb
 ```
+
+### Windows
+
+Run `audra-<version>-windows-x64-setup.exe`. The installer bundles the whole
+GTK stack; no separate runtime is needed.
 
 ### From source
 
@@ -162,6 +181,13 @@ To also wipe all per-user data, delete these directories manually:
 rm -rf ~/.local/share/audra   # library database and downloaded covers
 rm -rf ~/.cache/audra         # media-controls thumbnail cache
 rm -rf ~/.config/audra        # bundled fonts and settings
+```
+
+The Flatpak keeps everything under its own sandbox prefix instead:
+
+```bash
+flatpak uninstall io.github.amurpo.audra
+rm -rf ~/.var/app/io.github.amurpo.audra   # all per-user data
 ```
 
 On Windows the uninstaller asks whether to keep or delete this data, and the
