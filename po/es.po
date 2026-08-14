@@ -100,6 +100,9 @@ msgstr "Autoriza Audra en tu cuenta de Last.fm para registrar tus escuchas."
 msgid "Authorize on Last.fm"
 msgstr "Autorizar en Last.fm"
 
+msgid "This build has no Last.fm credentials compiled in."
+msgstr "Esta compilación no incluye credenciales de Last.fm."
+
 msgid "Waiting for authorization"
 msgstr "Esperando autorización"
 

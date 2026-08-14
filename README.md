@@ -1,7 +1,7 @@
 [![Release](https://github.com/amurpo/audra/actions/workflows/release.yml/badge.svg)](https://github.com/amurpo/audra/actions/workflows/release.yml) [![Nightly (dev)](https://github.com/amurpo/audra/actions/workflows/nightly.yml/badge.svg)](https://github.com/amurpo/audra/actions/workflows/nightly.yml)
 # Audra
 
-Native music player for Linux, built with GTK4 and libadwaita.
+Native music player for Linux and Windows, built with GTK4 and libadwaita.
 
 ## Screenshots
 
@@ -21,6 +21,7 @@ Native music player for Linux, built with GTK4 and libadwaita.
 - Automatic scrobbling and now-playing updates to [Last.fm](https://www.last.fm) with OAuth authentication
 - Artist art and album covers downloaded automatically; right-click any album or artist to pick a custom image or search for one
 - Automatic album and artist grouping that handles inconsistent tags — accent normalization is still partial
+- Interface in English and Spanish
 - Native interface following GNOME design guidelines
 
 ## Performance
@@ -95,14 +96,27 @@ should work; these are simply the combinations that have been verified.
 | --- | --- | --- | --- |
 | Debian 13 (Trixie) | GNOME, KDE Plasma, Xfce, LXDE | `.deb` | On LXDE the window has square corners — Openbox runs no compositor, so the client-side rounded corners aren't drawn |
 | Linux Mint 22.3 | Cinnamon | `.deb` | |
-| Ubuntu 26.04 | GNOME | `.deb` | |
+| Ubuntu 26.04 | GNOME | `.deb` / Flatpak | |
 | Fedora 44 Workstation | GNOME | source / `.rpm` | primary development platform |
-| Manjaro 26.0.4| GNOME | source | built without `LASTFM_PROXY_URL`, so the Last.fm features are disabled |
+| Manjaro 26.0.4 | GNOME | source / Flatpak | |
 
 Other desktops on these distributions (e.g. KDE Plasma on Fedora) are expected
 to work but haven't all been individually checked.
 
 ## Installation
+
+All packages are published on the [Releases page](https://github.com/amurpo/audra/releases);
+automated builds from the `dev` branch land in the
+[nightly prerelease](https://github.com/amurpo/audra/releases/tag/nightly).
+
+### Flatpak (any distribution)
+
+```bash
+flatpak install ./audra-*-x86_64.flatpak
+```
+
+The GNOME runtime is fetched from Flathub automatically if missing. The
+sandbox reads your home directory read-only to scan the music library.
 
 ### RPM (Fedora / RHEL)
 
@@ -116,6 +130,11 @@ sudo dnf install audra-*.rpm
 sudo apt install ./audra_*_amd64.deb
 ```
 
+### Windows
+
+Run `audra-<version>-windows-x64-setup.exe`. The installer bundles the whole
+GTK stack; no separate runtime is needed.
+
 ### From source
 
 ```bash
@@ -126,28 +145,12 @@ The binary will be at `target/release/audra`.
 
 On macOS (arm64), use `bash packaging/build-macos.sh` and `bash packaging/verify-macos-build.sh` to build and test; run with `bash packaging/run-macos.sh` so Homebrew GTK libraries are found.
 
-To build with Last.fm integration, export the proxy URL before building:
+No environment variables are needed; the build is the same one the released packages come from.
 
-```bash
-export LASTFM_PROXY_URL=https://your-proxy.example.com/lastfm
-cargo build --release
-```
-
-### Why a proxy instead of embedding the API key?
-
-Last.fm's API requires every request to be **signed** with an API secret — not just the login,
-but also every scrobble and now-playing update. The signature is an MD5 hash over the request
-parameters plus that secret. Embedding the secret in an open-source binary is equivalent to
-publishing it: anyone can extract it with `strings audra` and use your app's quota.
-
-The solution is a small BFF (Backend-for-Frontend) proxy that holds the secret server-side and
-signs requests on behalf of the client. The binary only needs to know the proxy's public URL.
-The user's **session key** (obtained after OAuth) is stored locally, which is safe: it
-authenticates the user to Last.fm but cannot be used to sign arbitrary API calls without the
-secret.
-
-Authentication uses the standard Last.fm OAuth flow: the user approves the app on the official
-Last.fm site and never types credentials into Audra.
+Last.fm authentication uses the standard flow: you approve Audra on Last.fm's own site and
+never type your password into the app. The resulting session key is stored locally and can be
+revoked at any time from your
+[Last.fm applications page](https://www.last.fm/settings/applications).
 
 ## Uninstalling
 
@@ -162,6 +165,13 @@ To also wipe all per-user data, delete these directories manually:
 rm -rf ~/.local/share/audra   # library database and downloaded covers
 rm -rf ~/.cache/audra         # media-controls thumbnail cache
 rm -rf ~/.config/audra        # bundled fonts and settings
+```
+
+The Flatpak keeps everything under its own sandbox prefix instead:
+
+```bash
+flatpak uninstall io.github.amurpo.audra
+rm -rf ~/.var/app/io.github.amurpo.audra   # all per-user data
 ```
 
 On Windows the uninstaller asks whether to keep or delete this data, and the

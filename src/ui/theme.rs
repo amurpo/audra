@@ -159,6 +159,43 @@ const CHROMA_MIN_S: f32 = 0.12;
 /// color variety that the aurora gradients differ on their own.
 const HUE_VARIED: f32 = 25.0 / 360.0;
 
+/// Upper bound on aurora gradient layers. Matches
+/// [`crate::ui::dominant_color::PALETTE_COLORS`] so a genuinely colorful cover
+/// can spend every extracted color on its own layer instead of throwing two
+/// away; flat covers still collapse to the synthesised three.
+const MAX_TINT_LAYERS: usize = 5;
+
+/// Euclidean RGB distance below which two palette entries read as the same
+/// tone. Stacking both would paint the same gradient twice — burning a layer
+/// and darkening that corner — instead of adding variety.
+const LAYER_MIN_DIST: f32 = 40.0;
+
+/// Straight Euclidean distance in RGB. Crude next to a perceptual metric, but
+/// this only ever answers "are these two the same tone?", where the error of
+/// plain RGB is far smaller than the threshold it is compared against.
+fn rgb_distance(a: (u8, u8, u8), b: (u8, u8, u8)) -> f32 {
+    let dr = a.0 as f32 - b.0 as f32;
+    let dg = a.1 as f32 - b.1 as f32;
+    let db = a.2 as f32 - b.2 as f32;
+    (dr * dr + dg * dg + db * db).sqrt()
+}
+
+/// Take the palette's colors in dominance order, skipping any that duplicate a
+/// tone already kept, up to [`MAX_TINT_LAYERS`]. Dominance order is preserved,
+/// so the first entry stays the cover's primary color.
+fn distinct_layers(palette: &[(u8, u8, u8)]) -> Vec<(u8, u8, u8)> {
+    let mut out: Vec<(u8, u8, u8)> = Vec::new();
+    for &c in palette {
+        if out.len() == MAX_TINT_LAYERS {
+            break;
+        }
+        if out.iter().all(|&k| rgb_distance(c, k) >= LAYER_MIN_DIST) {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Largest circular distance (in turns, 0..=0.5) between any pair of hues.
 fn hue_spread(hues: &[f32]) -> f32 {
     let mut max = 0.0_f32;
@@ -176,8 +213,9 @@ fn hue_spread(hues: &[f32]) -> f32 {
 /// background reads flat. Detect that and synthesise variation from the
 /// dominant color: analogous hue rotations (±24°) when the cover has real
 /// chroma, a lightness ramp when it is essentially grey. A palette that already
-/// spans distinct hues passes through untouched. Always returns three colors,
-/// most dominant first.
+/// spans distinct hues keeps its own colors, one layer per distinct tone (up to
+/// [`MAX_TINT_LAYERS`]), so a rich sleeve is not flattened to three. Returns
+/// between three and [`MAX_TINT_LAYERS`] colors, most dominant first.
 fn diversify_palette(palette: &[(u8, u8, u8)]) -> Vec<(u8, u8, u8)> {
     let base = palette[0];
     let hues: Vec<f32> = palette
@@ -188,7 +226,7 @@ fn diversify_palette(palette: &[(u8, u8, u8)]) -> Vec<(u8, u8, u8)> {
         })
         .collect();
     if hue_spread(&hues) >= HUE_VARIED {
-        let mut out: Vec<_> = palette.iter().take(3).copied().collect();
+        let mut out = distinct_layers(palette);
         while out.len() < 3 {
             out.push(base);
         }
@@ -243,6 +281,21 @@ const PLAYER_CONTROL_NEUTRAL_CSS: &str = "
 }
 ";
 
+/// Amberol's three diagonal angles, kept verbatim for the three-layer case so
+/// the common look does not shift.
+const AMBEROL_ANGLES: [u16; 3] = [127, 217, 336];
+
+/// Gradient angles for `n` layers: Amberol's trio at three, otherwise `n` angles
+/// spread evenly around the circle starting from the same 127°.
+fn layer_angles(n: usize) -> Vec<u16> {
+    if n == 3 {
+        return AMBEROL_ANGLES.to_vec();
+    }
+    (0..n)
+        .map(|i| ((AMBEROL_ANGLES[0] as usize + i * 360 / n) % 360) as u16)
+        .collect()
+}
+
 /// The multi-color "aurora" background is adapted from Amberol
 /// (GPL-3.0-or-later), © Emmanuele Bassi — specifically the stacked diagonal
 /// gradients in its `src/gtk/style.css`. Amberol paints one `linear-gradient`
@@ -266,14 +319,22 @@ fn dynamic_tint_css(palette: &[(u8, u8, u8)], mode: TintMode) -> String {
     // Opaque, dark-tinted base from the dominant color (Y=45). Everything else
     // is layered on top of this, so there is never real transparency.
     let (kr, kg, kb) = cap_luminance(boost_saturation(palette[0], 1.3), 45.0);
-    // One diagonal gradient per color, angles ~110° apart (Amberol's 127/217/336).
-    const ANGLES: [u16; 3] = [127, 217, 336];
+    // One diagonal gradient per color. Three layers keep Amberol's original
+    // angles; richer palettes spread their extra layers evenly around the circle
+    // from the same starting angle, so no two fade toward the same corner.
+    let angles = layer_angles(colors.len());
+    // Each layer is painted over the ones below it, so N layers at a fixed alpha
+    // would wash the background out as N grows. Solve for the per-layer alpha
+    // that keeps the stacked coverage equal to the original three-at-0.55
+    // (1 - 0.45^3), which lands at ~0.45 for four layers and ~0.37 for five.
+    let alpha = 1.0 - 0.45_f32.powf(3.0 / colors.len() as f32);
     let layers = colors
         .iter()
-        .enumerate()
-        .map(|(i, &(r, g, b))| {
-            let a = ANGLES[i];
-            format!("linear-gradient({a}deg, rgba({r},{g},{b},0.55), rgba({r},{g},{b},0) 70.71%)")
+        .zip(&angles)
+        .map(|(&(r, g, b), a)| {
+            format!(
+                "linear-gradient({a}deg, rgba({r},{g},{b},{alpha:.3}), rgba({r},{g},{b},0) 70.71%)"
+            )
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -525,6 +586,79 @@ mod tests {
     fn single_color_palette_is_padded() {
         let out = diversify_palette(&[(180, 60, 60)]);
         assert_eq!(out.len(), 3);
+    }
+
+    /// A colorful cover spends every distinct color on its own layer instead of
+    /// being truncated to three.
+    #[test]
+    fn rich_palette_keeps_all_distinct_layers() {
+        let p = vec![
+            (200, 40, 40),
+            (40, 200, 90),
+            (40, 90, 200),
+            (200, 190, 40),
+            (170, 40, 190),
+        ];
+        assert_eq!(diversify_palette(&p), p);
+    }
+
+    /// Near-duplicate entries are dropped rather than painting the same gradient
+    /// twice, and dominance order survives.
+    #[test]
+    fn duplicate_tones_collapse_to_one_layer() {
+        let p = vec![
+            (200, 40, 40),
+            (203, 43, 38), // same tone as the first
+            (40, 200, 90),
+            (40, 90, 200),
+        ];
+        let out = diversify_palette(&p);
+        assert_eq!(out, vec![(200, 40, 40), (40, 200, 90), (40, 90, 200)]);
+    }
+
+    /// Layers never exceed the cap even when every extracted color is distinct.
+    #[test]
+    fn layers_are_capped() {
+        let p = vec![
+            (200, 40, 40),
+            (40, 200, 90),
+            (40, 90, 200),
+            (200, 190, 40),
+            (170, 40, 190),
+            (40, 200, 200),
+            (240, 130, 20),
+        ];
+        assert_eq!(diversify_palette(&p).len(), MAX_TINT_LAYERS);
+    }
+
+    /// Angles stay unique per layer so no two gradients fade toward the same
+    /// corner, and the three-layer case still matches Amberol's.
+    #[test]
+    fn layer_angles_are_distinct() {
+        assert_eq!(layer_angles(3), AMBEROL_ANGLES.to_vec());
+        for n in 3..=MAX_TINT_LAYERS {
+            let a = layer_angles(n);
+            assert_eq!(a.len(), n);
+            let mut sorted = a.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted.len(), n, "duplicate angle for {n} layers: {a:?}");
+            assert!(a.iter().all(|&d| d < 360));
+        }
+    }
+
+    /// Stacked coverage stays put as layers are added: more layers must not
+    /// wash the window out.
+    #[test]
+    fn per_layer_alpha_preserves_stacked_coverage() {
+        let coverage = |n: usize| {
+            let alpha = 1.0 - 0.45_f32.powf(3.0 / n as f32);
+            1.0 - (1.0 - alpha).powi(n as i32)
+        };
+        let base = coverage(3);
+        for n in 3..=MAX_TINT_LAYERS {
+            assert!((coverage(n) - base).abs() < 1e-4, "coverage drifted at {n}");
+        }
     }
 
     /// A dark, narrow-gamut cover (etching-style sleeve) gets a visibly lighter

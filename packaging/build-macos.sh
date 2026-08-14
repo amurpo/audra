@@ -26,16 +26,6 @@ elif [ -d /usr/local/opt/gettext/bin ]; then
   export PATH="/usr/local/opt/gettext/bin:$PATH"
 fi
 
-if [ -z "${LASTFM_PROXY_URL:-}" ] && [ -f "$ROOT/.env" ]; then
-  set -a
-  # shellcheck source=/dev/null
-  source "$ROOT/.env"
-  set +a
-fi
-if [ -z "${LASTFM_PROXY_URL:-}" ]; then
-  echo "WARNING: LASTFM_PROXY_URL is not set — binary will be built without Last.fm scrobbling"
-fi
-
 echo "==> Building audra v$VER for $(uname -m)..."
 cargo build --release --manifest-path "$ROOT/Cargo.toml"
 

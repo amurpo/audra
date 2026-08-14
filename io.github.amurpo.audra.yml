@@ -6,6 +6,12 @@ sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
 command: audra
 
+# Keep translations inside the app ref. The default (true) moves them into a
+# separate .Locale extension ref, which `flatpak build-bundle` never includes —
+# a single-file bundle ships only the app ref, so the es catalog would be a
+# dangling symlink and the UI would silently fall back to English.
+separate-locales: false
+
 finish-args:
   - --share=network
   - --share=ipc
@@ -40,18 +46,6 @@ modules:
           /app/share/fonts/audra/InterVariable.ttf
       - mkdir -p /app/share/locale/es/LC_MESSAGES
       - msgfmt po/es.po -o /app/share/locale/es/LC_MESSAGES/audra.mo
-      - install -d /app/as-stage/app/share/metainfo
-          /app/as-stage/app/share/applications
-          /app/as-stage/app/share/icons/hicolor/scalable/apps
-      - cp /app/share/metainfo/io.github.amurpo.audra.metainfo.xml
-          /app/as-stage/app/share/metainfo/
-      - cp /app/share/applications/io.github.amurpo.audra.desktop
-          /app/as-stage/app/share/applications/
-      - cp /app/share/icons/hicolor/scalable/apps/io.github.amurpo.audra.svg
-          /app/as-stage/app/share/icons/hicolor/scalable/apps/
-      - appstreamcli compose --prefix=/app --origin=flatpak
-          --no-net --result-root=/app/share/swcatalog /app/as-stage
-      - rm -rf /app/as-stage
     sources:
       - type: git
         url: https://github.com/amurpo/audra.git

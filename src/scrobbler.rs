@@ -1,36 +1,102 @@
 use anyhow::Result;
 use reqwest::blocking::Client;
 use serde::Deserialize;
-use serde_json::json;
 
-const PROXY_URL: &str = crate::credentials::PROXY_URL;
+use crate::credentials::{API_KEY, API_SECRET};
+
+const API_ROOT: &str = "https://ws.audioscrobbler.com/2.0/";
+const AUTH_ROOT: &str = "https://www.last.fm/api/auth/";
 
 pub struct LastFmClient {
     session_key: Option<String>,
     client: Client,
 }
 
-#[derive(Deserialize)]
 pub struct AuthTokenResponse {
     pub token: String,
     pub auth_url: String,
 }
 
-#[derive(Deserialize)]
 pub struct AuthSessionResponse {
     pub session_key: String,
     pub username: String,
 }
 
-/// Extract the human-readable error message from a failed proxy response.
-/// Tries to parse `{"error": "..."}` JSON; falls back to the raw body.
-fn proxy_error(resp: reqwest::blocking::Response) -> anyhow::Error {
-    let text = resp.text().unwrap_or_default();
-    let msg = serde_json::from_str::<serde_json::Value>(&text)
-        .ok()
-        .and_then(|v| v.get("error")?.as_str().map(str::to_string))
-        .unwrap_or(text);
-    anyhow::anyhow!("{}", msg)
+#[derive(Deserialize)]
+struct TokenBody {
+    token: String,
+}
+
+#[derive(Deserialize)]
+struct SessionBody {
+    session: SessionInner,
+}
+
+#[derive(Deserialize)]
+struct SessionInner {
+    name: String,
+    key: String,
+}
+
+/// Build the `api_sig` Last.fm requires on every authenticated call: sort the
+/// parameters by name, concatenate `name` and value with no separators, append
+/// the shared secret, and MD5 the result.
+///
+/// `format` and `api_sig` itself are excluded by construction — they are only
+/// added afterwards, by `signed_params`.
+fn sign(params: &[(&str, String)]) -> String {
+    let mut sorted: Vec<&(&str, String)> = params.iter().collect();
+    sorted.sort_by_key(|(name, _)| *name);
+
+    let mut buf = String::new();
+    for (name, value) in sorted {
+        buf.push_str(name);
+        buf.push_str(value);
+    }
+    buf.push_str(API_SECRET);
+
+    format!("{:x}", md5::compute(buf.as_bytes()))
+}
+
+/// Sign `params` and append the signature plus `format=json`, giving the full
+/// parameter list to send.
+fn signed_params(mut params: Vec<(&'static str, String)>) -> Vec<(&'static str, String)> {
+    let sig = sign(&params);
+    params.push(("api_sig", sig));
+    params.push(("format", "json".to_string()));
+    params
+}
+
+/// Turn a Last.fm reply into an error when it carries one.
+///
+/// The API reports failures as `{"error": 14, "message": "..."}`, and does not
+/// always pair them with a non-2xx status, so the body is what decides.
+fn check_api_error(body: &str) -> Result<()> {
+    #[derive(Deserialize)]
+    struct ApiError {
+        // Required so that a successful reply carrying a `message` field of its
+        // own is never mistaken for a failure.
+        #[allow(dead_code)]
+        error: i64,
+        message: String,
+    }
+
+    if let Ok(e) = serde_json::from_str::<ApiError>(body) {
+        anyhow::bail!("{}", e.message);
+    }
+    Ok(())
+}
+
+/// Read a response body, failing on transport errors, HTTP errors and the
+/// API's own in-band error replies alike.
+fn read_body(resp: reqwest::blocking::Response) -> Result<String> {
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+    check_api_error(&body)?;
+    if !status.is_success() {
+        anyhow::bail!("Last.fm HTTP {}", status);
+    }
+    Ok(body)
 }
 
 impl LastFmClient {
@@ -47,7 +113,7 @@ impl LastFmClient {
     }
 
     pub fn is_configured() -> bool {
-        !PROXY_URL.is_empty()
+        !API_KEY.is_empty() && !API_SECRET.is_empty()
     }
 
     pub fn session_key(&self) -> Option<&str> {
@@ -55,68 +121,93 @@ impl LastFmClient {
     }
 
     pub fn get_auth_token() -> Result<AuthTokenResponse> {
-        let proxy = PROXY_URL.trim_end_matches('/');
-        let resp = Client::new().get(format!("{proxy}/auth/token")).send()?;
-        if !resp.status().is_success() {
-            return Err(proxy_error(resp));
-        }
-        Ok(resp.json()?)
+        let params = signed_params(vec![
+            ("api_key", API_KEY.to_string()),
+            ("method", "auth.getToken".to_string()),
+        ]);
+
+        let resp = Client::new().get(API_ROOT).query(&params).send()?;
+        let body = read_body(resp)?;
+        let token = serde_json::from_str::<TokenBody>(&body)?.token;
+
+        // The user opens this in a browser to approve the token; only then does
+        // auth.getSession trade it for a session key.
+        let auth_url = format!("{AUTH_ROOT}?api_key={API_KEY}&token={token}");
+        Ok(AuthTokenResponse { token, auth_url })
     }
 
     pub fn get_session(token: &str) -> Result<AuthSessionResponse> {
-        let proxy = PROXY_URL.trim_end_matches('/');
-        let resp = Client::new()
-            .get(format!("{proxy}/auth/session"))
-            .query(&[("token", token)])
-            .send()?;
-        if !resp.status().is_success() {
-            return Err(proxy_error(resp));
-        }
-        Ok(resp.json()?)
+        let params = signed_params(vec![
+            ("api_key", API_KEY.to_string()),
+            ("method", "auth.getSession".to_string()),
+            ("token", token.to_string()),
+        ]);
+
+        let resp = Client::new().get(API_ROOT).query(&params).send()?;
+        let body = read_body(resp)?;
+        let session = serde_json::from_str::<SessionBody>(&body)?.session;
+
+        Ok(AuthSessionResponse {
+            session_key: session.key,
+            username: session.name,
+        })
     }
 
-    pub fn scrobble(&self, artist: &str, track: &str, album: &str, timestamp: i64) -> Result<()> {
+    /// Parameters shared by scrobble and now-playing: the track itself plus the
+    /// credentials. `album` is dropped when empty — Last.fm rejects blank
+    /// optional fields rather than ignoring them.
+    fn track_params(
+        &self,
+        method: &'static str,
+        artist: &str,
+        track: &str,
+        album: &str,
+    ) -> Result<Vec<(&'static str, String)>> {
         let sk = self
             .session_key
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("sin sesión Last.fm"))?;
 
-        let proxy = PROXY_URL.trim_end_matches('/');
-        let body = json!({
-            "sk": sk,
-            "artist": artist,
-            "track": track,
-            "album": album,
-            "timestamp": timestamp,
-        });
+        if artist.is_empty() || track.is_empty() {
+            anyhow::bail!("el track no tiene artista o título");
+        }
+
+        let mut params = vec![
+            ("api_key", API_KEY.to_string()),
+            ("artist", artist.to_string()),
+            ("method", method.to_string()),
+            ("sk", sk.to_string()),
+            ("track", track.to_string()),
+        ];
+        if !album.is_empty() {
+            params.push(("album", album.to_string()));
+        }
+        Ok(params)
+    }
+
+    pub fn scrobble(&self, artist: &str, track: &str, album: &str, timestamp: i64) -> Result<()> {
+        let mut params = self.track_params("track.scrobble", artist, track, album)?;
+        params.push(("timestamp", timestamp.to_string()));
+
         let resp = self
             .client
-            .post(format!("{proxy}/scrobble"))
-            .json(&body)
+            .post(API_ROOT)
+            .form(&signed_params(params))
             .send()?;
-        if !resp.status().is_success() {
-            anyhow::bail!("Last.fm scrobble error: {}", resp.status());
-        }
+        read_body(resp)?;
         Ok(())
     }
 
     pub fn update_now_playing(&self, artist: &str, track: &str, album: &str) {
-        let sk = match self.session_key.as_deref() {
-            Some(s) => s.to_string(),
-            None => return,
+        let params = match self.track_params("track.updateNowPlaying", artist, track, album) {
+            Ok(p) => p,
+            Err(_) => return,
         };
 
-        let proxy = PROXY_URL.trim_end_matches('/');
-        let body = json!({
-            "sk": sk,
-            "artist": artist,
-            "track": track,
-            "album": album,
-        });
         let _ = self
             .client
-            .post(format!("{proxy}/nowplaying"))
-            .json(&body)
+            .post(API_ROOT)
+            .form(&signed_params(params))
             .send();
     }
 
@@ -171,9 +262,59 @@ mod tests {
     }
 
     #[test]
-    fn is_configured_reflects_proxy_url_constant() {
-        // Mirrors the build-time credential: empty when LASTFM_PROXY_URL is unset.
-        assert_eq!(LastFmClient::is_configured(), !PROXY_URL.is_empty());
+    fn is_configured_reflects_the_embedded_credentials() {
+        assert_eq!(
+            LastFmClient::is_configured(),
+            !API_KEY.is_empty() && !API_SECRET.is_empty()
+        );
+    }
+
+    #[test]
+    fn signature_sorts_parameters_by_name() {
+        // Given out of order, the digest must still be the one for the
+        // alphabetical concatenation.
+        let sig = sign(&[
+            ("method", "auth.getToken".to_string()),
+            ("api_key", "KEY".to_string()),
+        ]);
+        let expected = format!(
+            "{:x}",
+            md5::compute(format!("api_keyKEYmethodauth.getToken{API_SECRET}").as_bytes())
+        );
+        assert_eq!(sig, expected);
+    }
+
+    #[test]
+    fn signed_params_appends_signature_and_format_without_signing_them() {
+        let base = vec![
+            ("api_key", "KEY".to_string()),
+            ("method", "auth.getToken".to_string()),
+        ];
+        let full = signed_params(base.clone());
+
+        let sig = full
+            .iter()
+            .find(|(k, _)| *k == "api_sig")
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        // Signing the base alone reproduces it, so neither api_sig nor format
+        // was part of the signed input.
+        assert_eq!(sig, sign(&base));
+        assert!(full.iter().any(|(k, v)| *k == "format" && v == "json"));
+    }
+
+    #[test]
+    fn track_params_omits_an_empty_album() {
+        let c = LastFmClient::new().with_session("sk");
+        let p = c
+            .track_params("track.scrobble", "Artist", "Title", "")
+            .unwrap();
+        assert!(!p.iter().any(|(k, _)| *k == "album"));
+
+        let p = c
+            .track_params("track.scrobble", "Artist", "Title", "Album")
+            .unwrap();
+        assert!(p.iter().any(|(k, v)| *k == "album" && v == "Album"));
     }
 
     #[test]
@@ -181,6 +322,13 @@ mod tests {
         let c = LastFmClient::new();
         let err = c.scrobble("A", "T", "Al", 0).unwrap_err();
         assert!(err.to_string().contains("sin sesión"));
+    }
+
+    #[test]
+    fn scrobble_without_artist_or_title_errors_before_any_network_call() {
+        let c = LastFmClient::new().with_session("sk");
+        let err = c.scrobble("", "T", "Al", 0).unwrap_err();
+        assert!(err.to_string().contains("artista"));
     }
 
     #[test]
@@ -200,18 +348,28 @@ mod tests {
     }
 
     #[test]
-    fn auth_token_response_deserializes() {
-        let r: AuthTokenResponse =
-            serde_json::from_str(r#"{"token":"tok","auth_url":"https://x/y"}"#).unwrap();
-        assert_eq!(r.token, "tok");
-        assert_eq!(r.auth_url, "https://x/y");
+    fn api_errors_are_reported_with_their_message() {
+        let err = check_api_error(r#"{"error":14,"message":"Unauthorized Token"}"#).unwrap_err();
+        assert_eq!(err.to_string(), "Unauthorized Token");
     }
 
     #[test]
-    fn auth_session_response_deserializes() {
-        let r: AuthSessionResponse =
-            serde_json::from_str(r#"{"session_key":"sk","username":"bob"}"#).unwrap();
-        assert_eq!(r.session_key, "sk");
-        assert_eq!(r.username, "bob");
+    fn a_successful_body_is_not_treated_as_an_error() {
+        assert!(check_api_error(r#"{"token":"tok"}"#).is_ok());
+    }
+
+    #[test]
+    fn token_body_deserializes() {
+        let b: TokenBody = serde_json::from_str(r#"{"token":"tok"}"#).unwrap();
+        assert_eq!(b.token, "tok");
+    }
+
+    #[test]
+    fn session_body_deserializes() {
+        let b: SessionBody =
+            serde_json::from_str(r#"{"session":{"name":"bob","key":"sk","subscriber":0}}"#)
+                .unwrap();
+        assert_eq!(b.session.key, "sk");
+        assert_eq!(b.session.name, "bob");
     }
 }

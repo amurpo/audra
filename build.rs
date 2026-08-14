@@ -1,6 +1,5 @@
 use std::env;
 use std::fs;
-use std::path::Path;
 use std::process::Command;
 
 fn compile_po(lang: &str, out_dir: &str) {
@@ -26,7 +25,6 @@ fn compile_po(lang: &str, out_dir: &str) {
 
 fn main() {
     println!("cargo:rustc-link-lib=fontconfig");
-    println!("cargo:rerun-if-env-changed=LASTFM_PROXY_URL");
 
     // The bundled Remix SVGs are only embedded on macOS (see src/ui/icons.rs).
     if env::var("CARGO_CFG_TARGET_OS").unwrap() == "macos" {
@@ -39,13 +37,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LOCALEDIR");
     let locale_dir = env::var("LOCALEDIR").unwrap_or_else(|_| format!("{}/locale", out_dir));
     println!("cargo:rustc-env=AUDRA_LOCALE_DIR={}", locale_dir);
-
-    let proxy_url = env::var("LASTFM_PROXY_URL").unwrap_or_default();
-    // {:?} emits a Rust string literal with quotes and backslashes escaped, so
-    // a hostile LASTFM_PROXY_URL containing `"` cannot break out of the literal
-    // or inject extra items into the generated module.
-    let content = format!("pub const PROXY_URL: &str = {:?};\n", proxy_url);
-    fs::write(Path::new(&out_dir).join("credentials_gen.rs"), content).unwrap();
 
     if env::var("CARGO_CFG_TARGET_OS").unwrap() == "windows" {
         println!("cargo:rustc-link-arg=-mwindows");
