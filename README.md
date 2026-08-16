@@ -12,15 +12,18 @@ Native music player for Linux and Windows, built with GTK4 and libadwaita.
 
 - Music library with albums, artists and songs views
 - Hierarchical navigation: artist → album → songs
+- Search from the header bar, filtering whichever view is open
 - MP3, FLAC, OGG and WAV support
-- Shuffle with fixed random order (each song plays once) and track repeat
+- Shuffle with fixed random order (each song plays once) and repeat-all, which
+  wraps the queue back to its start instead of stopping at the end
 - ReplayGain volume normalization (track and album modes)
 - Now-playing highlight with a per-row play/pause control in every track list
 - Dynamic background tinted from the album cover, with Off / Partial / Full modes (adapted from Amberol)
 - MPRIS2 media controls on Linux (play/pause/skip from the desktop shell, lock screen, etc.)
-- Automatic scrobbling and now-playing updates to [Last.fm](https://www.last.fm) with OAuth authentication
+- Automatic scrobbling and now-playing updates to [Last.fm](https://www.last.fm), authorized on Last.fm's own site rather than by typing your password into the app
 - Artist art and album covers downloaded automatically; right-click any album or artist to pick a custom image or search for one
-- Automatic album and artist grouping that handles inconsistent tags — accent normalization is still partial
+- Automatic album and artist grouping that handles inconsistent tags; accents are matched as written, since folding them would need a Unicode dependency the build does without
+- Multi-disc releases are split into "Disc N" sections, and only when every track says which disc it belongs to — a couple of stray tags don't section an album
 - Interface in English and Spanish
 - Native interface following GNOME design guidelines
 
@@ -162,9 +165,9 @@ for a future reinstall.
 To also wipe all per-user data, delete these directories manually:
 
 ```bash
-rm -rf ~/.local/share/audra   # library database and downloaded covers
+rm -rf ~/.local/share/audra   # library database (settings included) and downloaded covers
 rm -rf ~/.cache/audra         # media-controls thumbnail cache
-rm -rf ~/.config/audra        # bundled fonts and settings
+rm -rf ~/.config/audra        # extracted copy of the bundled font
 ```
 
 The Flatpak keeps everything under its own sandbox prefix instead:
