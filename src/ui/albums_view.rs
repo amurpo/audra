@@ -349,7 +349,9 @@ impl AlbumsView {
             return;
         }
         let open = self.open_detail.borrow();
-        let Some((key, list)) = open.as_ref() else { return };
+        let Some((key, list)) = open.as_ref() else {
+            return;
+        };
         if key.as_str() != tag.as_str() {
             return;
         }

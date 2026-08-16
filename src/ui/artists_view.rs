@@ -98,8 +98,7 @@ impl ArtistsView {
         let on_play: PlayCb = Rc::new(RefCell::new(None));
         let current_filter = Rc::new(RefCell::new(String::new()));
         let open_detail: Rc<RefCell<Option<OpenSongList>>> = Rc::new(RefCell::new(None));
-        let open_artist_detail: Rc<RefCell<Option<OpenArtistDetail>>> =
-            Rc::new(RefCell::new(None));
+        let open_artist_detail: Rc<RefCell<Option<OpenArtistDetail>>> = Rc::new(RefCell::new(None));
 
         // --- setup: build one empty, reusable artist card + its right-click menu ---
         {
@@ -626,7 +625,10 @@ fn albums_for_artist(name: &str, all_albums: &[Album], db: &Arc<Mutex<Database>>
         // album shows its cover immediately instead of only after revisiting.
         for track in &album.tracks {
             if let Some(bytes) = crate::library::art::read_cover_art(&track.path) {
-                let _ = db.lock().unwrap().set_cover(&album.artist, &album.name, &bytes);
+                let _ = db
+                    .lock()
+                    .unwrap()
+                    .set_cover(&album.artist, &album.name, &bytes);
                 album.cover = Some(bytes);
                 break;
             }
@@ -914,7 +916,11 @@ mod tests {
     fn dominant_performer_does_not_absorb_another_artists_track() {
         // Album.artist ("Composer") is the dedup-stamped dominant performer, but
         // the third track is credited to a different band that shares the album.
-        let albums = vec![alb("OST", "Composer", &["Composer", "Composer", "Guest Band"])];
+        let albums = vec![alb(
+            "OST",
+            "Composer",
+            &["Composer", "Composer", "Guest Band"],
+        )];
 
         let composer = match_artist_albums("Composer", &albums);
         assert_eq!(composer.len(), 1);
@@ -926,6 +932,10 @@ mod tests {
 
         let guest = match_artist_albums("Guest Band", &albums);
         assert_eq!(guest.len(), 1);
-        assert_eq!(guest[0].tracks.len(), 1, "the guest sees only their own track");
+        assert_eq!(
+            guest[0].tracks.len(),
+            1,
+            "the guest sees only their own track"
+        );
     }
 }

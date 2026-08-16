@@ -185,8 +185,9 @@ pub fn show_lastfm_dialog(
         pending_token,
         move |_| {
             if !LastFmClient::is_configured() {
-                auth_error_label
-                    .set_text(&gettext("This build has no Last.fm credentials compiled in."));
+                auth_error_label.set_text(&gettext(
+                    "This build has no Last.fm credentials compiled in.",
+                ));
                 return;
             }
             btn_authorize.set_sensitive(false);
