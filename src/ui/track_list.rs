@@ -123,7 +123,6 @@ impl TrackList {
             let now_playing_setup = Rc::clone(&now_playing);
             let displayed_setup = Rc::clone(&displayed);
             let on_activate_setup = Rc::clone(&on_activate);
-            let multi_disc_setup = Rc::clone(&multi_disc);
             factory.connect_setup(move |_, item| {
                 let item = item.downcast_ref::<ListItem>().unwrap();
 
@@ -221,22 +220,13 @@ impl TrackList {
                     let item_weak = item.downgrade();
                     let np = Rc::clone(&now_playing_setup);
                     let disp = Rc::clone(&displayed_setup);
-                    let multi = Rc::clone(&multi_disc_setup);
                     motion.connect_enter(move |_, _, _| {
                         let (Some(row), Some(item)) = (row_weak.upgrade(), item_weak.upgrade())
                         else {
                             return;
                         };
                         row.add_css_class("row-hover");
-                        let per_disc = cfg.show_disc_headers && multi.get();
-                        repaint_slot_from_item(
-                            &row,
-                            &item,
-                            &np,
-                            &disp,
-                            cfg.show_track_number,
-                            per_disc,
-                        );
+                        repaint_slot_from_item(&row, &item, &np, &disp, cfg.show_track_number);
                     });
                 }
                 {
@@ -244,22 +234,13 @@ impl TrackList {
                     let item_weak = item.downgrade();
                     let np = Rc::clone(&now_playing_setup);
                     let disp = Rc::clone(&displayed_setup);
-                    let multi = Rc::clone(&multi_disc_setup);
                     motion.connect_leave(move |_| {
                         let (Some(row), Some(item)) = (row_weak.upgrade(), item_weak.upgrade())
                         else {
                             return;
                         };
                         row.remove_css_class("row-hover");
-                        let per_disc = cfg.show_disc_headers && multi.get();
-                        repaint_slot_from_item(
-                            &row,
-                            &item,
-                            &np,
-                            &disp,
-                            cfg.show_track_number,
-                            per_disc,
-                        );
+                        repaint_slot_from_item(&row, &item, &np, &disp, cfg.show_track_number);
                     });
                 }
                 row.add_controller(motion);
@@ -320,13 +301,12 @@ impl TrackList {
                     {
                         let starts_disc = pos == 0
                             || disp.get(pos - 1).map(|p| p.disc_num) != Some(track.disc_num);
-                        let show = per_disc && starts_disc;
-                        if show {
-                            header.set_text(&format!(
-                                "{} {}",
-                                gettext("Disc"),
-                                track.disc_num.unwrap_or(1)
-                            ));
+                        // A header names a disc the file itself declares; an
+                        // untagged track heads no section rather than a made-up
+                        // "Disc 1".
+                        let show = per_disc && starts_disc && track.disc_num.is_some();
+                        if let Some(disc) = track.disc_num.filter(|_| show) {
+                            header.set_text(&format!("{} {}", gettext("Disc"), disc));
                         }
                         header.set_visible(show);
                     }
@@ -363,7 +343,7 @@ impl TrackList {
                     &now_playing_ref,
                     &track.path,
                     cfg.show_track_number,
-                    display_no(track, pos, per_disc),
+                    track.track_num,
                 );
             });
         }
@@ -504,13 +484,11 @@ impl TrackList {
             let lv_weak = list_view.downgrade();
             let displayed_c = Rc::clone(&displayed);
             let np_c = Rc::clone(&now_playing);
-            let multi_c = Rc::clone(&multi_disc);
             now_playing.subscribe(move |_path| {
                 let Some(lv) = lv_weak.upgrade() else {
                     return false;
                 };
-                let per_disc = cfg.show_disc_headers && multi_c.get();
-                repaint_now_playing(&lv, &displayed_c, &np_c, cfg.show_track_number, per_disc);
+                repaint_now_playing(&lv, &displayed_c, &np_c, cfg.show_track_number);
                 true
             });
         }
@@ -564,9 +542,9 @@ impl TrackList {
         };
         let n = self.model.n_items();
         let additions: Vec<&str> = displayed.iter().map(|_| "").collect();
-        let discs: std::collections::HashSet<i64> =
-            displayed.iter().map(|t| t.disc_num.unwrap_or(1)).collect();
-        self.multi_disc.set(discs.len() > 1);
+        // Same gate the album ordering uses, so sections and order agree.
+        self.multi_disc
+            .set(crate::library::dedup::is_multi_disc(&displayed));
         *self.displayed.borrow_mut() = displayed;
         self.model.splice(0, n, &additions);
         self.refresh_count();
@@ -599,17 +577,6 @@ fn track_row_of(child: &gtk4::Widget) -> Option<GtkBox> {
         .filter(|r| r.has_css_class("audra-track-row"))
 }
 
-/// The number painted in a row's left slot: the track's own number from its
-/// tag, falling back to the row position only when the tag carries none.
-/// Multi-disc releases still read 1, 2, 3… under each "Disc N" header because
-/// their tags number per disc; single-disc albums show their real tag numbers
-/// too, so a partial album reads 6, 7, 8… rather than a misleading 1, 2, 3…
-/// (`per_disc` no longer changes the number — it stays a param only because the
-/// disc-header logic shares these call sites).
-fn display_no(track: &Track, pos: usize, _per_disc: bool) -> usize {
-    track.track_num.map(|n| n as usize).unwrap_or(pos + 1)
-}
-
 // Listener cleanup is automatic: when the list widget is destroyed (page
 // popped, view rebuilt) its WeakRef stops upgrading and the listener gets
 // removed on the next publish — no explicit unsubscribe needed.
@@ -629,7 +596,6 @@ fn repaint_now_playing(
     displayed: &RefCell<Vec<Track>>,
     np: &NowPlaying,
     show_num: bool,
-    per_disc: bool,
 ) {
     let disp = displayed.borrow();
     let mut child = list_view.first_child();
@@ -645,13 +611,7 @@ fn repaint_now_playing(
         };
         let pos = unsafe { *pos.as_ref() };
         if let Some(track) = disp.get(pos) {
-            paint_slot(
-                &row,
-                np,
-                &track.path,
-                show_num,
-                display_no(track, pos, per_disc),
-            );
+            paint_slot(&row, np, &track.path, show_num, track.track_num);
         }
     }
 }
@@ -663,7 +623,14 @@ fn repaint_now_playing(
 ///   ▶ while paused), plus the `playing` class for the row highlight;
 /// - **hovered, not active** → ▶ icon (click starts the track);
 /// - **otherwise** → the track number (album view) or nothing (Songs view).
-fn paint_slot(row: &GtkBox, np: &NowPlaying, path: &str, show_num: bool, track_no: usize) {
+///
+/// `track_no` is the tag's number verbatim, so `None` paints an empty slot: a
+/// file with no track number gets none on screen rather than one derived from
+/// where its row happens to sit. Row positions only ever agreed with the tags
+/// on a complete, fully tagged album; on a partial one — an album the artist
+/// view sliced down to one performer's tracks, or a folder ripped without
+/// numbers — they invented a sequence that contradicted the file.
+fn paint_slot(row: &GtkBox, np: &NowPlaying, path: &str, show_num: bool, track_no: Option<i64>) {
     let Some(slot) = row.first_child().and_downcast::<Overlay>() else {
         return;
     };
@@ -703,10 +670,9 @@ fn paint_slot(row: &GtkBox, np: &NowPlaying, path: &str, show_num: bool, track_n
             num_lbl.set_visible(false);
             icon_btn.set_visible(true);
         } else {
-            let num_text = if show_num {
-                track_no.to_string()
-            } else {
-                String::new()
+            let num_text = match track_no {
+                Some(n) if show_num => n.to_string(),
+                _ => String::new(),
             };
             num_lbl.set_text(&num_text);
             num_lbl.set_visible(true);
@@ -723,7 +689,6 @@ fn repaint_slot_from_item(
     np: &NowPlaying,
     displayed: &RefCell<Vec<Track>>,
     show_num: bool,
-    per_disc: bool,
 ) {
     let pos = item.position();
     if pos == gtk4::INVALID_LIST_POSITION {
@@ -731,13 +696,7 @@ fn repaint_slot_from_item(
     }
     let disp = displayed.borrow();
     if let Some(track) = disp.get(pos as usize) {
-        paint_slot(
-            row,
-            np,
-            &track.path,
-            show_num,
-            display_no(track, pos as usize, per_disc),
-        );
+        paint_slot(row, np, &track.path, show_num, track.track_num);
     }
 }
 
