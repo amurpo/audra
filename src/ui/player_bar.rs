@@ -18,6 +18,21 @@ const CTRL_ICON_SIZE: i32 = 20;
 // exaggerated the play triangle's optical off-center.
 const PLAY_ICON_SIZE: i32 = 16;
 
+/// Hovering a label that the bar had to cut short spells out the whole text.
+/// The tooltip stays away when everything already fits — no point echoing a
+/// title that is fully readable.
+fn tooltip_when_ellipsized(label: &Label) {
+    label.set_has_tooltip(true);
+    label.connect_query_tooltip(|lbl, _x, _y, _keyboard, tooltip| {
+        if lbl.layout().is_ellipsized() {
+            tooltip.set_text(Some(lbl.text().as_str()));
+            true
+        } else {
+            false
+        }
+    });
+}
+
 pub struct PlayerBar {
     pub root: Box,
     pub btn_prev: Button,
@@ -137,12 +152,14 @@ impl PlayerBar {
         lbl_title.add_css_class("audra-bar-title");
         lbl_title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         lbl_title.set_max_width_chars(40);
+        tooltip_when_ellipsized(&lbl_title);
 
         let lbl_artist = Label::new(Some(""));
         lbl_artist.add_css_class("dim-label");
         lbl_artist.add_css_class("audra-bar-artist");
         lbl_artist.set_ellipsize(gtk4::pango::EllipsizeMode::End);
         lbl_artist.set_max_width_chars(40);
+        tooltip_when_ellipsized(&lbl_artist);
 
         info.append(&lbl_title);
         info.append(&lbl_artist);
