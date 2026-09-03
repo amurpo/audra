@@ -6,7 +6,7 @@ use crate::ui::image_apply::{apply_image, ImageTarget};
 use crate::ui::image_loader::{self, FetchOutcome, ImagePipelineConfig};
 use crate::ui::now_playing::NowPlaying;
 use crate::ui::track_list::TrackList;
-use crate::ui::widgets::{content_clamp, page_title_row, play_all_button};
+use crate::ui::widgets::{fluid_grid_clamp, page_title_row, play_all_button};
 use adw::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{
@@ -191,9 +191,15 @@ impl ArtistsView {
         // (see style.css). `audra-artist-grid`: this grid's own spacing + hover.
         grid.add_css_class("audra-grid");
         grid.add_css_class("audra-artist-grid");
-        // Same packing range as the old FlowBox (2–8 columns).
+        // The old FlowBox capped out at 8 columns, which was plenty for a
+        // clamp that never grew past 880 px. Now that the clamp follows the
+        // window, that cap would stretch eight columns across an ultrawide and
+        // leave the avatars swimming, so it is raised to match the album grid.
+        // Unlike that grid the count is left to GTK: an artist card's natural
+        // width IS its pitch, so pinning a count computed from a slightly
+        // different width could overflow the row by a pixel.
         grid.set_min_columns(2);
-        grid.set_max_columns(8);
+        grid.set_max_columns(16);
         grid.set_single_click_activate(true);
 
         // GridView implements GtkScrollable, so — exactly like the Albums grid and
@@ -208,9 +214,9 @@ impl ArtistsView {
         scroll.set_vexpand(true);
         scroll.set_child(Some(&grid));
 
-        // Same Clamp parameters as TrackList / AlbumsView so all surfaces share
-        // the same useful width.
-        let clamp = content_clamp();
+        // Same fluid width as the Albums grid, so switching tabs doesn't move
+        // the content column.
+        let clamp = fluid_grid_clamp();
         clamp.set_vexpand(true);
         clamp.set_child(Some(&scroll));
 
@@ -667,7 +673,7 @@ fn make_artist_detail_page(
     flow.set_margin_start(4);
     flow.set_margin_end(4);
     flow.set_min_children_per_line(2);
-    flow.set_max_children_per_line(12);
+    flow.set_max_children_per_line(16);
     // Anchor cards top-left like the album/artist GridViews: a homogeneous
     // FlowBox otherwise stretches its few present columns across the full width,
     // so a handful of albums look spread out and centered instead of packed left.
@@ -756,19 +762,20 @@ fn make_artist_detail_page(
         });
     }
 
-    // One Clamp for the action row, another for the grid. Both come from the
-    // shared helper so the right edge of the "Play all" button lines up with
-    // the right edge of the grid below.
-    let action_clamp = content_clamp();
+    // One Clamp for the action row, another for the grid. All three clamps on
+    // this page (title, action row, album grid) come from the same helper, so
+    // they track the window together — if one of them stayed fixed the title
+    // would drift out of line with the covers underneath it.
+    let action_clamp = fluid_grid_clamp();
     action_clamp.set_child(Some(&action_bar));
 
-    let grid_clamp = content_clamp();
+    let grid_clamp = fluid_grid_clamp();
     grid_clamp.set_child(Some(&flow));
 
     // Section header with back arrow inline — same helper, same look as
     // album-detail.
     let title_row = page_title_row(artist_name, true);
-    let title_clamp = content_clamp();
+    let title_clamp = fluid_grid_clamp();
     title_clamp.set_child(Some(&title_row));
 
     let content = GtkBox::new(Orientation::Vertical, 0);

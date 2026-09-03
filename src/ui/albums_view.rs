@@ -4,7 +4,7 @@ use crate::library::{Album, Track};
 use crate::ui::image_loader::{self, FetchOutcome, ImagePipelineConfig};
 use crate::ui::now_playing::NowPlaying;
 use crate::ui::track_list::{TrackList, TrackListConfig};
-use crate::ui::widgets::{content_clamp, page_title_row};
+use crate::ui::widgets::{bind_album_columns, fluid_grid_clamp, fluid_list_clamp, page_title_row};
 use adw::prelude::*;
 use gtk4::prelude::*;
 use gtk4::{
@@ -228,12 +228,16 @@ impl AlbumsView {
         scroll.set_vexpand(true);
         scroll.set_child(Some(&grid));
 
-        // Same Clamp parameters as TrackList — keeps grids and lists aligned to
-        // the same useful width so the "Play all" button stays put when
-        // navigating between Songs / Albums / Artists detail pages.
-        let clamp = content_clamp();
+        // Fluid width: the clamp tracks the window (70 %, never below the old
+        // fixed 880) instead of holding one hardcoded column, so a maximized or
+        // fullscreen window fills out instead of leaving a narrow strip in the
+        // middle. The width is quantized to whole album columns and the grid is
+        // pinned to that same count, which is what keeps the gutter between
+        // covers at 44 px rather than letting the leftover stretch it.
+        let clamp = fluid_grid_clamp();
         clamp.set_vexpand(true);
         clamp.set_child(Some(&scroll));
+        bind_album_columns(&grid);
 
         let nav = adw::NavigationView::new();
         let root_page = adw::NavigationPage::new(&clamp, &gettext("Albums"));
@@ -651,7 +655,9 @@ pub fn make_album_detail_page(
     // page has the same vertical layout as the Songs view. The
     // NavigationPage still carries the title for accessibility / breadcrumbs.
     let title_row = page_title_row(&album.name, true);
-    let title_clamp = content_clamp();
+    // List family: this page is a track list, so its title anchors to the list
+    // width, not to the (wider) album grid the user came from.
+    let title_clamp = fluid_list_clamp();
     title_clamp.set_child(Some(&title_row));
 
     let content = gtk4::Box::new(gtk4::Orientation::Vertical, 0);

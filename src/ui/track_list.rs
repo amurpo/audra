@@ -12,7 +12,7 @@
 //! The "now playing" indicator reacts through the [`NowPlaying`] bus — no
 //! polling timers, no per-detail `glib::timeout_add_local`.
 //!
-//! Width: the whole list is wrapped in `adw::Clamp` (max 760 px) so on wide
+//! Width: the whole list is wrapped in a fluid `adw::Clamp` so on wide
 //! monitors it doesn't look like a GNOME-Music-style spreadsheet.
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -27,7 +27,7 @@ use crate::i18n::{gettext, ngettext};
 use crate::library::Track;
 use crate::ui::icons::{self, Icon};
 use crate::ui::now_playing::NowPlaying;
-use crate::ui::widgets::{content_clamp, play_all_button};
+use crate::ui::widgets::{fluid_list_clamp, play_all_button};
 
 /// Size (px) of the per-row play/pause icon that stands in for the track
 /// number while a row is active or hovered.
@@ -388,8 +388,11 @@ impl TrackList {
         card.append(&scroll_overlay);
 
         // Clamp keeps the list from spreading across the whole window on wide
-        // monitors — the "GNOME Music tabla ancha" look we want to avoid.
-        let clamp = content_clamp();
+        // monitors — the "GNOME Music tabla ancha" look we want to avoid. It
+        // follows the window like the grids do, but stops at the list ceiling:
+        // a row whose title and duration sit a screen apart stops reading as
+        // one row.
+        let clamp = fluid_list_clamp();
         clamp.set_child(Some(&card));
 
         let outer = GtkBox::new(Orientation::Vertical, 0);
@@ -433,7 +436,7 @@ impl TrackList {
             action_bar.append(&spacer);
             action_bar.append(&btn);
 
-            let action_clamp = content_clamp();
+            let action_clamp = fluid_list_clamp();
             action_clamp.set_child(Some(&action_bar));
             outer.append(&action_clamp);
 
