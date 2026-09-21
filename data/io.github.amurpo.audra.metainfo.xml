@@ -51,6 +51,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.2.9" date="2026-09-21">
+      <description>
+        <p>The content column now scales with the window instead of staying pinned at 880 px, so album and artist grids fill wide and fullscreen windows while keeping the same spacing between covers. A title or artist clipped in the player bar shows its full text on hover. Albums only split into disc sections when every track declares its disc, and each row shows the track number from its own tag. Also includes a TLS security fix in the networking stack.</p>
+      </description>
+    </release>
     <release version="0.2.8" date="2026-08-13">
       <description>
         <p>Colorful sleeves now drive a richer dynamic background: the palette is sampled far more finely and up to five distinct tones are layered instead of three, so varied artwork no longer comes out muddy. Fixes an artist's album page showing tracks credited to another performer, and Last.fm scrobbling now works in every build. The Flatpak bundle ships the Spanish translation again.</p>
