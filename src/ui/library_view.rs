@@ -17,7 +17,7 @@ use crate::i18n::gettext;
 use crate::library::Track;
 use crate::ui::now_playing::NowPlaying;
 use crate::ui::track_list::{TrackList, TrackListConfig};
-use crate::ui::widgets::{content_clamp, page_title_row};
+use crate::ui::widgets::{fluid_list_clamp, page_title_row};
 
 pub struct LibraryView {
     pub root: gtk4::Widget,
@@ -32,7 +32,7 @@ impl LibraryView {
         // still build the row with an invisible back slot so the title
         // anchors at the same X / Y as detail pages.
         let title_row = page_title_row(&gettext("All your music"), false);
-        let title_clamp = content_clamp();
+        let title_clamp = fluid_list_clamp();
         title_clamp.set_child(Some(&title_row));
 
         let outer = Box::new(Orientation::Vertical, 0);

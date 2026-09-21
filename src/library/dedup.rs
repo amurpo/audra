@@ -300,6 +300,35 @@ fn derive(track: &Track, music_folder: Option<&str>) -> Derived {
     }
 }
 
+/// Whether `tracks` describe a genuine multi-disc release — the single gate for
+/// both the disc-aware ordering here and the "Disc N" headers in the album view,
+/// so the two can never disagree.
+///
+/// Two conditions, and the second is the one that matters in a real library:
+///   * more than one disc number appears, and
+///   * *every* track declares one.
+///
+/// A partial declaration says nothing about the album's shape. A rip retagged in
+/// two passes leaves most files without a disc tag (reading those as "disc 1"
+/// invents a section and floats them above the real disc), and a folder can
+/// carry a couple of stray tags from another source — Chopin: Nocturnes has 19
+/// pieces, of which exactly one says "disc 1" and one says "disc 2". Splitting
+/// on that evidence cuts the album into sections of one track. With a single
+/// track undeclared there is nowhere to put it that the tags actually support,
+/// so the album stays whole and sorts on track numbers alone.
+pub fn is_multi_disc(tracks: &[Track]) -> bool {
+    let mut discs = std::collections::HashSet::new();
+    for t in tracks {
+        match t.disc_num {
+            Some(d) => {
+                discs.insert(d);
+            }
+            None => return false,
+        }
+    }
+    discs.len() > 1
+}
+
 /// Group tracks into canonical albums. `music_folder` enables the folder-aware
 /// pipeline; `None` reproduces pure tag grouping.
 pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> {
@@ -466,9 +495,14 @@ pub fn group_albums(tracks: &[Track], music_folder: Option<&str>) -> Vec<Album> 
                     tr
                 })
                 .collect();
+            let multi_disc = is_multi_disc(&tracks);
             tracks.sort_by_key(|t| {
                 (
-                    t.disc_num.unwrap_or(1),
+                    if multi_disc {
+                        t.disc_num.unwrap_or(1)
+                    } else {
+                        0
+                    },
                     t.track_num.unwrap_or(999),
                     t.path.clone(),
                 )
@@ -1031,6 +1065,93 @@ mod tests {
         assert_eq!(albums.len(), 1);
         assert_eq!(albums[0].tracks[0].disc_num, Some(1));
         assert_eq!(albums[0].tracks[1].disc_num, Some(2));
+    }
+
+    #[test]
+    fn two_stray_disc_tags_do_not_section_a_single_disc_album() {
+        // Chopin: Nocturnes as it really sits on disk — 19 pieces, of which one
+        // says "disc 1" and one says "disc 2" and the rest say nothing. Those
+        // two strays used to be enough to switch on the sections, cutting the
+        // list into a header per track and slicing 1, 2, │Disc 1│, 3, 4, 5.
+        let mf = Some("/Music");
+        let mut tracks: Vec<Track> = (1..=19)
+            .map(|n| {
+                let mut tr = t(
+                    &format!("/Music/Frédéric Chopin/Chopin_ Nocturnes/{n}.mp3"),
+                    "Frédéric Chopin",
+                    "Chopin: Nocturnes",
+                    n,
+                );
+                // Only five carry a track number, like the real folder.
+                if n > 5 {
+                    tr.track_num = None;
+                }
+                tr
+            })
+            .collect();
+        tracks[2].disc_num = Some(1);
+        tracks[8].disc_num = Some(2);
+        assert!(
+            !is_multi_disc(&tracks),
+            "a disc split needs every track to declare its disc"
+        );
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1);
+        // Ordering ignores the strays: the numbered pieces lead, in order.
+        let head: Vec<Option<i64>> = albums[0]
+            .tracks
+            .iter()
+            .take(5)
+            .map(|t| t.track_num)
+            .collect();
+        assert_eq!(head, (1..=5).map(Some).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_half_tagged_single_disc_album_sorts_on_track_number_alone() {
+        // The Clair Obscur shape: a retagging pass left part of the album with
+        // no disc tag. There is still only one disc in play, so the disc must
+        // not enter the ordering — reading the untagged files as "disc 1" put
+        // them, and their high track numbers, above the tagged half.
+        let mf = Some("/Music");
+        let untagged = [2, 6, 7];
+        let mut tracks = Vec::new();
+        for n in 1..=8 {
+            let mut tr = t(
+                &format!("/Music/Lorien Testard/Clair Obscur/{n}.mp3"),
+                "Lorien Testard",
+                "Clair Obscur: Expedition 33 Original Soundtrack (Act II)",
+                n,
+            );
+            if !untagged.contains(&n) {
+                tr.disc_num = Some(2);
+            }
+            tracks.push(tr);
+        }
+        let albums = group_albums(&tracks, mf);
+        assert_eq!(albums.len(), 1);
+        let order: Vec<Option<i64>> = albums[0].tracks.iter().map(|t| t.track_num).collect();
+        assert_eq!(
+            order,
+            (1..=8).map(Some).collect::<Vec<_>>(),
+            "one disc in play: the list reads straight through by track number"
+        );
+        // And no disc number was invented along the way — the untagged tracks
+        // stay untagged, so the album view paints them no "Disc 1" header.
+        let discs: Vec<Option<i64>> = albums[0].tracks.iter().map(|t| t.disc_num).collect();
+        assert_eq!(
+            discs,
+            vec![
+                Some(2),
+                None,
+                Some(2),
+                Some(2),
+                Some(2),
+                None,
+                None,
+                Some(2)
+            ]
+        );
     }
 
     #[test]

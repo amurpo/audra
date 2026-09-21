@@ -160,11 +160,10 @@ fn artist_photo_ctx(artist: String, avatar: adw::Avatar) -> PickerCtx {
     };
 
     // The search term is the artist name to query; the user can refine it.
-    let candidates: CandidatesFn = Arc::new(
-        move |query: &str, sink: &(dyn Fn(CoverCandidate) + Sync)| {
+    let candidates: CandidatesFn =
+        Arc::new(move |query: &str, sink: &(dyn Fn(CoverCandidate) + Sync)| {
             metadata::fetch_artist_photo_candidates(query, sink)
-        },
-    );
+        });
 
     PickerCtx {
         title: gettext("Choose photo"),

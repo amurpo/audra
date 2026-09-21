@@ -250,11 +250,7 @@ fn diversify_palette(palette: &[(u8, u8, u8)]) -> Vec<(u8, u8, u8)> {
     } else {
         // Near-grey: hue rotation buys nothing, so the lightness ramp alone
         // carries the depth — still far better than three identical fields.
-        vec![
-            hsl_to_rgb(h, s, l_light),
-            base,
-            hsl_to_rgb(h, s, l_dark),
-        ]
+        vec![hsl_to_rgb(h, s, l_light), base, hsl_to_rgb(h, s, l_dark)]
     }
 }
 
@@ -668,7 +664,10 @@ mod tests {
         let base = (60, 40, 25); // dark sepia/brown
         let out = diversify_palette(&[base]);
         let lum = |c: (u8, u8, u8)| 0.2126 * c.0 as f32 + 0.7152 * c.1 as f32 + 0.0722 * c.2 as f32;
-        assert!(lum(out[0]) > lum(base) + 30.0, "lightest layer too dark: {out:?}");
+        assert!(
+            lum(out[0]) > lum(base) + 30.0,
+            "lightest layer too dark: {out:?}"
+        );
         assert!(lum(out[0]) > lum(out[2]), "no light-to-dark ramp: {out:?}");
     }
 }

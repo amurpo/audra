@@ -804,10 +804,17 @@ mod sync_tests {
         write_wav(&new.join("track0_added.wav"));
 
         let changed = scan_and_sync(&db, new.to_str().unwrap()).unwrap();
-        assert!(changed, "a rename plus an added file must register as a change");
+        assert!(
+            changed,
+            "a rename plus an added file must register as a change"
+        );
 
         let after = db_paths(&db);
-        assert_eq!(after.len(), 3, "two moved tracks + one added, no stragglers");
+        assert_eq!(
+            after.len(),
+            3,
+            "two moved tracks + one added, no stragglers"
+        );
         assert!(
             after.iter().all(|p| p.contains("New Name")),
             "every row must live under the new folder; surviving old-path rows are the bug: {after:?}"
