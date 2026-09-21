@@ -1640,32 +1640,6 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/gdk4-win32/gdk4-win32-0.9.5.crate",
-        "sha256": "e54beb3e19bff7ccc05153e043bf0eea9cf76c07a3387fb0151bfa0fbfce9df0",
-        "dest": "cargo/vendor/gdk4-win32-0.9.5"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"e54beb3e19bff7ccc05153e043bf0eea9cf76c07a3387fb0151bfa0fbfce9df0\", \"files\": {}}",
-        "dest": "cargo/vendor/gdk4-win32-0.9.5",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/gdk4-win32-sys/gdk4-win32-sys-0.9.5.crate",
-        "sha256": "d554341f26b2f6191aaf2ecb4d0089f3696a40cadb2dba75dad03e48a6dc0eb9",
-        "dest": "cargo/vendor/gdk4-win32-sys-0.9.5"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": \"d554341f26b2f6191aaf2ecb4d0089f3696a40cadb2dba75dad03e48a6dc0eb9\", \"files\": {}}",
-        "dest": "cargo/vendor/gdk4-win32-sys-0.9.5",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "archive",
-        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/generic-array/generic-array-0.14.7.crate",
         "sha256": "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a",
         "dest": "cargo/vendor/generic-array-0.14.7"

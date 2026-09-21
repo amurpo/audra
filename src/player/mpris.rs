@@ -162,14 +162,35 @@ impl Mpris {
 
 #[cfg(windows)]
 fn window_handle(window: &adw::ApplicationWindow) -> Option<*mut std::ffi::c_void> {
+    use glib::translate::ToGlibPtr;
     use gtk4::prelude::*;
+
+    // Called directly instead of through the gdk4-win32 crate: its 0.9
+    // bindings still reference symbols GTK 4.21 dropped (GdkWin32Screen,
+    // gdk_win32_display_get_win32hcursor), so linking it against a current
+    // GTK fails even though we never call them. This is the same C function
+    // the crate's Win32Surface::handle() wraps.
+    extern "C" {
+        fn gdk_win32_surface_get_handle(
+            surface: *mut gtk4::gdk::ffi::GdkSurface,
+        ) -> *mut std::ffi::c_void;
+    }
+
     let surface = gtk4::prelude::NativeExt::surface(window)?;
-    let win32 = surface.downcast::<gdk4_win32::Win32Surface>().ok()?;
-    let raw = win32.handle().0;
-    if raw == 0 {
+    // No downcast without the crate, so walk the GType ancestry by hand —
+    // calling the getter on a non-Win32 surface would be undefined behaviour.
+    // The leaf type is not enough: a real window is a GdkWin32Toplevel, which
+    // derives from GdkWin32Surface.
+    let is_win32 = std::iter::successors(Some(surface.type_()), |t| t.parent())
+        .any(|t| t.name() == "GdkWin32Surface");
+    if !is_win32 {
         return None;
     }
-    Some(raw as *mut std::ffi::c_void)
+    let raw = unsafe { gdk_win32_surface_get_handle(surface.to_glib_none().0) };
+    if raw.is_null() {
+        return None;
+    }
+    Some(raw)
 }
 
 #[cfg(not(windows))]
