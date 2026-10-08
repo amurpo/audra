@@ -283,7 +283,7 @@ fn audiodb_album_cover(
     album: &str,
 ) -> Option<Vec<u8>> {
     let resp: serde_json::Value = client
-        .get("https://www.theaudiodb.com/api/v1/json/2/searchalbum.php")
+        .get("https://www.theaudiodb.com/api/v1/json/123/searchalbum.php")
         .query(&[("s", artist), ("a", album)])
         .send()
         .ok()?
@@ -430,7 +430,7 @@ fn deezer_artist_photo(client: &reqwest::blocking::Client, artist: &str) -> Opti
 
 fn audiodb_artist_photo(client: &reqwest::blocking::Client, artist: &str) -> Option<String> {
     let resp: serde_json::Value = client
-        .get("https://www.theaudiodb.com/api/v1/json/2/search.php")
+        .get("https://www.theaudiodb.com/api/v1/json/123/search.php")
         .query(&[("s", artist)])
         .send()
         .ok()?
