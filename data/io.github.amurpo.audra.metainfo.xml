@@ -51,6 +51,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.2.11" date="2026-11-02">
+      <description>
+        <p>Audra no longer freezes when the audio device fails, such as PipeWire still starting up at login or a USB or Bluetooth output being unplugged. Playback reopens the output on its own and resumes the current track where it was, and the error is logged once instead of flooding the system journal. Seeking no longer risks swapping the left and right channels on 44.1 kHz stereo files. Also includes TLS security fixes in the networking stack.</p>
+      </description>
+    </release>
     <release version="0.2.10" date="2026-10-19">
       <description>
         <p>Cover search now finds the album itself rather than one of its editions: MusicBrainz results are grouped by release and studio albums rank first, and iTunes looks the title up in the artist's own discography, so promo singles and other bands' records no longer win the automatic pick. TheAudioDB contributes album covers and artist photos again. Also fixes the Windows build against current GTK and includes TLS security fixes in the networking stack.</p>
