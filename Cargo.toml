@@ -36,7 +36,7 @@ symphonia = { version = "0.5", default-features = false, features = ["mp3", "fla
 lofty = "0.22"
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 # HTTP / Last.fm
 # "gzip": iTunes always returns gzip-encoded JSON, even when the client does not
