@@ -51,6 +51,11 @@
   </screenshots>
 
   <releases>
+    <release version="0.2.12" date="2026-11-16">
+      <description>
+        <p>Security update: the bundled SQLite that stores the music library is updated to fix a vulnerability, and the rest of the dependencies are refreshed with their latest security fixes. The integration with the desktop media controls now runs on an up-to-date D-Bus stack.</p>
+      </description>
+    </release>
     <release version="0.2.11" date="2026-11-02">
       <description>
         <p>Audra no longer freezes when the audio device fails, such as PipeWire still starting up at login or a USB or Bluetooth output being unplugged. Playback reopens the output on its own and resumes the current track where it was, and the error is logged once instead of flooding the system journal. Seeking no longer risks swapping the left and right channels on 44.1 kHz stereo files. Also includes TLS security fixes in the networking stack.</p>
