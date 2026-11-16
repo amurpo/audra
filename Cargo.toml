@@ -61,7 +61,7 @@ env_logger = "0.11"
 anyhow = "1"
 rand = "0.8"
 dirs = "5"
-souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
+souvlaki = { version = "0.9.3", default-features = false, features = ["use_zbus"] }
 
 # macOS only: the host has no GtkIconTheme with the symbolic icons Audra uses,
 # so we bundle Remix SVGs and rasterize them with resvg. Other platforms use
