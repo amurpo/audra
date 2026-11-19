@@ -1,6 +1,6 @@
 [package]
 name = "audra"
-version = "0.2.11"
+version = "0.2.12"
 edition = "2021"
 license = "GPL-3.0-or-later"
 
@@ -36,7 +36,7 @@ symphonia = { version = "0.5", default-features = false, features = ["mp3", "fla
 lofty = "0.22"
 
 # Database
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 # HTTP / Last.fm
 # "gzip": iTunes always returns gzip-encoded JSON, even when the client does not
@@ -61,7 +61,7 @@ env_logger = "0.11"
 anyhow = "1"
 rand = "0.8"
 dirs = "5"
-souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
+souvlaki = { version = "0.9.3", default-features = false, features = ["use_zbus"] }
 
 # macOS only: the host has no GtkIconTheme with the symbolic icons Audra uses,
 # so we bundle Remix SVGs and rasterize them with resvg. Other platforms use
